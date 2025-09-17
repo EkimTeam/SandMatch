@@ -17,7 +17,5 @@ RUN pip install -r requirements.txt
 
 COPY . /app
 
-RUN chmod +x scripts/entrypoint.sh || true
-
 EXPOSE 8080
-CMD ["sh", "scripts/entrypoint.sh"]
+CMD ["/bin/sh", "-c", "python manage.py migrate --noinput && python manage.py collectstatic --noinput || true && python manage.py runserver 0.0.0.0:8080"]
