@@ -1,7 +1,7 @@
 from django.db import models
 
 class Ruleset(models.Model):
-    name = models.CharField(max_length=100, unique=True)
+    name = models.CharField(max_length=255, unique=True)
     ordering_priority = models.JSONField(help_text="Приоритет критериев сортировки/определения мест")
 
     class Meta:
@@ -20,6 +20,12 @@ class SetFormat(models.Model):
         default=True, help_text="Разрешён ли сет-тайбрейк до 10 как решающий"
     )
     max_sets = models.IntegerField(default=1, help_text="Максимум сетов в матче (1 или 3)")
+    tiebreak_points = models.IntegerField(
+        default=7, help_text="Очки в обычном тай-брейке (обычно 7)"
+    )
+    decider_tiebreak_points = models.IntegerField(
+        default=10, help_text="Очки в решающем тай-брейке (сет-тайбрейк), обычно 10"
+    )
 
     class Meta:
         verbose_name = "Формат сета"
@@ -53,6 +59,8 @@ class Tournament(models.Model):
     groups_count = models.IntegerField(default=1)
     set_format = models.ForeignKey(SetFormat, on_delete=models.PROTECT)
     ruleset = models.ForeignKey(Ruleset, on_delete=models.PROTECT)
+    planned_participants = models.PositiveIntegerField(
+        null=True, blank=True, help_text="Планируемое число участников (для UI)")
 
     created_at = models.DateTimeField(auto_now_add=True)
 

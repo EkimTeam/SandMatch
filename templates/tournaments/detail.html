@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block content %}
+  <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom: 12px;">
+    <h1 style="margin:0;">{{ object.name }} — {{ object.date }}</h1>
+    <div class="meta">{{ object.get_system_display }} • {{ object.get_participant_mode_display }} • Групп: {{ object.groups_count }}</div>
+  </div>
+
+  {% if planned and group_sizes %}
+    <div class="card" style="margin-bottom:12px;">
+      Запланировано участников: {{ planned }}. Разбивка по группам: 
+      {% for size in group_sizes %}
+        {% if forloop.counter0 > 0 %}, {% endif %}Группа {{ forloop.counter }} — {{ size }}
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <style>
+    .tbl { width: 100%; border-collapse: collapse; }
+    .tbl th, .tbl td { border: 1px solid #e7e7ea; padding: 6px 8px; text-align: center; }
+    .tbl th.sticky { position: sticky; left: 0; background: #fff; z-index: 1; }
+    .hidden-col { display: none; }
+    .group { margin-bottom: 22px; }
+    .controls { margin-bottom: 10px; display:flex; gap:8px; flex-wrap: wrap; }
+    .toggle { padding:6px 10px; border:1px solid #ccc; border-radius:8px; background:#fff; cursor:pointer; }
+    @media (max-width: 600px){ .toggle { font-size: 14px; } }
+  </style>
+
+  <script>
+    function toggleCol(cls){
+      document.querySelectorAll('.'+cls).forEach(el=>{
+        el.classList.toggle('hidden-col');
+      })
+    }
+  </script>
+
+  {% for g in groups_ctx %}
+    <div class="group">
+      <div class="controls">
+        <strong>Группа {{ g.idx }}</strong>
+        <button class="toggle" onclick="toggleCol('col-sets')">Показать/скрыть «Сеты»</button>
+        <button class="toggle" onclick="toggleCol('col-sets-ratio')">Показать/скрыть «Сеты соот.»</button>
+        <button class="toggle" onclick="toggleCol('col-games-ratio')">Показать/скрыть «Геймы соот.»</button>
+      </div>
+      <div style="overflow:auto;">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th>№</th>
+              <th class="sticky">Участник/Пара</th>
+              {% for i in g.cols %}<th>{{ i }}</th>{% endfor %}
+              <th class="col-sets hidden-col">Сеты</th>
+              <th class="col-sets-ratio hidden-col">Сеты соот.</th>
+              <th>Геймы</th>
+              <th class="col-games-ratio hidden-col">Геймы соот.</th>
+              <th>Место</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in g.rows %}
+              <tr>
+                <td>{{ r }}</td>
+                <td class="sticky" style="text-align:left;">—</td>
+                {% for c in g.cols %}
+                  {% if r == c %}
+                    <td style="background:#111; color:#111;">■</td>
+                  {% else %}
+                    <td></td>
+                  {% endif %}
+                {% endfor %}
+                <td class="col-sets hidden-col"></td>
+                <td class="col-sets-ratio hidden-col"></td>
+                <td></td>
+                <td class="col-games-ratio hidden-col"></td>
+                <td></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if g.orders %}
+        <div style="margin-top:8px;" class="meta">
+          <div><strong>Порядок игр:</strong></div>
+          {% for line in g.orders %}
+            <div>{{ forloop.counter }}: {{ line }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  {% empty %}
+    <div class="card">Пока нет параметров для отображения таблиц. Вернитесь и укажите количество участников и групп.</div>
+  {% endfor %}
+
+  <form id="frm-complete" method="post" action="/tournaments/{{ object.id }}/complete/" style="display:none;">
+    {% csrf_token %}
+  </form>
+  <form id="frm-delete" method="post" action="/tournaments/{{ object.id }}/delete/" style="display:none;">
+    {% csrf_token %}
+  </form>
+
+  <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:16px;">
+    <a href="#" id="btn-complete" class="btn">Завершить турнир</a>
+    <a href="#" id="btn-delete" class="btn" style="background:#dc3545;">Удалить турнир</a>
+    <a href="#" class="btn" style="background:#6c757d; cursor:not-allowed;" aria-disabled="true" onclick="return false;">Поделиться</a>
+  </div>
+
+  <script>
+    document.getElementById('btn-complete').addEventListener('click', function(e){
+      e.preventDefault();
+      // TODO: проверка сыгранности всех матчей; сейчас просто подтверждение
+      if(confirm('Завершить турнир?')){ document.getElementById('frm-complete').submit(); }
+    });
+    document.getElementById('btn-delete').addEventListener('click', function(e){
+      e.preventDefault();
+      if(confirm('Удалить турнир и все связанные данные без возможности восстановления?')){
+        document.getElementById('frm-delete').submit();
+      }
+    });
+  </script>
+{% endblock %}

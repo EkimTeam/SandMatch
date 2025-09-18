@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+  <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom: 12px;">
+    <h1 style="margin:0;">Игроки</h1>
+    <a href="/sm-admin/apps/players/player/add/" class="btn">Добавить игрока</a>
+  </div>
+
+  {% if players %}
+    <div class="cards">
+      {% for p in players %}
+        <div class="card">
+          <h3>{{ p.last_name }} {{ p.first_name }}</h3>
+          <div class="meta">{{ p.display_name|default:p.first_name }}{% if p.level %} • {{ p.level }}{% endif %}</div>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="card">Пока нет игроков</div>
+  {% endif %}
+{% endblock %}

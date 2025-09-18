@@ -17,29 +17,36 @@
 
 - players.Player: name, timestamps
 - teams.Team: player_1, player_2 (уникальность состава)
-- tournaments.Tournament: name, date, status, type, groups_count, set_format, ruleset
-- tournaments.TournamentTeam: tournament, team, is_out_of_rating
-- matches.Match: tournament, round/group, team_1, team_2, score_1/2, tiebreak_1/2, winner
-- rules.Ruleset (база для будущего конструктора регламента)
+- tournaments.Tournament: name, date, status, type, groups_count, set_format, ruleset, planned_participants
+- tournaments.TournamentEntry: tournament, team, is_out_of_competition
+- matches.Match: tournament, round_name, order_in_round, team_1, team_2, winner
+- matches.MatchSet: match, score1, score2, tie_break
+- tournaments.Ruleset, tournaments.SetFormat — справочники
 
 ## Ключевая логика
 
-- Круговая система: генерация расписания, ввод счета, сортировка по регламенту
-- Олимпийская система: генерация сетки, ввод счета, авто‑продвижение победителя, матч за 3‑е место
+- Круговая система: генерация расписания, ввод счёта, сортировка по регламенту
+- Олимпийская система: сетка, ввод счёта, авто‑продвижение победителя, матч за 3‑е место
 - История: список завершенных, детали, история игрока
 - Экспорт результатов: html шаблон + html2canvas → PNG
 - Завершение турнира: статус completed, пересчет рейтинга (синхронно в MVP)
 
-## MVP0 (локально, Docker)
+## Что уже сделано (MVP0, текущий этап)
 
-- Инициализация Django‑проекта (этот репозиторий)
-- PostgreSQL через docker‑compose
-- Базовые страницы и админка
-- Тесты (pytest)
-- Критерии готовности:
-  - Все FR основной логики работают локально
-  - Проект запускается `docker compose up`
-  - 20–30 автотестов на ключевые сценарии
+- UI: навигация (`Турниры`, `Игроки`, `Статистика`), адаптивный базовый шаблон и логотип.
+- Страница `Турниры`: активные и история, модальное окно «Начать новый турнир» с валидацией для круговой.
+- Страница турнира: пустые таблицы по группам и «порядок игр», переключатели колонок.
+- Действия турнира: «Завершить», «Удалить», «Поделиться» (заглушка).
+- Admin action: «Сгенерировать расписание (круговая)» и команда `generate_round_robin`.
+- Пресеты: команды `seed_rulesets`, `reset_presets`.
+
+## Ближайшие задачи
+
+- UI добавления участников/команд в турнир; распределение по группам.
+- Кнопка «Сгенерировать расписание» на странице турнира (без админки).
+- Ввод результатов матча (сеты/тай‑брейки) с валидацией по `SetFormat`.
+- Подсчёт таблицы группы и сортировка по `Ruleset` (wins, h2h, ratios).
+- Экспорт/«Поделиться»: печатная версия и PNG.
 
 ## MVP1 (Yandex Cloud)
 

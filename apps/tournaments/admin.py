@@ -1,5 +1,6 @@
 from django.contrib import admin
 from .models import Ruleset, SetFormat, Tournament, TournamentEntry
+from .services.round_robin import generate_round_robin_matches, persist_generated_matches
 
 
 @admin.register(Ruleset)
@@ -29,6 +30,18 @@ class TournamentAdmin(admin.ModelAdmin):
     )
     list_filter = ("status", "system", "participant_mode", "date")
     search_fields = ("name",)
+    actions = ["action_generate_round_robin"]
+
+    def action_generate_round_robin(self, request, queryset):
+        total_created = 0
+        for tournament in queryset:
+            if tournament.system != Tournament.System.ROUND_ROBIN:
+                continue
+            gen = generate_round_robin_matches(tournament)
+            total_created += persist_generated_matches(tournament, gen)
+        self.message_user(request, f"Создано матчей: {total_created}")
+
+    action_generate_round_robin.short_description = "Сгенерировать расписание (круговая)"
 
 
 @admin.register(TournamentEntry)

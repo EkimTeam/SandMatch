@@ -1,3 +1,4 @@
+{% load static %}
 <!doctype html>
 <html lang="ru">
   <head>
@@ -5,18 +6,46 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>SandMatch</title>
     <style>
-      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol'; margin: 0; }
-      .container { max-width: 960px; margin: 0 auto; padding: 24px; }
-      .hero { padding: 56px 0; text-align: center; }
-      .hero h1 { margin: 0 0 16px; font-size: 32px; }
-      .hero p { margin: 0 0 24px; color: #444; }
-      a.btn { display: inline-block; padding: 10px 16px; background: #0d6efd; color: #fff; text-decoration: none; border-radius: 8px; }
-      a.btn:hover { background: #0b5ed7; }
+      :root { --blue:#0d6efd; --blue-hover:#0b5ed7; --bg:#f7f7f9; --text:#222; --muted:#666; }
+      * { box-sizing: border-box; }
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol'; margin: 0; color: var(--text); background: var(--bg); }
+      header { background: #fff; border-bottom: 1px solid #e7e7ea; position: sticky; top: 0; z-index: 10; }
+      .container { max-width: 1100px; margin: 0 auto; padding: 16px; }
+      .brand { font-weight: 700; }
+      .logo { height: 28px; width: auto; border-radius: 6px; display:inline-block; }
+      nav { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+      .spacer { flex: 1; }
+      a.nav { display: inline-block; padding: 8px 12px; border-radius: 8px; text-decoration: none; color: var(--text); }
+      a.nav.active { background: #eef3ff; color: var(--blue); }
+      a.btn { display: inline-block; padding: 10px 16px; background: var(--blue); color: #fff; text-decoration: none; border-radius: 8px; }
+      a.btn:hover { background: var(--blue-hover); }
+      main .container { padding-top: 24px; padding-bottom: 32px; }
+      .section-title { margin: 0 0 12px; font-size: 18px; color: var(--muted); }
+      .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+      .card { background: #fff; border: 1px solid #e7e7ea; border-radius: 10px; padding: 14px; }
+      .card h3 { margin: 0 0 6px; font-size: 18px; }
+      .meta { color: var(--muted); font-size: 13px; }
+      @media (max-width: 900px) { .cards { grid-template-columns: repeat(2, 1fr); } }
+      @media (max-width: 600px) { .cards { grid-template-columns: 1fr; } .container { padding: 12px; } }
     </style>
   </head>
   <body>
-    <div class="container">
-      {% block content %}{% endblock %}
-    </div>
+    <header>
+      <div class="container" style="display:flex; gap:12px; align-items:center;">
+        <img src="{% static 'img/logo.png' %}" alt="SandMatch" class="logo" />
+        <div class="brand">SandMatch</div>
+        <nav>
+          <a class="nav {% if request.path|slice:":12" == "/tournaments" or request.path == "/" %}active{% endif %}" href="/tournaments/">Турниры</a>
+          <a class="nav {% if request.path|slice:":8" == "/players" %}active{% endif %}" href="/players/">Игроки</a>
+          <a class="nav {% if request.path|slice:":6" == "/stats" %}active{% endif %}" href="/stats/">Статистика</a>
+        </nav>
+        <div class="spacer"></div>
+      </div>
+    </header>
+    <main>
+      <div class="container">
+        {% block content %}{% endblock %}
+      </div>
+    </main>
   </body>
 </html>

@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block content %}
+  <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom: 12px;">
+    <h1 style="margin:0;">Турниры</h1>
+    <a href="#" id="btn-new-tournament" class="btn">Начать новый турнир</a>
+  </div>
+
+  <h2 class="section-title">Активные</h2>
+  {% if active %}
+    <div class="cards">
+      {% for t in active %}
+        <div class="card">
+          <h3>{{ t.name }}</h3>
+          <div class="meta">{{ t.date }} • {{ t.get_system_display }} • {{ t.get_participant_mode_display }}</div>
+          <div style="margin-top:10px; display:flex; gap:8px; flex-wrap: wrap;">
+            <a class="btn" href="/tournaments/{{ t.id }}/">Открыть</a>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="card">Пока нет активных турниров</div>
+  {% endif %}
+
+  <h2 class="section-title" style="margin-top:20px;">История</h2>
+  {% if history %}
+    <div class="cards">
+      {% for t in history %}
+        <div class="card">
+          <h3>{{ t.name }}</h3>
+          <div class="meta">{{ t.date }} • {{ t.get_system_display }} • {{ t.get_participant_mode_display }}</div>
+          <div style="margin-top:10px; display:flex; gap:8px; flex-wrap: wrap;">
+            <a class="btn" href="/tournaments/{{ t.id }}/">Открыть</a>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="card">История пока пуста</div>
+  {% endif %}
+
+  <!-- Modal -->
+  <style>
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display:none; align-items: center; justify-content: center; padding: 16px; z-index: 50; }
+    .modal { background:#fff; border-radius:12px; max-width:720px; width:100%; box-shadow: 0 10px 30px rgba(0,0,0,.15); }
+    .modal header, .modal footer { padding: 14px 16px; border-bottom:1px solid #eee; }
+    .modal header { display:flex; justify-content:space-between; align-items:center; }
+    .modal .body { padding: 16px; }
+    .row { display:grid; grid-template-columns: 1fr 2fr; gap: 12px; margin-bottom: 10px; align-items:center; }
+    .row label { color:#555; }
+    .row input[type="text"], .row input[type="date"], .row input[type="number"], .row select { width:100%; padding:8px 10px; border:1px solid #ccc; border-radius:8px; }
+    .muted { color:#888; }
+    .error { color:#b10000; margin-top:8px; }
+    @media (max-width: 600px) { .row { grid-template-columns: 1fr; } }
+  </style>
+  <div class="modal-backdrop" id="modal-new">
+    <div class="modal">
+      <header>
+        <strong>Новый турнир</strong>
+        <a href="#" id="modal-close">✕</a>
+      </header>
+      <div class="body">
+        <div class="row">
+          <label>Название турнира</label>
+          <input type="text" id="f-name" placeholder="Например, SandMatch Open" />
+        </div>
+        <div class="row">
+          <label>Дата</label>
+          <input type="date" id="f-date" />
+        </div>
+        <div class="row">
+          <label>Рейтинг</label>
+          <div class="muted"><input type="checkbox" id="f-rating" disabled /> с обсчётом рейтинга (скоро)</div>
+        </div>
+        <div class="row">
+          <label>Тип турнира</label>
+          <select id="f-participant-mode">
+            <option value="singles">Индивидуальный</option>
+            <option value="doubles" selected>Парный</option>
+          </select>
+        </div>
+        <div class="row">
+          <label>Формат</label>
+          <select id="f-set-format">
+            {% for sf in set_formats %}
+              <option value="{{ sf.id }}">{{ sf.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="row">
+          <label>Система проведения</label>
+          <select id="f-system">
+            <option value="round_robin" selected>Круговая</option>
+            <option value="knockout">Олимпийская</option>
+            <option value="mixed">Смешанная</option>
+          </select>
+        </div>
+        <div id="rr-fields">
+          <div class="row">
+            <label>Число участников</label>
+            <input type="number" id="f-participants" min="1" step="1" placeholder="Например, 12" />
+          </div>
+          <div class="row">
+            <label>Число групп</label>
+            <input type="number" id="f-groups" min="1" step="1" value="1" />
+          </div>
+          <div class="row">
+            <label>Порядок игр</label>
+            <div class="muted">выбирается/генерируется (скоро)</div>
+          </div>
+          <div class="row">
+            <label>Регламент</label>
+            <select id="f-ruleset">
+              {% for rs in rulesets %}
+                <option value="{{ rs.id }}">{{ rs.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div id="rr-error" class="error" style="display:none;"></div>
+        </div>
+      </div>
+      <footer style="display:flex; gap:12px; justify-content:flex-end; padding: 12px 16px; border-top:1px solid #eee;">
+        <a href="#" id="btn-cancel" class="nav">Отменить</a>
+        <a href="#" id="btn-create" class="btn">Создать</a>
+      </footer>
+    </div>
+  </div>
+
+  <script>
+    const modal = document.getElementById('modal-new');
+    const btnOpen = document.getElementById('btn-new-tournament');
+    const btnClose = document.getElementById('modal-close');
+    const btnCancel = document.getElementById('btn-cancel');
+    const btnCreate = document.getElementById('btn-create');
+    const sys = document.getElementById('f-system');
+    const rr = document.getElementById('rr-fields');
+    const rrError = document.getElementById('rr-error');
+
+    function showModal(){ modal.style.display='flex'; }
+    function hideModal(){ modal.style.display='none'; rrError.style.display='none'; rrError.textContent=''; }
+    btnOpen.addEventListener('click', e=>{ e.preventDefault(); showModal(); });
+    btnClose.addEventListener('click', e=>{ e.preventDefault(); hideModal(); });
+    btnCancel.addEventListener('click', e=>{ e.preventDefault(); hideModal(); });
+    sys.addEventListener('change', ()=>{ rr.style.display = sys.value==='round_robin' ? 'block':'none'; });
+    rr.style.display = sys.value==='round_robin' ? 'block':'none';
+
+    function getCookie(name) {
+      const value = `; ${document.cookie}`;
+      const parts = value.split(`; ${name}=`);
+      if (parts.length === 2) return parts.pop().split(';').shift();
+    }
+
+    btnCreate.addEventListener('click', async (e)=>{
+      e.preventDefault();
+      const payload = {
+        name: document.getElementById('f-name').value.trim(),
+        date: document.getElementById('f-date').value,
+        participant_mode: document.getElementById('f-participant-mode').value,
+        set_format_id: document.getElementById('f-set-format').value,
+        system: sys.value,
+        ruleset_id: document.getElementById('f-ruleset').value,
+        groups_count: document.getElementById('f-groups').value,
+        participants: document.getElementById('f-participants').value,
+      };
+      if(!payload.name || !payload.date){ return alert('Заполните название и дату'); }
+      if(payload.system==='round_robin'){
+        const p = parseInt(payload.participants||'0',10), g = parseInt(payload.groups_count||'1',10);
+        if(p && g && p <= g*2){
+          rrError.style.display='block';
+          rrError.textContent='Слишком мало участников для такого количества групп. Уменьшите количество групп или увеличьте количество участников или выберите другую систему проведения';
+          return;
+        }
+      }
+      try{
+        const res = await fetch('/tournaments/new/',{
+          method:'POST', headers:{
+            'Content-Type':'application/json', 'X-Requested-With':'XMLHttpRequest', 'X-CSRFToken': getCookie('csrftoken') || ''
+          }, body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if(!res.ok || !data.ok){
+          rrError.style.display='block';
+          rrError.textContent = (data && data.error) ? data.error : 'Ошибка создания турнира';
+          return;
+        }
+        hideModal();
+        window.location.href = data.redirect;
+      }catch(err){
+        rrError.style.display='block'; rrError.textContent='Сетевая ошибка. Попробуйте ещё раз.';
+      }
+    });
+  </script>
+{% endblock %}

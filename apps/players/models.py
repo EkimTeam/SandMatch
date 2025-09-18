@@ -8,11 +8,13 @@ class Player(models.Model):
     level = models.CharField("Уровень игрока", max_length=50, blank=True, null=True)
     birth_date = models.DateField("Дата рождения", blank=True, null=True)
     phone = models.CharField("Телефон", max_length=20, blank=True, null=True)
+    display_name = models.CharField("Отображаемое имя", max_length=150, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         indexes = [
             models.Index(fields=["last_name", "first_name"]),
+            models.Index(fields=["display_name"]),
         ]
         ordering = ["last_name", "first_name"]
         verbose_name = "Игрок"
@@ -23,6 +25,12 @@ class Player(models.Model):
         if self.patronymic:
             fio += f" {self.patronymic}"
         return fio
+
+    def save(self, *args, **kwargs):
+        # Если отображаемое имя не задано, используем имя игрока (first_name)
+        if not self.display_name:
+            self.display_name = self.first_name or ""
+        super().save(*args, **kwargs)
 
 
 class SocialLink(models.Model):

@@ -19,8 +19,8 @@ services:
       - db
     ports:
       - "8080:8080"
-    volumes:
-      - .:/app
+    # volumes:
+    #   - .:/app  # Включить после настройки File Sharing (Docker Desktop → Settings → Resources → File Sharing)
 
 volumes:
   db_data:

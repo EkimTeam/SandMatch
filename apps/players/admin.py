@@ -4,9 +4,9 @@ from .models import Player, SocialLink, PlayerRatingHistory
 
 @admin.register(Player)
 class PlayerAdmin(admin.ModelAdmin):
-    list_display = ("last_name", "first_name", "patronymic", "current_rating", "phone")
+    list_display = ("last_name", "first_name", "patronymic", "display_name", "current_rating", "phone")
     list_filter = ("current_rating",)
-    search_fields = ("last_name", "first_name", "patronymic", "phone")
+    search_fields = ("last_name", "first_name", "patronymic", "display_name", "phone")
 
 
 @admin.register(SocialLink)
