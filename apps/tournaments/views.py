@@ -10,6 +10,7 @@ from apps.tournaments.models import Tournament, SetFormat, Ruleset, TournamentEn
 from apps.teams.models import Team
 from apps.players.models import Player
 from apps.tournaments.services.round_robin import _round_robin_pairings
+import json
 
 
 class TournamentsListView(TemplateView):
@@ -152,12 +153,91 @@ class TournamentDetailView(DetailView):
         # Формируем список для фронтенда: все участники в порядке их позиций
         items = list(participants_map.values())
 
-        import json
+        # Готовим счёты для инициализации таблицы при загрузке
+        # Карта: team_id -> (group_index, row_index)
+        team_pos: dict[int, tuple[int, int]] = {}
+        for e in entries:
+            team_pos[e.team_id] = (e.group_index, e.row_index)
+
+        from apps.matches.models import Match
+        initial_scores: list[dict] = []
+        matches = (
+            Match.objects.filter(tournament=t, stage=Match.Stage.GROUP)
+            .prefetch_related("sets")
+        )
+        for m in matches:
+            pos1 = team_pos.get(m.team_1_id)
+            pos2 = team_pos.get(m.team_2_id)
+            if not pos1 or not pos2:
+                continue
+            gi1, ri = pos1
+            gi2, ci = pos2
+            if gi1 != gi2:
+                # Разные группы в круговой таблице не рисуем тут
+                continue
+            gi = gi1
+            # Сводка сетов в порядке team_1 vs team_2
+            sets = list(m.sets.all().order_by("index"))
+            summary_parts = []
+            for s in sets:
+                if s.is_tiebreak_only:
+                    summary_parts.append(f"{s.games_1}:{s.games_2}")
+                elif s.tb_1 is not None and s.tb_2 is not None:
+                    summary_parts.append(f"{s.games_1}:{s.games_2} ({s.tb_1}:{s.tb_2})")
+                else:
+                    summary_parts.append(f"{s.games_1}:{s.games_2}")
+            summary = ", ".join(summary_parts)
+
+            # Текст для зеркальной ячейки (меняем местами)
+            mirror_parts = []
+            for s in sets:
+                if s.is_tiebreak_only:
+                    mirror_parts.append(f"{s.games_2}:{s.games_1}")
+                elif s.tb_1 is not None and s.tb_2 is not None:
+                    mirror_parts.append(f"{s.games_2}:{s.games_1} ({s.tb_2}:{s.tb_1})")
+                else:
+                    mirror_parts.append(f"{s.games_2}:{s.games_1}")
+            summary_mirror = ", ".join(mirror_parts)
+
+            # Если матч LIVE и без сетов — показываем пометку
+            if not summary and m.status == Match.Status.LIVE:
+                initial_scores.append({
+                    "group_index": gi,
+                    "row_index": ri,
+                    "col_index": ci,
+                    "text": "идет",
+                    "live": True,
+                })
+                initial_scores.append({
+                    "group_index": gi,
+                    "row_index": ci,
+                    "col_index": ri,
+                    "text": "идет",
+                    "live": True,
+                })
+            elif summary:
+                initial_scores.append({
+                    "group_index": gi,
+                    "row_index": ri,
+                    "col_index": ci,
+                    "text": summary,
+                    "live": False,
+                })
+                initial_scores.append({
+                    "group_index": gi,
+                    "row_index": ci,
+                    "col_index": ri,
+                    "text": summary_mirror,
+                    "live": False,
+                })
+
         ctx.update({
             "planned": planned,
             "groups_ctx": groups_ctx,
             # Список участников в порядке заполнения таблицы (для фронта)
             "initial_entries": json.dumps(items, ensure_ascii=False),
+            # Счёты для отрисовки в матрице
+            "initial_scores": json.dumps(initial_scores, ensure_ascii=False),
             "participant_label": (
                 "Участник" if t.participant_mode == Tournament.ParticipantMode.SINGLES else "Пара"
             ),
@@ -549,6 +629,9 @@ def save_score(request: HttpRequest, pk: int):
             match.winner_id = winner
             if finalize:
                 match.finished_at = timezone.now()
+                # При подтверждении счёта помечаем матч завершённым
+                from apps.matches.models import Match as MatchModel
+                match.status = MatchModel.Status.COMPLETED
     
     match.save()
     # Пересчитываем статистику по группе
@@ -582,7 +665,9 @@ def save_score(request: HttpRequest, pk: int):
     return JsonResponse({
         "ok": True,
         "summary": summary,
-        "winner": winner if not mirror_score else (team2_id if winner == team1_id else team1_id if winner == team2_id else None)
+        "winner": winner if not mirror_score else (team2_id if winner == team1_id else team1_id if winner == team2_id else None),
+        "mirror_row_index": ci,
+        "mirror_col_index": ri,
     })
 
 
@@ -661,4 +746,124 @@ def get_score(request: HttpRequest, pk: int):
         "sets": sets_data,
         "summary": summary,
         "winner": winner
+    })
+
+
+@require_POST
+def start_match(request: HttpRequest, pk: int):
+    """Помечает матч как начатый: status=live, started_at=now.
+
+    Ожидает JSON:
+    {
+      "group_index": int,
+      "row_index": int,
+      "col_index": int
+    }
+    """
+    import json
+    from django.utils import timezone
+    from apps.matches.models import Match
+
+    t = get_object_or_404(Tournament, pk=pk)
+
+    if request.content_type != "application/json":
+        return HttpResponseBadRequest("expected application/json")
+
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except Exception:
+        return HttpResponseBadRequest("invalid json")
+
+    try:
+        gi = int(payload.get("group_index"))
+        ri = int(payload.get("row_index"))
+        ci = int(payload.get("col_index"))
+    except (TypeError, ValueError):
+        return HttpResponseBadRequest("invalid indices")
+
+    match, team1_id, team2_id, _mirror = _find_match_for_cell(t, gi, ri, ci)
+
+    if not match:
+        # создаём скелет матча, если ещё не был создан
+        low_id, high_id = (team1_id, team2_id) if team1_id < team2_id else (team2_id, team1_id)
+        match = Match.objects.create(
+            tournament=t,
+            team_1_id=team1_id,
+            team_2_id=team2_id,
+            stage=Match.Stage.GROUP,
+            group_index=gi,
+            round_index=None,
+            round_name=f"Группа {gi}",
+            team_low_id=low_id,
+            team_high_id=high_id,
+        )
+
+    # Обновляем статус и время начала, если ещё не стартовал
+    if not match.started_at:
+        match.started_at = timezone.now()
+    match.status = Match.Status.LIVE
+    match.save(update_fields=["started_at", "status"])
+
+    # Для фронтенда сообщаем координаты зеркальной ячейки
+    return JsonResponse({
+        "ok": True,
+        "group_index": gi,
+        "row_index": ri,
+        "col_index": ci,
+        "mirror_row_index": ci,
+        "mirror_col_index": ri,
+    })
+
+
+@require_POST
+def cancel_start_match(request: HttpRequest, pk: int):
+    """Отменяет начало матча: started_at=NULL, статус возвращаем в scheduled (если не завершён).
+
+    Ожидает JSON:
+    {
+      "group_index": int,
+      "row_index": int,
+      "col_index": int
+    }
+    """
+    import json
+    from apps.matches.models import Match
+
+    t = get_object_or_404(Tournament, pk=pk)
+
+    if request.content_type != "application/json":
+        return HttpResponseBadRequest("expected application/json")
+
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except Exception:
+        return HttpResponseBadRequest("invalid json")
+
+    try:
+        gi = int(payload.get("group_index"))
+        ri = int(payload.get("row_index"))
+        ci = int(payload.get("col_index"))
+    except (TypeError, ValueError):
+        return HttpResponseBadRequest("invalid indices")
+
+    match, _t1, _t2, _mirror = _find_match_for_cell(t, gi, ri, ci)
+
+    if not match:
+        return HttpResponseBadRequest("match not found")
+
+    # Обнуляем started_at и возвращаем статус, если матч не завершён
+    match.started_at = None
+    if match.finished_at is None:
+        match.status = Match.Status.SCHEDULED
+        match.save(update_fields=["started_at", "status"])
+    else:
+        match.save(update_fields=["started_at"])  # если завершён — статус не трогаем
+
+    return JsonResponse({
+        "ok": True,
+        "group_index": gi,
+        "row_index": ri,
+        "col_index": ci,
+        "mirror_row_index": ci,
+        "mirror_col_index": ri,
     })

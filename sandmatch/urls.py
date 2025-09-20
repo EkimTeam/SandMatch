@@ -11,6 +11,8 @@ from apps.tournaments.views import (
     save_participants,
     save_score,
     get_score,
+    start_match,
+    cancel_start_match,
 )
 from apps.players.views import search_players, create_player
 from apps.players.views import PlayersListView
@@ -26,6 +28,8 @@ urlpatterns = [
     path("tournaments/<int:pk>/save-participants/", save_participants, name="tournament_save_participants"),
     path("tournaments/<int:pk>/save-score/", save_score, name="tournament_save_score"),
     path("tournaments/<int:pk>/get-score/", get_score, name="tournament_get_score"),
+    path("tournaments/<int:pk>/start-match/", start_match, name="tournament_start_match"),
+    path("tournaments/<int:pk>/cancel-start-match/", cancel_start_match, name="tournament_cancel_start_match"),
     path("players/", PlayersListView.as_view(), name="players"),
     path("players/search/", search_players, name="players_search"),
     path("players/create/", create_player, name="players_create"),
