@@ -749,6 +749,84 @@ def get_score(request: HttpRequest, pk: int):
     })
 
 
+def _safe_ratio(w: int, l: int) -> float:
+    if l == 0:
+        return float(w) if w > 0 else 0.0
+    return round(w / l, 3)
+
+
+def _diff(w: int, l: int) -> int:
+    return int(w - l)
+
+
+def _team_display_name(team) -> str:
+    p1 = team.player_1
+    p2 = team.player_2
+    if p2 is None:
+        return p1.display_name or p1.first_name or str(p1)
+    return f"{p1.display_name or p1.first_name} / {p2.display_name or p2.first_name}"
+
+
+def _build_group_table(t: Tournament, gi: int):
+    from apps.tournaments.services.stats import _aggregate_for_group
+    agg = _aggregate_for_group(t, gi)
+    # Собираем список участников с координатами строк
+    entries = (
+        TournamentEntry.objects.filter(tournament=t, group_index=gi)
+        .select_related("team__player_1", "team__player_2")
+        .order_by("row_index")
+    )
+    rows = []
+    for e in entries:
+        data = agg.get(e.team_id, {"wins": 0, "sets_won": 0, "sets_lost": 0, "games_won": 0, "games_lost": 0})
+        sets_won = int(data["sets_won"]) ; sets_lost = int(data["sets_lost"]) ; games_won = int(data["games_won"]) ; games_lost = int(data["games_lost"]) ; wins = int(data["wins"])
+        rows.append({
+            "row_index": e.row_index,
+            "team_name": _team_display_name(e.team),
+            "wins": wins,
+            "sets": f"{sets_won}-{sets_lost}",
+            "sets_diff": _diff(sets_won, sets_lost),
+            "sets_ratio": _safe_ratio(sets_won, sets_lost),
+            "games": f"{games_won}-{games_lost}",
+            "games_diff": _diff(games_won, games_lost),
+            "games_ratio": _safe_ratio(games_won, games_lost),
+        })
+    # Ранжирование: wins desc, sets_diff desc, games_diff desc, team_name asc
+    ranked = sorted(rows, key=lambda r: (-r["wins"], -r["sets_diff"], -r["games_diff"], r["team_name"]))
+    place_map = {}
+    place = 0
+    prev_key = None
+    for idx, r in enumerate(ranked, start=1):
+        key = (r["wins"], r["sets_diff"], r["games_diff"])
+        if key != prev_key:
+            place = idx
+            prev_key = key
+        place_map[r["row_index"]] = place
+    # Формируем финальную структуру
+    result = []
+    for r in rows:
+        result.append({
+            "row_index": r["row_index"],
+            "wins": r["wins"],
+            "sets": r["sets"],
+            "sets_ratio": r["sets_ratio"],
+            "games": r["games"],
+            "games_ratio": r["games_ratio"],
+            "place": place_map.get(r["row_index"], None),
+        })
+    return result
+
+
+def get_group_stats(request: HttpRequest, pk: int):
+    t = get_object_or_404(Tournament, pk=pk)
+    try:
+        gi = int(request.GET.get("group_index"))
+    except (TypeError, ValueError):
+        return HttpResponseBadRequest("invalid group_index")
+    data = _build_group_table(t, gi)
+    return JsonResponse({"ok": True, "stats": data})
+
+
 @require_POST
 def start_match(request: HttpRequest, pk: int):
     """Помечает матч как начатый: status=live, started_at=now.

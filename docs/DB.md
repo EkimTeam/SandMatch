@@ -49,6 +49,7 @@
 
 Интеграция:
 - Пересчёт вызывается автоматически в `apps/tournaments/views.py` после сохранения счёта матча (`save_score`).
+- При открытии страницы турнира фронтенд запрашивает агрегаты группы через эндпоинт `GET /tournaments/<id>/group-stats/` и заполняет тех. столбцы.
 - Доступна management-команда:
 
 ```bash
@@ -57,8 +58,17 @@ docker compose exec web python manage.py recalc_stats <tournament_id>
 
 ## Применение изменений
 
-- На уровне БД изменения применены (см. `sql_migrations.sql`).
-- На уровне Django модели синхронизированы fake-миграциями, проект готов к работе.
+- Все изменения схемы применяются штатными Django‑миграциями, находящимися в каталогах приложений:
+  - `apps/players/migrations/`
+  - `apps/teams/migrations/`
+  - `apps/tournaments/migrations/`
+  - `apps/matches/migrations/`
+
+Применение:
+
+```bash
+docker compose exec web python manage.py migrate
+```
 
 ## Примечания по данным
 

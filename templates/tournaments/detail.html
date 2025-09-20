@@ -78,6 +78,40 @@
       if (scriptEl && scriptEl.textContent) {
         initialEntries = JSON.parse(scriptEl.textContent);
       }
+
+    // Обновление технических столбцов (победы/сеты/соотношения/геймы/место)
+    function refreshGroupStats(groupIdx){
+      fetch(`/tournaments/{{ object.id }}/group-stats/?group_index=${groupIdx}`)
+        .then(r => r.json())
+        .then(data => {
+          if(!data.ok) return;
+          const stats = data.stats || [];
+          for(const row of stats){
+            // Ищем строку по ячейке участника с data-row
+            const pCell = document.querySelector(`[data-type="participant"][data-group="${groupIdx}"][data-row="${row.row_index}"]`);
+            if(!pCell) continue;
+            const tr = pCell.parentElement;
+            if(!tr) continue;
+            // Заполняем по известным классам
+            const winsTd = tr.querySelector('td.col-wins');
+            const setsTd = tr.querySelector('td.col-sets');
+            const setsRatioTd = tr.querySelector('td.col-sets-ratio');
+            const gamesRatioTd = tr.querySelector('td.col-games-ratio');
+            // Games и Place — это последние ячейки в строке (игры = третья с конца, место = последняя)
+            const tds = tr.querySelectorAll('td');
+            const placeTd = tds[tds.length - 1];
+            const gamesTd = tds[tds.length - 3];
+
+            if(winsTd) winsTd.textContent = row.wins;
+            if(setsTd) setsTd.textContent = row.sets;
+            if(setsRatioTd) setsRatioTd.textContent = row.sets_ratio;
+            if(gamesTd) gamesTd.textContent = row.games;
+            if(gamesRatioTd) gamesRatioTd.textContent = row.games_ratio;
+            if(placeTd) placeTd.textContent = row.place ?? '';
+          }
+        })
+        .catch(err => console.error('Ошибка обновления статистики группы:', err));
+    }
       const scoresEl = document.getElementById('initial-scores');
       if (scoresEl && scoresEl.textContent) {
         initialScores = JSON.parse(scoresEl.textContent);
@@ -745,6 +779,8 @@
         const mci = (data.mirror_col_index !== undefined) ? data.mirror_col_index : ri;
         setScoreText(gi, mri, mci, mirrorText);
         closeScoreInputModal();
+        // после сохранения — обновим тех. столбцы для группы
+        refreshGroupStats(gi);
       })
       .catch(err => {
         console.error('Ошибка сохранения счёта:', err);
@@ -1032,6 +1068,16 @@
       populateParticipantsFromDB();
       // затем счёт
       if (window.populateScoresFromDB) { window.populateScoresFromDB(); }
+      // соберём список групп из DOM и обновим тех. столбцы для каждой
+      const collectGroups = () => {
+        const set = new Set();
+        document.querySelectorAll('[data-type="participant"]').forEach(el => {
+          const gi = parseInt(el.getAttribute('data-group'));
+          if (!Number.isNaN(gi)) set.add(gi);
+        });
+        return Array.from(set.values());
+      };
+      collectGroups().forEach(gi => refreshGroupStats(gi));
       // затем обновим состояния и, если всё укомплектовано, включим фиксацию
       updateLockCheckbox();
       const checkbox = document.getElementById('lock-participants');
