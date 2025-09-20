@@ -22,14 +22,43 @@
     .group { margin-bottom: 22px; }
     .controls { margin-bottom: 10px; display:flex; gap:8px; flex-wrap: wrap; }
     .toggle { padding:6px 10px; border:1px solid #ccc; border-radius:8px; background:#fff; cursor:pointer; }
+    .cell-click { cursor: pointer; }
+    .cell-click:hover { background: #f2f6ff; }
+    .cell-click.frozen { cursor: not-allowed; opacity: 0.5; }
+    .cell-click.frozen:hover { background: transparent; }
+    .cell-click.locked { cursor: not-allowed; }
+    .cell-click.locked:hover { background: transparent; }
+    .participant-locked { font-weight: bold; color: #000; }
+    .col-thin { width: 60px; }
+    .tbl th { white-space: normal; }
     @media (max-width: 600px){ .toggle { font-size: 14px; } }
   </style>
 
+  <script id="initial-entries" type="application/json">{{ initial_entries|default:"[]"|safe }}</script>
   <script>
+    // Участники, сохранённые в БД (в порядке заполнения)
+    let initialEntries = [];
+    try {
+      const scriptEl = document.getElementById('initial-entries');
+      if (scriptEl && scriptEl.textContent) {
+        initialEntries = JSON.parse(scriptEl.textContent);
+      }
+    } catch (e) {
+      console.error('Error parsing initial entries:', e);
+      initialEntries = [];
+    }
     function toggleCol(cls){
       document.querySelectorAll('.'+cls).forEach(el=>{
         el.classList.toggle('hidden-col');
       })
+    }
+    
+    function toggleStatsColumns(){
+      // Переключаем все статистические столбцы одновременно
+      toggleCol('col-wins');
+      toggleCol('col-sets');
+      toggleCol('col-sets-ratio');
+      toggleCol('col-games-ratio');
     }
   </script>
 
@@ -37,41 +66,49 @@
     <div class="group">
       <div class="controls">
         <strong>Группа {{ g.idx }}</strong>
-        <button class="toggle" onclick="toggleCol('col-sets')">Показать/скрыть «Сеты»</button>
-        <button class="toggle" onclick="toggleCol('col-sets-ratio')">Показать/скрыть «Сеты соот.»</button>
-        <button class="toggle" onclick="toggleCol('col-games-ratio')">Показать/скрыть «Геймы соот.»</button>
+        <button class="toggle" onclick="toggleStatsColumns()">«Победы/Сеты/Сеты соот./Геймы соот.»</button>
+        {% if forloop.first %}
+        <div style="margin-left:auto;">
+          <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+            <input type="checkbox" id="lock-participants" onchange="toggleParticipantsLock()">
+            <span>Зафиксировать участников</span>
+          </label>
+        </div>
+        {% endif %}
       </div>
       <div style="overflow:auto;">
         <table class="tbl">
           <thead>
             <tr>
               <th>№</th>
-              <th class="sticky">Участник/Пара</th>
+              <th class="sticky">{{ participant_label }}</th>
               {% for i in g.cols %}<th>{{ i }}</th>{% endfor %}
-              <th class="col-sets hidden-col">Сеты</th>
-              <th class="col-sets-ratio hidden-col">Сеты соот.</th>
-              <th>Геймы</th>
-              <th class="col-games-ratio hidden-col">Геймы соот.</th>
-              <th>Место</th>
+              <th class="col-wins hidden-col col-thin">Победы</th>
+              <th class="col-sets hidden-col col-thin">Сеты</th>
+              <th class="col-sets-ratio hidden-col col-thin">Сеты<br>соот.</th>
+              <th class="col-thin">Геймы</th>
+              <th class="col-games-ratio hidden-col col-thin">Геймы<br>соот.</th>
+              <th class="col-thin">Место</th>
             </tr>
           </thead>
           <tbody>
             {% for r in g.rows %}
               <tr>
                 <td>{{ r }}</td>
-                <td class="sticky" style="text-align:left;">—</td>
+                <td class="sticky cell-click" style="text-align:left;" data-type="participant" data-group="{{ g.idx }}" data-row="{{ r }}">—</td>
                 {% for c in g.cols %}
                   {% if r == c %}
                     <td style="background:#111; color:#111;">■</td>
                   {% else %}
-                    <td></td>
+                    <td class="cell-click frozen" data-type="score" data-group="{{ g.idx }}" data-row="{{ r }}" data-col="{{ c }}"></td>
                   {% endif %}
                 {% endfor %}
-                <td class="col-sets hidden-col"></td>
-                <td class="col-sets-ratio hidden-col"></td>
-                <td></td>
-                <td class="col-games-ratio hidden-col"></td>
-                <td></td>
+                <td class="col-wins hidden-col col-thin"></td>
+                <td class="col-sets hidden-col col-thin"></td>
+                <td class="col-sets-ratio hidden-col col-thin"></td>
+                <td class="col-thin"></td>
+                <td class="col-games-ratio hidden-col col-thin"></td>
+                <td class="col-thin"></td>
               </tr>
             {% endfor %}
           </tbody>
@@ -97,6 +134,74 @@
     {% csrf_token %}
   </form>
 
+  <!-- Модальное окно выбора участника -->
+  <div id="participant-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000;">
+    <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:#fff; padding:20px; border-radius:8px; width:90%; max-width:600px;">
+      <h3>Выбор {{ participant_label|lower }}а</h3>
+      
+      <!-- Для одиночного турнира -->
+      <div id="singles-selection" style="display:none;">
+        <div style="margin-bottom:15px;">
+          <input type="text" id="player-search" placeholder="Поиск по имени, фамилии или никнейму..." style="width:100%; padding:8px; border:1px solid #ccc; border-radius:4px;">
+        </div>
+        
+        <div id="search-results" style="max-height:200px; overflow-y:auto; margin-bottom:15px; border:1px solid #eee; border-radius:4px;">
+          <!-- Результаты поиска -->
+        </div>
+      </div>
+
+      <!-- Для парного турнира -->
+      <div id="doubles-selection" style="display:none;">
+        <div style="display:flex; gap:15px;">
+          <!-- Игрок 1 -->
+          <div style="flex:1;">
+            <h4 style="margin:0 0 10px 0;">Игрок 1</h4>
+            <div style="margin-bottom:10px;">
+              <input type="text" id="player1-search" placeholder="Поиск игрока 1..." style="width:100%; padding:8px; border:1px solid #ccc; border-radius:4px;">
+            </div>
+            <div id="player1-results" style="max-height:150px; overflow-y:auto; margin-bottom:10px; border:1px solid #eee; border-radius:4px;">
+              <!-- Результаты поиска игрока 1 -->
+            </div>
+            <div id="player1-selected" style="padding:8px; background:#e8f5e8; border-radius:4px; display:none;">
+              <strong>Выбран:</strong> <span id="player1-name"></span>
+              <button onclick="clearPlayer(1)" style="float:right; background:none; border:none; color:#dc3545; cursor:pointer;">✕</button>
+            </div>
+          </div>
+
+          <!-- Игрок 2 -->
+          <div style="flex:1;">
+            <h4 style="margin:0 0 10px 0;">Игрок 2</h4>
+            <div style="margin-bottom:10px;">
+              <input type="text" id="player2-search" placeholder="Поиск игрока 2..." style="width:100%; padding:8px; border:1px solid #ccc; border-radius:4px;">
+            </div>
+            <div id="player2-results" style="max-height:150px; overflow-y:auto; margin-bottom:10px; border:1px solid #eee; border-radius:4px;">
+              <!-- Результаты поиска игрока 2 -->
+            </div>
+            <div id="player2-selected" style="padding:8px; background:#e8f5e8; border-radius:4px; display:none;">
+              <strong>Выбран:</strong> <span id="player2-name"></span>
+              <button onclick="clearPlayer(2)" style="float:right; background:none; border:none; color:#dc3545; cursor:pointer;">✕</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <div style="margin-bottom:15px; padding:10px; background:#f8f9fa; border-radius:4px;">
+        <h4 style="margin:0 0 10px 0;">Создать нового игрока</h4>
+        <div style="display:flex; gap:10px;">
+          <input type="text" id="new-first-name" placeholder="Имя" style="flex:1; padding:6px; border:1px solid #ccc; border-radius:4px;">
+          <input type="text" id="new-last-name" placeholder="Фамилия" style="flex:1; padding:6px; border:1px solid #ccc; border-radius:4px;">
+          <button id="create-player-btn" class="btn" style="padding:6px 12px;">Создать</button>
+        </div>
+        <div id="create-error" style="color:#dc3545; margin-top:5px; display:none;"></div>
+      </div>
+      
+      <div style="display:flex; gap:10px; justify-content:flex-end;">
+        <button id="save-participant" class="btn" style="background:#28a745;">Сохранить</button>
+        <button id="cancel-participant" class="btn" style="background:#6c757d;">Отмена</button>
+      </div>
+    </div>
+  </div>
+
   <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:16px;">
     <a href="#" id="btn-complete" class="btn">Завершить турнир</a>
     <a href="#" id="btn-delete" class="btn" style="background:#dc3545;">Удалить турнир</a>
@@ -104,6 +209,540 @@
   </div>
 
   <script>
+    let currentCell = null;
+    let searchTimeout = null;
+    let selectedPlayers = { player1: null, player2: null };
+    const isDoublesMode = '{{ object.participant_mode }}' === 'doubles';
+    let participantsLocked = false;
+    const plannedParticipants = parseInt('{{ object.planned_participants|default:"0" }}');
+
+    // Обработчик кликов по таблице
+    document.querySelectorAll('.group table.tbl').forEach(tbl => {
+      tbl.addEventListener('click', (e) => {
+        const cell = e.target.closest('.cell-click');
+        if(!cell) return;
+        
+        // Проверяем заморозку
+        if(cell.classList.contains('frozen') || cell.classList.contains('locked')) return;
+        
+        const t = cell.dataset.type || 'cell';
+        if(t === 'participant') {
+          currentCell = cell;
+          openParticipantModal();
+        } else {
+          const r = cell.dataset.row || '?';
+          const c = cell.dataset.col || '?';
+          alert(`вы нажали на ячейку [${c},${r}]`);
+        }
+      });
+    });
+
+    // Открытие модального окна выбора участника
+    function openParticipantModal() {
+      document.getElementById('participant-modal').style.display = 'block';
+      
+      if(isDoublesMode) {
+        document.getElementById('singles-selection').style.display = 'none';
+        document.getElementById('doubles-selection').style.display = 'block';
+        document.getElementById('player1-search').focus();
+      } else {
+        document.getElementById('singles-selection').style.display = 'block';
+        document.getElementById('doubles-selection').style.display = 'none';
+        document.getElementById('player-search').focus();
+      }
+      
+      clearForm();
+    }
+
+    // Закрытие модального окна
+    function closeParticipantModal() {
+      document.getElementById('participant-modal').style.display = 'none';
+      currentCell = null;
+      selectedPlayers = { player1: null, player2: null };
+      clearForm();
+    }
+
+    // Очистка формы
+    function clearForm() {
+      document.getElementById('player-search').value = '';
+      document.getElementById('player1-search').value = '';
+      document.getElementById('player2-search').value = '';
+      document.getElementById('new-first-name').value = '';
+      document.getElementById('new-last-name').value = '';
+      clearSearchResults();
+      clearPlayerSelections();
+      hideCreateError();
+    }
+
+    // Очистка результатов поиска
+    function clearSearchResults() {
+      document.getElementById('search-results').innerHTML = '';
+      document.getElementById('player1-results').innerHTML = '';
+      document.getElementById('player2-results').innerHTML = '';
+    }
+
+    // Очистка выбранных игроков
+    function clearPlayerSelections() {
+      document.getElementById('player1-selected').style.display = 'none';
+      document.getElementById('player2-selected').style.display = 'none';
+    }
+
+    // Очистка конкретного игрока
+    function clearPlayer(playerNum) {
+      selectedPlayers[`player${playerNum}`] = null;
+      document.getElementById(`player${playerNum}-selected`).style.display = 'none';
+      document.getElementById(`player${playerNum}-search`).value = '';
+    }
+
+    // Показать/скрыть ошибку создания
+    function showCreateError(msg) {
+      const el = document.getElementById('create-error');
+      el.textContent = msg;
+      el.style.display = 'block';
+    }
+
+    function hideCreateError() {
+      document.getElementById('create-error').style.display = 'none';
+    }
+
+    // Поиск игроков
+    function searchPlayers(query, targetContainer, playerNum = null) {
+      if(query.length < 2) {
+        document.getElementById(targetContainer).innerHTML = '';
+        return;
+      }
+
+      fetch(`/players/search/?q=${encodeURIComponent(query)}`)
+        .then(r => r.json())
+        .then(data => {
+          const container = document.getElementById(targetContainer);
+          if(data.players.length === 0) {
+            container.innerHTML = '<div style="padding:10px; color:#666;">Игроки не найдены</div>';
+            return;
+          }
+
+          // Фильтруем уже выбранных игроков
+          let filteredPlayers = data.players;
+          
+          // Исключаем игроков уже участвующих в турнире
+          filteredPlayers = filteredPlayers.filter(p => !isPlayerInTournament(p.display_name, p.full_name));
+          
+          // Для парного режима исключаем уже выбранного в текущей паре
+          if(isDoublesMode && playerNum) {
+            const otherPlayerNum = playerNum === 1 ? 2 : 1;
+            const otherPlayer = selectedPlayers[`player${otherPlayerNum}`];
+            if(otherPlayer) {
+              filteredPlayers = filteredPlayers.filter(p => p.id !== otherPlayer.id);
+            }
+          }
+
+          if(filteredPlayers.length === 0) {
+            if(data.players.length > 0) {
+              container.innerHTML = '<div style="padding:10px; color:#666;">Все найденные игроки уже участвуют в турнире</div>';
+            } else {
+              container.innerHTML = '<div style="padding:10px; color:#666;">Игроки не найдены</div>';
+            }
+            return;
+          }
+
+          container.innerHTML = filteredPlayers.map(p => 
+            `<div class="player-option" data-id="${p.id}" data-display="${p.display_name}" data-full="${p.full_name}" 
+                  style="padding:8px; cursor:pointer; border-bottom:1px solid #eee;" data-player-num="${playerNum || ''}">
+               <strong>${p.display_name}</strong><br>
+               <small style="color:#666;">${p.full_name}</small>
+             </div>`
+          ).join('');
+
+          // Обработчики кликов по результатам
+          container.querySelectorAll('.player-option').forEach(opt => {
+            opt.addEventListener('click', () => selectPlayer(opt));
+          });
+        })
+        .catch(err => console.error('Ошибка поиска:', err));
+    }
+
+    // Выбор игрока
+    function selectPlayer(element) {
+      const playerId = element.dataset.id;
+      const displayName = element.dataset.display;
+      const fullName = element.dataset.full;
+      const playerNum = element.dataset.playerNum;
+      
+      // Проверяем, не участвует ли игрок уже в турнире
+      if(isPlayerInTournament(displayName, fullName)) {
+        alert('Этот игрок уже участвует в турнире');
+        return;
+      }
+      
+      if(isDoublesMode && playerNum) {
+        // Проверка дублирования в текущей паре
+        const otherPlayerNum = playerNum === '1' ? '2' : '1';
+        const otherPlayer = selectedPlayers[`player${otherPlayerNum}`];
+        if(otherPlayer && otherPlayer.id === playerId) {
+          alert('Этот игрок уже выбран для другой позиции');
+          return;
+        }
+
+        selectedPlayers[`player${playerNum}`] = { id: playerId, display_name: displayName, full_name: fullName };
+        document.getElementById(`player${playerNum}-name`).textContent = displayName;
+        document.getElementById(`player${playerNum}-selected`).style.display = 'block';
+        document.getElementById(`player${playerNum}-results`).innerHTML = '';
+      } else {
+        // Одиночный режим
+        if(currentCell) {
+          currentCell.textContent = displayName;
+          currentCell.title = fullName;
+          currentCell.style.textAlign = 'left';
+          // Сохраняем ID игрока в ячейке (для отправки на сервер)
+          currentCell.dataset.p1 = playerId;
+          currentCell.dataset.p2 = '';
+        }
+        closeParticipantModal();
+      }
+    }
+
+    // Сохранение участника (для парного режима)
+    function saveParticipant() {
+      if(isDoublesMode) {
+        if(!selectedPlayers.player1 || !selectedPlayers.player2) {
+          alert('Выберите обоих игроков');
+          return;
+        }
+        
+        const pairName = `${selectedPlayers.player1.display_name} / ${selectedPlayers.player2.display_name}`;
+        const pairTitle = `${selectedPlayers.player1.full_name} / ${selectedPlayers.player2.full_name}`;
+        
+        if(currentCell) {
+          currentCell.textContent = pairName;
+          currentCell.title = pairTitle;
+          currentCell.style.textAlign = 'left';
+          // Сохраняем ID игроков пары в ячейке (для отправки на сервер)
+          currentCell.dataset.p1 = selectedPlayers.player1.id;
+          currentCell.dataset.p2 = selectedPlayers.player2.id;
+        }
+      }
+      
+      closeParticipantModal();
+    }
+
+    // Создание нового игрока
+    function createNewPlayer() {
+      const firstName = document.getElementById('new-first-name').value.trim();
+      const lastName = document.getElementById('new-last-name').value.trim();
+      
+      if(!firstName || !lastName) {
+        showCreateError('Введите имя и фамилию');
+        return;
+      }
+
+      fetch('/players/create/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        },
+        body: JSON.stringify({
+          first_name: firstName,
+          last_name: lastName
+        })
+      })
+      .then(r => r.json())
+      .then(data => {
+        if(data.error) {
+          showCreateError(data.error);
+          return;
+        }
+        
+        hideCreateError();
+        document.getElementById('new-first-name').value = '';
+        document.getElementById('new-last-name').value = '';
+        
+        if(!isDoublesMode && currentCell) {
+          currentCell.textContent = data.display_name;
+          currentCell.title = data.full_name;
+          currentCell.style.textAlign = 'left';
+          currentCell.dataset.p1 = data.id;
+          currentCell.dataset.p2 = '';
+          closeParticipantModal();
+        } else {
+          alert(`Игрок ${data.display_name} создан. Теперь найдите его в поиске.`);
+        }
+      })
+      .catch(err => {
+        console.error('Ошибка создания игрока:', err);
+        showCreateError('Ошибка создания игрока');
+      });
+    }
+
+    // События
+    document.getElementById('player-search').addEventListener('input', (e) => {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => searchPlayers(e.target.value, 'search-results'), 300);
+    });
+
+    document.getElementById('player1-search').addEventListener('input', (e) => {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => searchPlayers(e.target.value, 'player1-results', 1), 300);
+    });
+
+    document.getElementById('player2-search').addEventListener('input', (e) => {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => searchPlayers(e.target.value, 'player2-results', 2), 300);
+    });
+
+    document.getElementById('create-player-btn').addEventListener('click', createNewPlayer);
+    document.getElementById('save-participant').addEventListener('click', saveParticipant);
+    document.getElementById('cancel-participant').addEventListener('click', closeParticipantModal);
+
+    // Закрытие по клику вне модального окна
+    document.getElementById('participant-modal').addEventListener('click', (e) => {
+      if(e.target.id === 'participant-modal') closeParticipantModal();
+    });
+
+    // Подсчет выбранных участников
+    function countSelectedParticipants() {
+      const participantCells = document.querySelectorAll('[data-type="participant"]');
+      let count = 0;
+      participantCells.forEach(cell => {
+        if(cell.textContent.trim() !== '—') {
+          count++;
+        }
+      });
+      return count;
+    }
+
+    // Подсчет для сравнения с planned_participants (учитывает тип турнира)
+    function countParticipantsForValidation() {
+      const participantCells = document.querySelectorAll('[data-type="participant"]');
+      let count = 0;
+      participantCells.forEach(cell => {
+        if(cell.textContent.trim() !== '—') {
+          count += 1;
+        }
+      });
+      return count;
+    }
+
+    // Получение всех игроков, уже участвующих в турнире
+    function getPlayersInTournament() {
+      const participantCells = document.querySelectorAll('[data-type="participant"]');
+      const players = new Map(); // Используем Map для хранения display_name -> full_name
+      
+      participantCells.forEach(cell => {
+        const text = cell.textContent.trim();
+        const fullName = cell.title || ''; // Полное имя из tooltip
+        
+        if(text !== '—') {
+          if(isDoublesMode) {
+            // Для парного режима разбиваем по " / "
+            const pair = text.split(' / ');
+            const fullPair = fullName.split(' / ');
+            
+            pair.forEach((playerName, index) => {
+              if(playerName.trim()) {
+                const playerFullName = fullPair[index] || '';
+                players.set(playerName.trim(), playerFullName.trim());
+              }
+            });
+          } else {
+            // Для одиночного режима добавляем как есть
+            players.set(text, fullName);
+          }
+        }
+      });
+      
+      return players;
+    }
+
+    // Проверка, участвует ли игрок уже в турнире
+    function isPlayerInTournament(displayName, fullName = '') {
+      const playersInTournament = getPlayersInTournament();
+      
+      // Проверяем точное совпадение по display_name
+      // Проверяем совпадение по full_name если он предоставлен
+      if(playersInTournament.has(displayName)) {
+        if(fullName) {
+          for(const [existingDisplayName, existingFullName] of playersInTournament) {
+            if(existingFullName === fullName) {
+              return true;
+            }
+          }
+        }
+      }
+      
+      return false;
+    }
+
+    // Обновление состояния чекбокса
+    function updateLockCheckbox() {
+      const checkbox = document.getElementById('lock-participants');
+      const filled = countParticipantsForValidation();
+      // Для парных турниров одна заполненная строка = 1 пара = 2 участника
+      const selectedCount = isDoublesMode ? (filled +1) : filled;
+      
+      if(selectedCount === plannedParticipants && plannedParticipants > 0) {
+        checkbox.disabled = false;
+        checkbox.parentElement.style.opacity = '1';
+      } else {
+        checkbox.disabled = true;
+        checkbox.checked = false;
+        checkbox.parentElement.style.opacity = '0.5';
+        participantsLocked = false;
+        updateCellStates();
+      }
+    }
+
+    // Переключение заморозки участников
+    function toggleParticipantsLock() {
+      const checkbox = document.getElementById('lock-participants');
+      participantsLocked = checkbox.checked;
+      updateCellStates();
+      if (participantsLocked) {
+        // При фиксации — сохраняем участников в БД
+        saveParticipantsToServer();
+      }
+    }
+
+    // Сбор участников из таблицы
+    function collectParticipants() {
+      const entries = [];
+      const participantCells = document.querySelectorAll('[data-type="participant"]');
+      participantCells.forEach(cell => {
+        const text = cell.textContent.trim();
+        if (text === '—') return;
+        const p1 = cell.dataset.p1 ? parseInt(cell.dataset.p1) : null;
+        const p2raw = cell.dataset.p2;
+        const p2 = (p2raw === '' || p2raw === undefined) ? null : parseInt(p2raw);
+        const group_index = parseInt(cell.dataset.group || '1');
+        const row_index = parseInt(cell.dataset.row || '0');
+        // Если не нашли id, пробуем не добавлять такую строку
+        if (!p1) return;
+        entries.push({ p1: p1, p2: (isDoublesMode ? (p2 || null) : null), group_index, row_index });
+      });
+      return entries;
+    }
+
+    // Отправка участников на сервер
+    function saveParticipantsToServer() {
+      const entries = collectParticipants();
+      fetch(`/tournaments/{{ object.id }}/save-participants/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+        },
+        body: JSON.stringify({ entries })
+      })
+      .then(r => r.json())
+      .then(data => {
+        if(!data.ok) {
+          alert('Не удалось сохранить участников');
+        }
+      })
+      .catch(err => {
+        console.error('Ошибка сохранения участников:', err);
+        alert('Ошибка сохранения участников');
+      });
+    }
+
+    // Обновление состояния ячеек
+    function updateCellStates() {
+      const participantCells = document.querySelectorAll('[data-type="participant"]');
+      const scoreCells = document.querySelectorAll('[data-type="score"]');
+      
+      participantCells.forEach(cell => {
+        if(participantsLocked) {
+          cell.classList.add('locked');
+          cell.classList.remove('frozen');
+          // Добавляем яркий стиль для заполненных ячеек
+          if(cell.textContent.trim() !== '—') {
+            cell.classList.add('participant-locked');
+          }
+        } else {
+          cell.classList.remove('locked');
+          cell.classList.remove('participant-locked');
+        }
+      });
+      
+      scoreCells.forEach(cell => {
+        if(participantsLocked) {
+          cell.classList.remove('frozen');
+        } else {
+          cell.classList.add('frozen');
+        }
+      });
+    }
+
+    // Переопределяем функции выбора игрока для обновления чекбокса
+    const originalSelectPlayer = selectPlayer;
+    selectPlayer = function(element) {
+      originalSelectPlayer(element);
+      setTimeout(updateLockCheckbox, 100);
+    };
+
+    const originalSaveParticipant = saveParticipant;
+    saveParticipant = function() {
+      originalSaveParticipant();
+      setTimeout(updateLockCheckbox, 100);
+    };
+
+    const originalCreateNewPlayer = createNewPlayer;
+    createNewPlayer = function() {
+      const originalCloseModal = closeParticipantModal;
+      closeParticipantModal = function() {
+        originalCloseModal();
+        setTimeout(updateLockCheckbox, 100);
+      };
+      originalCreateNewPlayer();
+      closeParticipantModal = originalCloseModal;
+    };
+
+    // Заполнить таблицу участниками из БД
+    function populateParticipantsFromDB() {
+      if(!Array.isArray(initialEntries) || initialEntries.length === 0) {
+        console.log('No initial entries found');
+        return;
+      }
+      console.log('Initial entries:', initialEntries);
+      
+      for(const item of initialEntries){
+        if(!item || !item.display || item.display === '—') continue;
+        const selector = `[data-type="participant"][data-group="${item.group_index}"][data-row="${item.row_index}"]`;
+        console.log('Looking for selector:', selector);
+        const cell = document.querySelector(selector);
+        console.log('Found cell:', cell);
+        if(!cell) continue;
+        
+        cell.textContent = item.display;
+        cell.title = item.title || '';
+        cell.style.textAlign = 'left';
+        // сохранить ID для последующих сохранений
+        if (item.p1) cell.dataset.p1 = item.p1;
+        cell.dataset.p2 = (item.p2 !== undefined && item.p2 !== null) ? String(item.p2) : '';
+        console.log('Populated cell with:', item.display);
+      }
+    }
+
+    // Инициализация
+    document.addEventListener('DOMContentLoaded', function() {
+      // сначала подставим участников из БД
+      populateParticipantsFromDB();
+      // затем обновим состояния и, если всё укомплектовано, включим фиксацию
+      updateLockCheckbox();
+      const checkbox = document.getElementById('lock-participants');
+      if (!checkbox.disabled) {
+        checkbox.checked = true;
+        participantsLocked = true;
+        updateCellStates();
+      }
+    });
+    
+    // Если DOM уже загружен
+    if(document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', updateLockCheckbox);
+    } else {
+      updateLockCheckbox();
+    }
     document.getElementById('btn-complete').addEventListener('click', function(e){
       e.preventDefault();
       // TODO: проверка сыгранности всех матчей; сейчас просто подтверждение

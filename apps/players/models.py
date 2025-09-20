@@ -9,6 +9,7 @@ class Player(models.Model):
     birth_date = models.DateField("Дата рождения", blank=True, null=True)
     phone = models.CharField("Телефон", max_length=20, blank=True, null=True)
     display_name = models.CharField("Отображаемое имя", max_length=150, blank=True)
+    city = models.CharField("Город", max_length=100, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

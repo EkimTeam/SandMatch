@@ -25,44 +25,52 @@ def _split_into_groups(team_ids: List[int], groups_count: int) -> List[List[int]
 
 
 def _round_robin_pairings(team_ids: Sequence[int]) -> List[List[Tuple[int, int]]]:
-    """Реализация алгоритма «круговой системы» (circle method).
+    """Формирует туры круговой системы (алгоритм Бергера) с балансировкой порядка.
 
-    Возвращает список туров; каждый тур — список пар (team1_id, team2_id).
-    Если кол-во участников нечётное — добавляется bye (None), матчи с bye пропускаем.
+    - Чётное N: ровно N-1 туров, каждая команда играет 1 матч за тур.
+    - Нечётное N: добавляется BYE (None), получаем N туров; пары с BYE пропускаем.
+    - Баланс: чередуем порядок пар (условно дом/гости) по чётности тура и индекса пары.
     """
     ids = list(team_ids)
     n = len(ids)
     if n < 2:
         return []
 
-    bye: Optional[int] = None
-    if n % 2 == 1:
-        ids.append(-1)  # маркер bye
-        bye = -1
+    bye = None
+    if n % 2 != 0:
+        ids.append(bye)
         n += 1
 
-    half = n // 2
-    left = ids[:half]
-    right = ids[half:][::-1]
+    fixed = ids[0]
+    rotating = ids[1:]
 
     rounds: List[List[Tuple[int, int]]] = []
-    for _ in range(n - 1):
+    for round_num in range(n - 1):
         pairs: List[Tuple[int, int]] = []
-        for a, b in zip(left, right):
-            if bye is not None and (a == bye or b == bye):
+
+        # Пара с фиксированной командой
+        if fixed is not None and rotating[-1] is not None:
+            if round_num % 2 == 0:
+                pairs.append((fixed, rotating[-1]))
+            else:
+                pairs.append((rotating[-1], fixed))
+
+        # Остальные пары симметрично из rotating
+        for i in range((n - 2) // 2):
+            a = rotating[i]
+            b = rotating[n - 3 - i]
+            if a is None or b is None:
                 continue
-            pairs.append((a, b))
+            if (round_num + i) % 2 == 0:
+                pairs.append((a, b))
+            else:
+                pairs.append((b, a))
+
         rounds.append(pairs)
-        # ротация
-        left_mid = left[1:]
-        right_mid = right[:-1]
-        left = [left[0]] + [right[-1]] + left_mid
-        right = [right[0]] + right_mid
+        # Вращаем список (кроме фиксированного)
+        rotating = [rotating[-1]] + rotating[:-1]
+
     return rounds
-
-
-def _letter(idx: int) -> str:
-    return chr(ord("A") + idx)
 
 
 def generate_round_robin_matches(tournament: Tournament) -> List[GeneratedMatch]:
@@ -84,7 +92,7 @@ def generate_round_robin_matches(tournament: Tournament) -> List[GeneratedMatch]
     generated: List[GeneratedMatch] = []
     for gi, group in enumerate(groups):
         rr = _round_robin_pairings(group)
-        round_name = f"Группа {_letter(gi)}"
+        round_name = f"Группа {gi + 1}"
         order = 1
         for tour_pairs in rr:
             for t1, t2 in tour_pairs:

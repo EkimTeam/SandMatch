@@ -8,7 +8,11 @@ from apps.tournaments.views import (
     TournamentDetailView,
     complete_tournament,
     delete_tournament,
+    save_participants,
+    save_score,
+    get_score,
 )
+from apps.players.views import search_players, create_player
 from apps.players.views import PlayersListView
 
 urlpatterns = [
@@ -19,6 +23,11 @@ urlpatterns = [
     path("tournaments/<int:pk>/", TournamentDetailView.as_view(), name="tournament_detail"),
     path("tournaments/<int:pk>/complete/", complete_tournament, name="tournament_complete"),
     path("tournaments/<int:pk>/delete/", delete_tournament, name="tournament_delete"),
+    path("tournaments/<int:pk>/save-participants/", save_participants, name="tournament_save_participants"),
+    path("tournaments/<int:pk>/save-score/", save_score, name="tournament_save_score"),
+    path("tournaments/<int:pk>/get-score/", get_score, name="tournament_get_score"),
     path("players/", PlayersListView.as_view(), name="players"),
+    path("players/search/", search_players, name="players_search"),
+    path("players/create/", create_player, name="players_create"),
     path("stats/", TemplateView.as_view(template_name="stats/index.html"), name="stats"),
 ]

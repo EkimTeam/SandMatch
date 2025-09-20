@@ -6,7 +6,9 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 from django.views.generic import TemplateView, DetailView
 
-from apps.tournaments.models import Tournament, SetFormat, Ruleset
+from apps.tournaments.models import Tournament, SetFormat, Ruleset, TournamentEntry
+from apps.teams.models import Team
+from apps.players.models import Player
 from apps.tournaments.services.round_robin import _round_robin_pairings
 
 
@@ -117,9 +119,48 @@ class TournamentDetailView(DetailView):
                 "orders": orders_text,
             })
 
+        # Получаем текущих участников из БД с их точными позициями
+        from apps.tournaments.models import TournamentEntry
+        entries = (
+            TournamentEntry.objects.filter(tournament=t)
+            .select_related("team__player_1", "team__player_2")
+            .order_by("group_index", "row_index")
+        )
+
+        # Соберём участников в словарь по позициям для точного восстановления
+        participants_map = {}
+        for e in entries:
+            team = e.team
+            p1 = team.player_1
+            p2 = team.player_2
+            if p2 is None:
+                display = p1.display_name or p1.first_name
+                title = str(p1)
+            else:
+                display = f"{p1.display_name or p1.first_name} / {p2.display_name or p2.first_name}"
+                title = f"{p1} / {p2}"
+            
+            participants_map[(e.group_index, e.row_index)] = {
+                "display": display,
+                "title": title,
+                "p1": p1.id,
+                "p2": p2.id if p2 else None,
+                "group_index": e.group_index,
+                "row_index": e.row_index,
+            }
+
+        # Формируем список для фронтенда: все участники в порядке их позиций
+        items = list(participants_map.values())
+
+        import json
         ctx.update({
             "planned": planned,
             "groups_ctx": groups_ctx,
+            # Список участников в порядке заполнения таблицы (для фронта)
+            "initial_entries": json.dumps(items, ensure_ascii=False),
+            "participant_label": (
+                "Участник" if t.participant_mode == Tournament.ParticipantMode.SINGLES else "Пара"
+            ),
         })
         return ctx
 
@@ -140,3 +181,484 @@ def delete_tournament(request: HttpRequest, pk: int):
     # Каскадное удаление произойдёт по FK связям (Match, TournamentEntry, пр.)
     t.delete()
     return redirect("tournaments")
+
+
+@require_POST
+def save_participants(request: HttpRequest, pk: int):
+    """Сохраняет текущих участников турнира (создаёт команды и TournamentEntry).
+
+    Ожидает JSON вида:
+    {
+      "entries": [
+        {"p1": <int>, "p2": <int|null>},
+        ...
+      ]
+    }
+    """
+    import json
+
+    t = get_object_or_404(Tournament, pk=pk)
+
+    if request.content_type != "application/json":
+        return HttpResponseBadRequest("expected application/json")
+
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except Exception:
+        return HttpResponseBadRequest("invalid json")
+
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+        return HttpResponseBadRequest("entries must be a list")
+
+    # Очищаем прежние участия (пересобираем с нуля)
+    TournamentEntry.objects.filter(tournament=t).delete()
+
+    created_entries = 0
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        p1_id = item.get("p1")
+        p2_id = item.get("p2")
+        group_index = item.get("group_index")
+        row_index = item.get("row_index")
+        if not p1_id:
+            continue
+        try:
+            gi = int(group_index)
+            ri = int(row_index)
+        except (TypeError, ValueError):
+            continue
+
+        try:
+            p1 = Player.objects.get(pk=int(p1_id))
+        except (Player.DoesNotExist, ValueError, TypeError):
+            continue
+
+        p2 = None
+        if p2_id is not None:
+            try:
+                p2 = Player.objects.get(pk=int(p2_id))
+            except (Player.DoesNotExist, ValueError, TypeError):
+                p2 = None
+
+        # Нормализуем порядок для пар: меньший id первым, чтобы не плодить дубликаты команд
+        if p2 is not None and p2.id == p1.id:
+            # запрещаем одинакового игрока в паре
+            continue
+        if p2 is not None and p2.id < p1.id:
+            p1, p2 = p2, p1
+
+        # Создаём/получаем команду
+        team, _ = Team.objects.get_or_create(player_1=p1, player_2=p2)
+
+        # Создаём участие в турнире
+        TournamentEntry.objects.update_or_create(
+            tournament=t,
+            group_index=gi,
+            row_index=ri,
+            defaults={"team": team},
+        )
+        created_entries += 1
+
+    # Генерация матчей для круговой системы по группам
+    from apps.matches.models import Match
+    # ВАЖНО: пары матчей не удаляем. Только создаём недостающие и обновляем порядок.
+
+    # Собираем участников по группам
+    group_map: dict[int, dict[int, int]] = {}
+    qs = TournamentEntry.objects.filter(tournament=t).select_related("team")
+    for e in qs:
+        group_map.setdefault(e.group_index, {})[e.row_index] = e.team_id
+
+    # Для каждой группы строим пары по _round_robin_pairings
+    # 1) Сначала собираем множество актуальных пар (нормализованных), чтобы затем удалить устаревшие.
+    new_pairs: set[tuple[int, int]] = set()
+    for g_index, rows_dict in group_map.items():
+        # индексы строк, отсортированные
+        row_ids = sorted(rows_dict.keys())
+        if len(row_ids) < 2:
+            continue
+        tours = _round_robin_pairings(row_ids)
+        for tour in tours:
+            for a, b in tour:
+                team1_id = rows_dict.get(a)
+                team2_id = rows_dict.get(b)
+                if not team1_id or not team2_id:
+                    continue
+                pair = (team1_id, team2_id)
+                pair_norm = (min(pair), max(pair))
+                new_pairs.add(pair_norm)
+
+    # 2) Создаём недостающие матчи и обновляем порядок для существующих
+    for g_index, rows_dict in group_map.items():
+        row_ids = sorted(rows_dict.keys())
+        if len(row_ids) < 2:
+            continue
+        tours = _round_robin_pairings(row_ids)
+        for tour_idx, tour in enumerate(tours, start=1):
+            for order_in_round, (a, b) in enumerate(tour, start=1):
+                team1_id = rows_dict.get(a)
+                team2_id = rows_dict.get(b)
+                if not team1_id or not team2_id:
+                    continue
+                # Ищем существующий матч (в любом порядке команд)
+                m = (
+                    Match.objects.filter(tournament=t, team_1_id=team1_id, team_2_id=team2_id).first()
+                    or Match.objects.filter(tournament=t, team_1_id=team2_id, team_2_id=team1_id).first()
+                )
+                if m is None:
+                    # Создаём новый матч (пары пишем в данном порядке). round_name и order_in_round задаём при создании
+                    low_id, high_id = (team1_id, team2_id) if team1_id < team2_id else (team2_id, team1_id)
+                    Match.objects.create(
+                        tournament=t,
+                        team_1_id=team1_id,
+                        team_2_id=team2_id,
+                        # Структурированные поля стадии
+                        stage=Match.Stage.GROUP,
+                        group_index=g_index,
+                        round_index=tour_idx,
+                        round_name=f"Группа {g_index}",
+                        team_low_id=low_id,
+                        team_high_id=high_id,
+                        order_in_round=order_in_round + (tour_idx - 1) * 100,
+                    )
+                else:
+                    # Пару не меняем, только обновляем порядок в туре
+                    new_order = order_in_round + (tour_idx - 1) * 100
+                    if m.order_in_round != new_order:
+                        m.order_in_round = new_order
+                        m.save(update_fields=["order_in_round"])
+
+    # 3) Удаляем устаревшие матчи (их пары не присутствуют в new_pairs)
+    # Сужаемся только на матчи группового этапа этого турнира, чтобы не трогать другие стадии
+    to_check = Match.objects.filter(tournament=t, stage=Match.Stage.GROUP).only("id", "team_1_id", "team_2_id")
+    removed = 0
+    for m in to_check:
+        pair_norm = (min(m.team_1_id, m.team_2_id), max(m.team_1_id, m.team_2_id))
+        if pair_norm not in new_pairs:
+            m.delete()
+            removed += 1
+
+    return JsonResponse({"ok": True, "saved": created_entries})
+
+
+def _find_match_for_cell(tournament, group_index: int, row_index: int, col_index: int):
+    """Находит матч для ячейки матрицы [group,row,col]."""
+    from apps.matches.models import Match
+    
+    try:
+        e1 = TournamentEntry.objects.get(tournament=tournament, group_index=group_index, row_index=row_index)
+        e2 = TournamentEntry.objects.get(tournament=tournament, group_index=group_index, row_index=col_index)
+    except TournamentEntry.DoesNotExist:
+        return None, None, None
+    
+    team1_id = e1.team_id
+    team2_id = e2.team_id
+    
+    # Ищем матч в любом порядке команд
+    match = (
+        Match.objects.filter(tournament=tournament, team_1_id=team1_id, team_2_id=team2_id).first()
+        or Match.objects.filter(tournament=tournament, team_1_id=team2_id, team_2_id=team1_id).first()
+    )
+    
+    # Определяем, нужно ли зеркалить счёт (если матч хранится в обратном порядке)
+    mirror_score = False
+    if match and match.team_1_id != team1_id:
+        mirror_score = True
+    
+    return match, team1_id, team2_id, mirror_score
+
+
+def _validate_sets(sets_data):
+    """Валидирует данные сетов."""
+    if not isinstance(sets_data, list):
+        return False, "Sets must be a list"
+    
+    for i, set_data in enumerate(sets_data):
+        if not isinstance(set_data, dict):
+            return False, f"Set {i+1} must be an object"
+        
+        games_1 = set_data.get('games_1')
+        games_2 = set_data.get('games_2')
+        tb_1 = set_data.get('tb_1')
+        tb_2 = set_data.get('tb_2')
+        is_tb_only = set_data.get('is_tb_only', False)
+        
+        # Проверяем обязательные поля
+        if not isinstance(games_1, int) or not isinstance(games_2, int):
+            return False, f"Set {i+1}: games_1 and games_2 must be integers"
+        
+        if games_1 < 0 or games_2 < 0:
+            return False, f"Set {i+1}: games cannot be negative"
+        
+        # Проверяем тайбрейки
+        if tb_1 is not None or tb_2 is not None:
+            if not isinstance(tb_1, int) or not isinstance(tb_2, int):
+                return False, f"Set {i+1}: if tiebreak is specified, both tb_1 and tb_2 must be integers"
+            if tb_1 < 0 or tb_2 < 0:
+                return False, f"Set {i+1}: tiebreak points cannot be negative"
+    
+    return True, None
+
+
+def _calculate_match_winner(match):
+    """Вычисляет победителя матча на основе сетов."""
+    sets = match.sets.all().order_by('index')
+    if not sets:
+        return None
+    
+    team1_sets = 0
+    team2_sets = 0
+    
+    for match_set in sets:
+        if match_set.is_tiebreak_only:
+            # Сет-тайбрейк: побеждает тот, у кого больше очков
+            if match_set.games_1 > match_set.games_2:
+                team1_sets += 1
+            else:
+                team2_sets += 1
+        else:
+            # Обычный сет с возможным тайбрейком
+            if match_set.games_1 > match_set.games_2:
+                team1_sets += 1
+            elif match_set.games_2 > match_set.games_1:
+                team2_sets += 1
+            # При равенстве геймов смотрим на тайбрейк
+            elif match_set.tb_1 is not None and match_set.tb_2 is not None:
+                if match_set.tb_1 > match_set.tb_2:
+                    team1_sets += 1
+                else:
+                    team2_sets += 1
+    
+    # Определяем победителя (лучший из 3 или 5 сетов)
+    sets_to_win = (len(sets) + 1) // 2
+    if team1_sets >= sets_to_win:
+        return match.team_1_id
+    elif team2_sets >= sets_to_win:
+        return match.team_2_id
+    else:
+        return None  # Матч не завершён
+
+
+@require_POST
+def save_score(request: HttpRequest, pk: int):
+    """Сохранение счёта для ячейки [group,row,col] круговой матрицы.
+
+    Ожидает JSON:
+    {
+      "group_index": int,
+      "row_index": int,
+      "col_index": int,
+      "sets": [
+        {
+          "games_1": int,
+          "games_2": int,
+          "tb_1": int|null,
+          "tb_2": int|null,
+          "is_tb_only": boolean
+        }
+      ],
+      "finalize": boolean  // опционально
+    }
+    """
+    import json
+    from apps.matches.models import Match, MatchSet
+    from django.utils import timezone
+
+    t = get_object_or_404(Tournament, pk=pk)
+    if request.content_type != "application/json":
+        return HttpResponseBadRequest("expected application/json")
+    
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except Exception:
+        return HttpResponseBadRequest("invalid json")
+
+    try:
+        gi = int(payload.get("group_index"))
+        ri = int(payload.get("row_index"))
+        ci = int(payload.get("col_index"))
+    except (TypeError, ValueError):
+        return HttpResponseBadRequest("invalid indices")
+
+    sets_data = payload.get("sets", [])
+    finalize = payload.get("finalize", False)
+    
+    # Валидация сетов
+    is_valid, error_msg = _validate_sets(sets_data)
+    if not is_valid:
+        return HttpResponseBadRequest(error_msg)
+    
+    # Находим матч
+    result = _find_match_for_cell(t, gi, ri, ci)
+    if result[0] is None:
+        return HttpResponseBadRequest("entries not found")
+    
+    match, team1_id, team2_id, mirror_score = result
+    
+    if not match:
+        # Создаём матч, если его нет
+        low_id, high_id = (team1_id, team2_id) if team1_id < team2_id else (team2_id, team1_id)
+        match = Match.objects.create(
+            tournament=t,
+            team_1_id=team1_id,
+            team_2_id=team2_id,
+            stage=Match.Stage.GROUP,
+            group_index=gi,
+            round_index=None,
+            round_name=f"Группа {gi}",
+            team_low_id=low_id,
+            team_high_id=high_id,
+        )
+        mirror_score = False
+    
+    # Удаляем старые сеты и создаём новые
+    match.sets.all().delete()
+    
+    for i, set_data in enumerate(sets_data, start=1):
+        games_1 = set_data['games_1']
+        games_2 = set_data['games_2']
+        tb_1 = set_data.get('tb_1')
+        tb_2 = set_data.get('tb_2')
+        is_tb_only = set_data.get('is_tb_only', False)
+        
+        # Зеркалим счёт, если нужно
+        if mirror_score:
+            games_1, games_2 = games_2, games_1
+            if tb_1 is not None and tb_2 is not None:
+                tb_1, tb_2 = tb_2, tb_1
+        
+        MatchSet.objects.create(
+            match=match,
+            index=i,
+            games_1=games_1,
+            games_2=games_2,
+            tb_1=tb_1,
+            tb_2=tb_2,
+            is_tiebreak_only=is_tb_only,
+        )
+    
+    # Обновляем статус матча
+    if not match.started_at and sets_data:
+        match.started_at = timezone.now()
+    
+    if finalize or sets_data:
+        winner = _calculate_match_winner(match)
+        if winner:
+            match.winner_id = winner
+            if finalize:
+                match.finished_at = timezone.now()
+    
+    match.save()
+    # Пересчитываем статистику по группе
+    try:
+        from apps.tournaments.services.stats import recalc_group_stats
+        recalc_group_stats(t, gi)
+    except Exception as e:
+        # Не роняем запрос, если пересчёт не удался; логирование можно добавить позже
+        pass
+    
+    # Формируем резюме для ответа
+    sets_summary = []
+    for match_set in match.sets.all().order_by('index'):
+        if mirror_score:
+            # Зеркалим обратно для отображения
+            g1, g2 = match_set.games_2, match_set.games_1
+            tb1, tb2 = match_set.tb_2, match_set.tb_1
+        else:
+            g1, g2 = match_set.games_1, match_set.games_2
+            tb1, tb2 = match_set.tb_1, match_set.tb_2
+        
+        if match_set.is_tiebreak_only:
+            sets_summary.append(f"{g1}:{g2}")
+        elif tb1 is not None and tb2 is not None:
+            sets_summary.append(f"{g1}:{g2} ({tb1}:{tb2})")
+        else:
+            sets_summary.append(f"{g1}:{g2}")
+    
+    summary = ", ".join(sets_summary)
+    
+    return JsonResponse({
+        "ok": True,
+        "summary": summary,
+        "winner": winner if not mirror_score else (team2_id if winner == team1_id else team1_id if winner == team2_id else None)
+    })
+
+
+def get_score(request: HttpRequest, pk: int):
+    """Получение счёта для ячейки [group,row,col] круговой матрицы.
+    
+    Параметры GET:
+    - group_index: int
+    - row_index: int
+    - col_index: int
+    """
+    t = get_object_or_404(Tournament, pk=pk)
+    
+    try:
+        gi = int(request.GET.get("group_index"))
+        ri = int(request.GET.get("row_index"))
+        ci = int(request.GET.get("col_index"))
+    except (TypeError, ValueError):
+        return HttpResponseBadRequest("invalid indices")
+    
+    # Находим матч
+    result = _find_match_for_cell(t, gi, ri, ci)
+    if result[0] is None:
+        return HttpResponseBadRequest("entries not found")
+    
+    match, team1_id, team2_id, mirror_score = result
+    
+    if not match:
+        return JsonResponse({
+            "ok": True,
+            "sets": [],
+            "summary": "",
+            "winner": None
+        })
+    
+    # Формируем данные сетов
+    sets_data = []
+    sets_summary = []
+    
+    for match_set in match.sets.all().order_by('index'):
+        if mirror_score:
+            # Зеркалим для отображения в UI
+            g1, g2 = match_set.games_2, match_set.games_1
+            tb1, tb2 = match_set.tb_2, match_set.tb_1
+        else:
+            g1, g2 = match_set.games_1, match_set.games_2
+            tb1, tb2 = match_set.tb_1, match_set.tb_2
+        
+        sets_data.append({
+            "games_1": g1,
+            "games_2": g2,
+            "tb_1": tb1,
+            "tb_2": tb2,
+            "is_tb_only": match_set.is_tiebreak_only
+        })
+        
+        if match_set.is_tiebreak_only:
+            sets_summary.append(f"{g1}:{g2}")
+        elif tb1 is not None and tb2 is not None:
+            sets_summary.append(f"{g1}:{g2} ({tb1}:{tb2})")
+        else:
+            sets_summary.append(f"{g1}:{g2}")
+    
+    summary = ", ".join(sets_summary)
+    
+    # Определяем победителя с учётом зеркалирования
+    winner = None
+    if match.winner_id:
+        if mirror_score:
+            winner = team2_id if match.winner_id == team1_id else team1_id if match.winner_id == team2_id else None
+        else:
+            winner = match.winner_id
+    
+    return JsonResponse({
+        "ok": True,
+        "sets": sets_data,
+        "summary": summary,
+        "winner": winner
+    })

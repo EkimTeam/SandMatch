@@ -32,7 +32,7 @@
   <body>
     <header>
       <div class="container" style="display:flex; gap:12px; align-items:center;">
-        <img src="{% static 'img/logo.png' %}" alt="SandMatch" class="logo" />
+        <img src="{% static 'img/logo.png' %}?v={{ request.build_absolute_uri|slice:'-10:' }}" alt="SandMatch" class="logo" />
         <div class="brand">SandMatch</div>
         <nav>
           <a class="nav {% if request.path|slice:":12" == "/tournaments" or request.path == "/" %}active{% endif %}" href="/tournaments/">Турниры</a>

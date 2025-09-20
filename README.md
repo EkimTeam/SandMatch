@@ -81,6 +81,23 @@ SandMatch/
 - Переменные БД задаются в `.env` (`POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_HOST`, `POSTGRES_PORT`).
 - По умолчанию используется `sandmatch.settings.local`.
 
+## База данных
+
+Смотрите подробности по схеме, ограничениям и служебным таблицам в `docs/DB.md`.
+
+Основные операции:
+
+```bash
+# применить миграции
+docker compose exec web python manage.py migrate
+
+# создать суперпользователя
+docker compose exec web python manage.py createsuperuser
+
+# пересчитать денормализованную статистику по турниру
+docker compose exec web python manage.py recalc_stats <tournament_id>
+```
+
 ## Дальнейшие шаги
 
 - Добавление участников и UI‑генерации расписания; ввод результатов матчей.

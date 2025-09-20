@@ -76,11 +76,37 @@ class TournamentEntry(models.Model):
     tournament = models.ForeignKey(Tournament, on_delete=models.CASCADE, related_name="entries")
     team = models.ForeignKey("teams.Team", on_delete=models.CASCADE, related_name="tournament_entries")
     is_out_of_competition = models.BooleanField(default=False, verbose_name="Вне зачёта")
+    group_index = models.PositiveSmallIntegerField(default=1)
+    row_index = models.PositiveSmallIntegerField(default=1)
 
     class Meta:
-        unique_together = (("tournament", "team"),)
+        constraints = [
+            models.UniqueConstraint(fields=["tournament", "team"], name="unique_entry_team_in_tournament"),
+            models.UniqueConstraint(fields=["tournament", "group_index", "row_index"], name="unique_entry_position"),
+        ]
         verbose_name = "Участие в турнире"
         verbose_name_plural = "Участия в турнире"
 
     def __str__(self) -> str:
         return f"{self.tournament}: {self.team}"
+
+
+class TournamentEntryStats(models.Model):
+    """Денормализованная статистика по участнику турнира для ускорения отрисовки таблиц.
+
+    Обновляется приложением при изменении результатов матчей.
+    """
+    entry = models.OneToOneField(TournamentEntry, on_delete=models.CASCADE, related_name="stats")
+    wins = models.PositiveIntegerField(default=0)
+    sets_won = models.PositiveIntegerField(default=0)
+    sets_lost = models.PositiveIntegerField(default=0)
+    games_won = models.PositiveIntegerField(default=0)
+    games_lost = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Статистика участника турнира"
+        verbose_name_plural = "Статистики участников турнира"
+
+    def __str__(self) -> str:
+        return f"Stats: {self.entry}"
