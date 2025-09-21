@@ -13,6 +13,7 @@ from apps.tournaments.views import (
     get_score,
     start_match,
     cancel_start_match,
+    cancel_score,
     get_group_stats,
 )
 from apps.players.views import search_players, create_player
@@ -31,6 +32,7 @@ urlpatterns = [
     path("tournaments/<int:pk>/get-score/", get_score, name="tournament_get_score"),
     path("tournaments/<int:pk>/start-match/", start_match, name="tournament_start_match"),
     path("tournaments/<int:pk>/cancel-start-match/", cancel_start_match, name="tournament_cancel_start_match"),
+    path("tournaments/<int:pk>/cancel-score/", cancel_score, name="tournament_cancel_score"),
     path("tournaments/<int:pk>/group-stats/", get_group_stats, name="tournament_group_stats"),
     path("players/", PlayersListView.as_view(), name="players"),
     path("players/search/", search_players, name="players_search"),

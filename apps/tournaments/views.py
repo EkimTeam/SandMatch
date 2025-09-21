@@ -894,6 +894,63 @@ def start_match(request: HttpRequest, pk: int):
 
 
 @require_POST
+def cancel_score(request: HttpRequest, pk: int):
+    """Отменяет введённый счёт: удаляет MatchSet, сбрасывает winner/started_at/finished_at и статус.
+
+    Ожидает JSON:
+    {
+      "group_index": int,
+      "row_index": int,
+      "col_index": int
+    }
+    """
+    from apps.matches.models import Match
+
+    t = get_object_or_404(Tournament, pk=pk)
+
+    if request.content_type != "application/json":
+        return HttpResponseBadRequest("expected application/json")
+
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except Exception:
+        return HttpResponseBadRequest("invalid json")
+
+    try:
+        gi = int(payload.get("group_index"))
+        ri = int(payload.get("row_index"))
+        ci = int(payload.get("col_index"))
+    except (TypeError, ValueError):
+        return HttpResponseBadRequest("invalid indices")
+
+    match, _t1, _t2, _mirror = _find_match_for_cell(t, gi, ri, ci)
+    if not match:
+        # Нечего отменять, но на фронте надо очистить обе ячейки
+        return JsonResponse({"ok": True, "mirror_row_index": ci, "mirror_col_index": ri})
+
+    # Удаляем все сеты и сбрасываем поля матча
+    match.sets.all().delete()
+    match.winner_id = None
+    match.started_at = None
+    match.finished_at = None
+    match.status = Match.Status.SCHEDULED
+    match.save(update_fields=["winner_id", "started_at", "finished_at", "status"])
+
+    # Пересчитываем статистику по группе
+    try:
+        from apps.tournaments.services.stats import recalc_group_stats
+        recalc_group_stats(t, gi)
+    except Exception:
+        pass
+
+    return JsonResponse({
+        "ok": True,
+        "mirror_row_index": ci,
+        "mirror_col_index": ri,
+    })
+
+
+@require_POST
 def cancel_start_match(request: HttpRequest, pk: int):
     """Отменяет начало матча: started_at=NULL, статус возвращаем в scheduled (если не завершён).
 

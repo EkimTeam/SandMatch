@@ -5,6 +5,19 @@
     <div class="meta">{{ object.get_system_display }} • {{ object.get_participant_mode_display }} • Групп: {{ object.groups_count }}</div>
   </div>
 
+  <!-- Модалка для ячейки со счётом: отменить счёт / ввести заново -->
+  <div id="score-scored-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000;">
+    <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:#fff; padding:20px; border-radius:8px; width:90%; max-width:420px;">
+      <h3 style="margin-top:0;">Результат сохранён</h3>
+      <div class="meta" style="margin-bottom:12px;">Выберите действие для текущего результата.</div>
+      <div style="display:flex; gap:10px; justify-content:flex-end;">
+        <button id="btn-cancel-score-match" class="btn" style="background:#f8d7da; color:#721c24;">Отменить счёт матча</button>
+        <button id="btn-enter-score-from-scored" class="btn">Ввести счёт</button>
+        <button id="btn-close-scored" class="btn" style="background:#6c757d;">Отмена</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Модалка ввода счёта (MVP: один сет) -->
   <div id="score-input-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000;">
     <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:#fff; padding:20px; border-radius:8px; width:90%; max-width:420px;">
@@ -79,6 +92,30 @@
         initialEntries = JSON.parse(scriptEl.textContent);
       }
 
+    function cancelScoreAction(){
+      if(!currentCell) return;
+      const gi = parseInt(currentCell.dataset.group);
+      const ri = parseInt(currentCell.dataset.row);
+      const ci = parseInt(currentCell.dataset.col);
+      fetch(`/tournaments/{{ object.id }}/cancel-score/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': getCSRF()
+        },
+        body: JSON.stringify({ group_index: gi, row_index: ri, col_index: ci })
+      }).then(r=>r.json()).then(data=>{
+        if(!data.ok){ alert('Не удалось отменить счёт'); return; }
+        clearScoreCell(gi, ri, ci);
+        clearScoreCell(gi, data.mirror_row_index, data.mirror_col_index);
+        closeScoreScoredModal();
+        refreshGroupStats(gi);
+      }).catch(err=>{
+        console.error('Ошибка отмены счёта:', err);
+        alert('Ошибка отмены счёта');
+      });
+    }
+
     // Обновление технических столбцов (победы/сеты/соотношения/геймы/место)
     function refreshGroupStats(groupIdx){
       fetch(`/tournaments/{{ object.id }}/group-stats/?group_index=${groupIdx}`)
@@ -132,6 +169,14 @@
 
     function closeScoreLiveModal(){
       document.getElementById('score-live-modal').style.display = 'none';
+    }
+
+    function openScoreScoredModal(){
+      document.getElementById('score-scored-modal').style.display = 'block';
+    }
+
+    function closeScoreScoredModal(){
+      document.getElementById('score-scored-modal').style.display = 'none';
     }
 
     function openScoreInputModal(){
@@ -354,7 +399,9 @@
         } else {
           // Для ячейки со статусом live открываем модалку отмены/ввода счёта
           currentCell = cell;
-          if (cell.dataset.status === 'live' || cell.classList.contains('live-cell')) {
+          if (cell.classList.contains('scored-cell')) {
+            openScoreScoredModal();
+          } else if (cell.dataset.status === 'live' || cell.classList.contains('live-cell')) {
             openScoreLiveModal();
           } else {
             // Обычная модалка: начать матч / ввести счёт
@@ -637,6 +684,14 @@
     });
     onById('btn-cancel-start', 'click', cancelStartAction);
 
+    // Кнопки модалки для введённого счёта
+    onById('btn-close-scored', 'click', closeScoreScoredModal);
+    onById('btn-enter-score-from-scored', 'click', function(){
+      closeScoreScoredModal();
+      openScoreInputModal();
+    });
+    onById('btn-cancel-score-match', 'click', cancelScoreAction);
+
     // Модалка ввода счёта: кнопки
     onById('btn-cancel-score-input', 'click', closeScoreInputModal);
     onById('btn-confirm-score', 'click', submitScore);
@@ -695,6 +750,19 @@
       cell.removeAttribute('data-status');
       cell.textContent = '';
       // Если участники зафиксированы, ячейка остаётся активной для ввода счёта
+      if (!participantsLocked) {
+        cell.classList.add('frozen');
+      }
+    }
+
+    function clearScoreCell(groupIdx, rowIdx, colIdx){
+      const selector = `[data-type="score"][data-group="${groupIdx}"][data-row="${rowIdx}"][data-col="${colIdx}"]`;
+      const cell = document.querySelector(selector);
+      if(!cell) return;
+      cell.textContent = '';
+      cell.classList.remove('scored-cell');
+      cell.classList.remove('live-cell');
+      cell.removeAttribute('data-status');
       if (!participantsLocked) {
         cell.classList.add('frozen');
       }
@@ -817,6 +885,14 @@
     if (scoreInputModalEl) {
       scoreInputModalEl.addEventListener('click', (e) => {
         if(e.target.id === 'score-input-modal') closeScoreInputModal();
+      });
+    }
+
+    // Закрытие модалки "результат сохранён" по клику на фон
+    const scoreScoredModalEl = document.getElementById('score-scored-modal');
+    if (scoreScoredModalEl) {
+      scoreScoredModalEl.addEventListener('click', (e) => {
+        if(e.target.id === 'score-scored-modal') closeScoreScoredModal();
       });
     }
 
