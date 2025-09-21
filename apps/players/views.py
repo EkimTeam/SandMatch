@@ -3,6 +3,7 @@ from django.shortcuts import render
 from django.views.generic import ListView
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET, require_POST
+from django.db import IntegrityError, connection, transaction
 from django.db.models import Q
 import json
 
@@ -53,15 +54,36 @@ def create_player(request):
         if existing:
             return JsonResponse({'error': f'Игрок {existing.display_name} уже существует'}, status=400)
         
-        player = Player.objects.create(
-            first_name=first_name,
-            last_name=last_name
-        )
+        # Пытаемся создать игрока. Если произошло "duplicate key value ... players_player_pkey",
+        # то это признак рассинхронизации последовательности id после ручных вставок.
+        try:
+            player = Player.objects.create(
+                first_name=first_name,
+                last_name=last_name
+            )
+        except IntegrityError as e:
+            msg = str(e)
+            if 'players_player_pkey' in msg or 'duplicate key value' in msg:
+                # Чиним последовательность и пробуем ещё раз
+                with transaction.atomic():
+                    with connection.cursor() as cur:
+                        cur.execute(
+                            'SELECT setval(pg_get_serial_sequence(%s, %s), COALESCE(MAX(id), 1)) FROM "players_player";',
+                            ('"players_player"', 'id')
+                        )
+                player = Player.objects.create(
+                    first_name=first_name,
+                    last_name=last_name
+                )
+            else:
+                raise
         
         return JsonResponse({
             'id': player.id,
             'display_name': player.display_name,
             'full_name': f"{player.last_name} {player.first_name}"
         })
+    except IntegrityError as e:
+        return JsonResponse({'error': 'Ошибка базы данных при создании игрока'}, status=500)
     except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+        return JsonResponse({'error': 'Внутренняя ошибка сервера при создании игрока'}, status=500)

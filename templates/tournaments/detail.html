@@ -1,8 +1,27 @@
 {% extends "base.html" %}
+{% load static %}
 {% block content %}
   <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom: 12px;">
     <h1 style="margin:0;">{{ object.name }} — {{ object.date }}</h1>
-    <div class="meta">{{ object.get_system_display }} • {{ object.get_participant_mode_display }} • Групп: {{ object.groups_count }}</div>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <div class="meta">{{ object.get_system_display }} • {{ object.get_participant_mode_display }} • Групп: {{ object.groups_count }}</div>
+    </div>
+  </div>
+
+  <!-- Скрытый блок для генерации PNG: 1080px ширина, белый фон, логотип и подпись -->
+  <div id="export-canvas-source" style="position:absolute; left:-99999px; top:-99999px; width:1080px; background:#ffffff; color:#000; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';">
+    <div style="position:relative; padding:24px 24px 12px 24px; border-bottom:1px solid #eee;">
+      <img src="{% static 'img/logo.png' %}" alt="SandMatch" style="position:absolute; right:24px; top:24px; height:48px;" />
+      <div style="font-size:28px; font-weight:700;">{{ object.name }}</div>
+      <div style="font-size:16px; color:#666;">{{ object.date }} • {{ object.get_system_display }} • {{ object.get_participant_mode_display }}</div>
+    </div>
+    <div id="export-content" style="padding:16px 24px 8px 24px;">
+      <!-- сюда будет склонировано содержимое таблиц групп -->
+    </div>
+    <div style="padding:8px 24px 20px 24px; display:flex; justify-content:space-between; align-items:center; gap:12px; border-top:1px solid #eee;">
+      <div style="font-size:14px; color:#777;">Сформировано в SandMatch</div>
+      <div style="font-size:16px; font-weight:600;">скоро он-лайн</div>
+    </div>
   </div>
 
   <!-- Модалка для ячейки со счётом: отменить счёт / ввести заново -->
@@ -76,12 +95,16 @@
     .live-text { color: #2e7d32; font-weight: 600; }
     .scored-cell { font-weight: 600; }
     .col-thin { width: 60px; }
+    /* Делает шире колонку "Победы", чтобы надпись не налезала */
+    .col-wins { width: 80px; }
     .tbl th { white-space: normal; }
     @media (max-width: 600px){ .toggle { font-size: 14px; } }
   </style>
 
   <script id="initial-entries" type="application/json">{{ initial_entries|default:"[]"|safe }}</script>
   <script id="initial-scores" type="application/json">{{ initial_scores|default:"[]"|safe }}</script>
+  <!-- html2canvas для экспорта PNG -->
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" defer></script>
   <script>
     // Участники, сохранённые в БД (в порядке заполнения)
     let initialEntries = [];
@@ -286,7 +309,13 @@
   <!-- Модальное окно выбора участника -->
   <div id="participant-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000;">
     <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:#fff; padding:20px; border-radius:8px; width:90%; max-width:600px;">
-      <h3>Выбор {{ participant_label|lower }}а</h3>
+      <h3>
+        {% if object.participant_mode == 'doubles' %}
+          Выбор пары
+        {% else %}
+          Выбор участника
+        {% endif %}
+      </h3>
       
       <!-- Для одиночного турнира -->
       <div id="singles-selection" style="display:none;">
@@ -367,7 +396,7 @@
   <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:16px;">
     <a href="#" id="btn-complete" class="btn">Завершить турнир</a>
     <a href="#" id="btn-delete" class="btn" style="background:#dc3545;">Удалить турнир</a>
-    <a href="#" class="btn" style="background:#6c757d; cursor:not-allowed;" aria-disabled="true" onclick="return false;">Поделиться</a>
+    <a href="#" id="btn-share" class="btn">Поделиться</a>
   </div>
 
   <script>
@@ -973,9 +1002,10 @@
     // Обновление состояния чекбокса
     function updateLockCheckbox() {
       const checkbox = document.getElementById('lock-participants');
+      if (!checkbox) return;
       const filled = countParticipantsForValidation();
-      // Для парных турниров одна заполненная строка = 1 пара = 2 участника
-      const selectedCount = isDoublesMode ? (filled +1) : filled;
+      // Для парных турниров одна заполненная строка = 1 пара
+      const selectedCount = filled;
       
       if(selectedCount === plannedParticipants && plannedParticipants > 0) {
         checkbox.disabled = false;
@@ -1138,6 +1168,65 @@
       }
     }
 
+    // Сборка блока экспорта: клонируем все таблицы .tbl c текущим содержимым
+    function buildExportView(){
+      const exportRoot = document.getElementById('export-canvas-source');
+      const exportContent = document.getElementById('export-content');
+      if(!exportRoot || !exportContent) return;
+      // очистить
+      exportContent.innerHTML = '';
+      // найти все таблицы с результатами
+      const tables = document.querySelectorAll('table.tbl');
+      if (!tables.length) return;
+      tables.forEach((tbl, idx)=>{
+        const wrapper = document.createElement('div');
+        wrapper.style.marginBottom = '16px';
+        const title = document.createElement('div');
+        title.style.fontWeight = '600';
+        title.style.margin = '8px 0';
+        title.textContent = `Группа ${idx+1}`;
+        // Клон таблицы
+        const clone = tbl.cloneNode(true);
+        // Упростим оформление для экспорта
+        clone.style.width = '100%';
+        clone.style.tableLayout = 'fixed';
+        // удалить интерактив
+        clone.querySelectorAll('button, .toggle').forEach(el=>el.remove());
+        // убрать липкие заголовки/ячейки, т.к. html2canvas рендерит их неправильно
+        clone.querySelectorAll('.sticky').forEach(el=>{
+          el.classList.remove('sticky');
+          el.style.position = 'static';
+          el.style.left = 'auto';
+          el.style.zIndex = 'auto';
+        });
+        // Добавим класс для тонких границ
+        clone.classList.add('for-export');
+        wrapper.appendChild(title);
+        wrapper.appendChild(clone);
+        exportContent.appendChild(wrapper);
+      });
+    }
+
+    // Запуск html2canvas и скачивание PNG
+    async function shareAsImage(){
+      try {
+        buildExportView();
+        const node = document.getElementById('export-canvas-source');
+        if(!node || typeof html2canvas === 'undefined'){ alert('Экспорт недоступен'); return; }
+        const canvas = await html2canvas(node, { backgroundColor: '#ffffff', scale: 2, useCORS: true });
+        const dataUrl = canvas.toDataURL('image/png');
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = "tournament_{{ object.date|date:'Y-m-d' }}.png";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } catch (e) {
+        console.error('Ошибка экспорта:', e);
+        alert('Не удалось сформировать изображение');
+      }
+    }
+
     // Инициализация
     document.addEventListener('DOMContentLoaded', function() {
       // сначала подставим участников из БД
@@ -1162,6 +1251,9 @@
         participantsLocked = true;
         updateCellStates();
       }
+      // Кнопка «Поделиться»
+      const shareBtn = document.getElementById('btn-share');
+      if (shareBtn) shareBtn.addEventListener('click', function(e){ e.preventDefault(); shareAsImage(); });
     });
     
     // Если DOM уже загружен
