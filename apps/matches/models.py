@@ -16,6 +16,9 @@ class Match(models.Model):
     tournament = models.ForeignKey(
         "tournaments.Tournament", on_delete=models.CASCADE, related_name="matches"
     )
+    bracket = models.ForeignKey(
+        "tournaments.KnockoutBracket", on_delete=models.SET_NULL, null=True, blank=True, related_name="matches"
+    )
     team_1 = models.ForeignKey(
         "teams.Team", on_delete=models.PROTECT, related_name="matches_as_team1"
     )
@@ -39,6 +42,7 @@ class Match(models.Model):
     # Человеко-читаемое имя раунда оставляем для обратной совместимости/отображения
     round_name = models.CharField(max_length=50, blank=True, null=True)
     order_in_round = models.IntegerField(default=0)
+    is_third_place = models.BooleanField(default=False)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.SCHEDULED)
     scheduled_time = models.DateTimeField(blank=True, null=True)
     started_at = models.DateTimeField(blank=True, null=True)
@@ -54,6 +58,7 @@ class Match(models.Model):
             models.Index(fields=["tournament", "team_low"]),
             models.Index(fields=["tournament", "team_high"]),
             models.Index(fields=["tournament", "stage", "group_index", "round_index", "order_in_round"]),
+            models.Index(fields=["tournament", "stage", "bracket", "round_index", "order_in_round"]),
         ]
         constraints = [
             # Уникальность пары в рамках турнира/стадии/группы (независимо от порядка команд)

@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% load static %}
+{% block content %}
+  <style>
+    .tournament-bracket { display:flex; flex-direction:column; width:100%; padding:20px 0; overflow-x:auto; }
+    .bracket-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px; }
+    .bracket-title { font-size:24px; font-weight:700; color:#2c3e50; margin:0; }
+    .bracket-meta { color:#7f8c8d; font-size:14px; }
+
+    .bracket-box { background:#fff; border:1px solid #e7e7ea; border-radius:10px; padding:14px; margin-bottom:16px; }
+    .bracket-name { font-size:18px; font-weight:600; margin:0 0 12px 0; }
+
+    .bracket-grid { display:flex; justify-content:center; position:relative; }
+    .bracket-round { display:flex; flex-direction:column; justify-content:space-around; min-width:200px; position:relative; padding:0 15px; }
+    .round-title { text-align:center; font-weight:600; color:#34495e; padding:10px; margin-bottom:10px; background-color:#f8f9fa; border-radius:4px; }
+
+    .bracket-match { position:relative; margin:15px 0; min-height:80px; display:flex; flex-direction:column; justify-content:center; }
+    .match-connector { position:absolute; top:50%; right:-15px; width:15px; height:2px; background-color:#95a5a6; z-index:1; }
+    .match-connector-vertical { position:absolute; top:50%; right:-15px; width:2px; height:100%; background-color:#95a5a6; transform:translateY(-50%); z-index:1; }
+
+    .match-card { background:#fff; border:1px solid #e0e0e0; border-radius:6px; padding:10px; box-shadow:0 2px 4px rgba(0,0,0,0.05); transition:all .2s ease; }
+    .participant { display:flex; align-items:center; padding:8px 10px; border-radius:4px; margin-bottom:4px; background-color:#f8f9fa; position:relative; }
+    .participant:last-child { margin-bottom:0; }
+    .participant-score { margin-left:auto; padding:2px 8px; background:#fff; border-radius:12px; border:1px solid #e0e0e0; min-width:30px; text-align:center; font-size:14px; }
+    .match-info { font-size:12px; color:#7f8c8d; text-align:center; margin-top:5px; }
+
+    .third-place { margin-top:20px; padding-top:16px; border-top:1px dashed #bdc3c7; }
+    .third-place-title { text-align:center; font-weight:600; color:#e67e22; margin-bottom:10px; }
+
+    @media (max-width: 768px){ .bracket-round{min-width:160px; padding:0 10px;} .participant{padding:6px 8px; font-size:14px;} .participant-score{min-width:25px; font-size:12px;} }
+    @media (max-width: 576px){ .bracket-round{min-width:140px; padding:0 8px;} .round-title{font-size:14px; padding:8px 5px;} .match-card{padding:8px;} .participant{padding:5px 6px; font-size:12px;} }
+  </style>
+
+  <div class="bracket-header">
+    <h1 class="bracket-title">{{ object.name }}</h1>
+    <div class="bracket-meta">{{ object.date }} • {{ object.get_participant_mode_display }}</div>
+    <div style="margin-left:auto; display:flex; gap:8px; flex-wrap:wrap;">
+      <a href="#" id="btn-generate" class="btn">Сгенерировать сетку</a>
+    </div>
+  </div>
+
+  <div class="tournament-bracket">
+    {% for br in knockout.brackets %}
+      <div class="bracket-box">
+        <div class="bracket-name">Сетка {{ br.index }}</div>
+        <div class="bracket-grid">
+          {% for round in br.rounds %}
+            <div class="bracket-round">
+              <div class="round-title">{{ round.name }}</div>
+              {% for match in round.matches %}
+                <div class="bracket-match">
+                  {% if not forloop.last or round.is_final %}
+                    <div class="match-connector"></div>
+                    {% if round.matches|length > 1 %}
+                      <div class="match-connector-vertical"></div>
+                    {% endif %}
+                  {% endif %}
+                  <div class="match-card">
+                    <div class="participant"><span class="participant-name">—</span><span class="participant-score">0</span></div>
+                    <div class="participant"><span class="participant-name">—</span><span class="participant-score">0</span></div>
+                    <div class="match-info">&nbsp;</div>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          {% endfor %}
+        </div>
+
+        <div class="third-place">
+          <div class="third-place-title">Матч за третье место</div>
+          <div class="bracket-match">
+            <div class="match-card">
+              <div class="participant"><span class="participant-name">—</span><span class="participant-score">0</span></div>
+              <div class="participant"><span class="participant-name">—</span><span class="participant-score">0</span></div>
+              <div class="match-info">&nbsp;</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    {% empty %}
+      <div class="card">Сетки ещё не сформированы</div>
+    {% endfor %}
+  </div>
+
+  <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:30px;">
+    <a href="#" id="btn-complete" class="btn">Завершить турнир</a>
+    <a href="#" id="btn-delete" class="btn" style="background:#dc3545;">Удалить турнир</a>
+    <a href="#" id="btn-share" class="btn">Поделиться</a>
+  </div>
+
+  <form id="frm-complete" method="post" action="/tournaments/{{ object.id }}/complete/" style="display:none;">{% csrf_token %}</form>
+  <form id="frm-delete" method="post" action="/tournaments/{{ object.id }}/delete/" style="display:none;">{% csrf_token %}</form>
+  <script>
+    // Инлайновый JS (в духе проекта): загрузка JSON и отрисовка сетки
+    const TID = {{ object.id }};
+    function getCookie(name) {
+      const value = `; ${document.cookie}`;
+      const parts = value.split(`; ${name}=`);
+      if (parts.length === 2) return parts.pop().split(';').shift();
+    }
+
+    async function fetchBrackets() {
+      try {
+        const res = await fetch(`/tournaments/${TID}/brackets.json`, { headers: { 'X-Requested-With': 'XMLHttpRequest' }});
+        if(!res.ok) return null;
+        return await res.json();
+      } catch(e) { return null; }
+    }
+
+    function el(tag, attrs={}, ...children){
+      const n = document.createElement(tag);
+      for(const [k,v] of Object.entries(attrs||{})){
+        if(k === 'class') n.className = v; else if(k === 'html') n.innerHTML = v; else n.setAttribute(k,v);
+      }
+      for(const c of children){ if(c==null) continue; if(typeof c === 'string') n.appendChild(document.createTextNode(c)); else n.appendChild(c); }
+      return n;
+    }
+
+    function participantNode(p){
+      const name = p && p.name ? p.name : '—';
+      const score = (p && p.score != null) ? String(p.score) : '0';
+      return el('div', {class:'participant'}, el('span', {class:'participant-name'}, name), el('span', {class:'participant-score'}, score));
+    }
+
+    function matchCard(m){
+      const card = el('div', {class:'match-card'});
+      // Упрощённо: итоговый счёт не считаем, выводим без агрегирования сетов
+      card.appendChild(participantNode(m.team1));
+      card.appendChild(participantNode(m.team2));
+      const info = el('div', {class:'match-info'}, m.time ? m.time : '\u00A0');
+      card.appendChild(info);
+      return card;
+    }
+
+    function renderFromJson(data){
+      if(!data || !data.brackets || data.brackets.length===0) return; // оставим серверный каркас
+      const root = document.querySelector('.tournament-bracket');
+      root.innerHTML = '';
+      for(const br of data.brackets){
+        const box = el('div', {class:'bracket-box'});
+        box.appendChild(el('div', {class:'bracket-name'}, `Сетка ${br.index}`));
+        const grid = el('div', {class:'bracket-grid'});
+        for(const round of br.rounds){
+          const col = el('div', {class:'bracket-round'});
+          col.appendChild(el('div', {class:'round-title'}, round.name));
+          for(const m of round.matches){
+            const bm = el('div', {class:'bracket-match'});
+            // Соединители как в макете
+            bm.appendChild(el('div', {class:'match-connector'}));
+            if(round.matches.length > 1){ bm.appendChild(el('div', {class:'match-connector-vertical'})); }
+            bm.appendChild(matchCard(m));
+            col.appendChild(bm);
+          }
+          grid.appendChild(col);
+        }
+        // Матч за 3‑е (если есть)
+        if(br.third_place){
+          const tpWrap = el('div', {class:'third-place'});
+          tpWrap.appendChild(el('div', {class:'third-place-title'}, 'Матч за третье место'));
+          const tpMatch = el('div', {class:'bracket-match'});
+          tpMatch.appendChild(matchCard(br.third_place));
+          tpWrap.appendChild(tpMatch);
+          box.appendChild(grid);
+          box.appendChild(tpWrap);
+        } else {
+          box.appendChild(grid);
+        }
+        root.appendChild(box);
+      }
+    }
+
+    async function generateBrackets(){
+      try{
+        const res = await fetch(`/tournaments/${TID}/generate/knockout/`, {
+          method:'POST', headers: { 'X-Requested-With':'XMLHttpRequest', 'X-CSRFToken': getCookie('csrftoken') || '' }
+        });
+        if(!res.ok){ alert('Не удалось сгенерировать сетку'); return; }
+        const data = await fetchBrackets();
+        renderFromJson(data);
+      }catch(e){ alert('Сетевая ошибка при генерации'); }
+    }
+
+    document.getElementById('btn-generate').addEventListener('click', (e)=>{ e.preventDefault(); generateBrackets(); });
+
+    // Попробуем загрузить уже существующую сетку (если её ещё нет — оставим каркас)
+    (async ()=>{ const data = await fetchBrackets(); renderFromJson(data); })();
+  </script>
+{% endblock %}

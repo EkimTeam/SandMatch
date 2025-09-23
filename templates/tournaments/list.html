@@ -112,11 +112,22 @@
             <label>Регламент</label>
             <select id="f-ruleset">
               {% for rs in rulesets %}
-                <option value="{{ rs.id }}">{{ rs.name }}</option>
+                <option value="{{ rs.id }}"{% if rs.name == "(ITF) победы > личные встречи > разница сетов между всеми > личные встречи > разница геймов между всеми > личные встречи" %} selected{% endif %}>{{ rs.name }}</option>
               {% endfor %}
             </select>
           </div>
           <div id="rr-error" class="error" style="display:none;"></div>
+        </div>
+        <div id="ko-fields" style="display:none;">
+          <div class="row">
+            <label>Число участников</label>
+            <input type="number" id="k-participants" min="1" step="1" placeholder="Например, 16" />
+          </div>
+          <div class="row">
+            <label>Число сеток</label>
+            <input type="number" id="k-brackets" min="1" step="1" value="1" />
+          </div>
+          <div id="ko-error" class="error" style="display:none;"></div>
         </div>
       </div>
       <footer style="display:flex; gap:12px; justify-content:flex-end; padding: 12px 16px; border-top:1px solid #eee;">
@@ -141,8 +152,16 @@
     btnOpen.addEventListener('click', e=>{ e.preventDefault(); showModal(); });
     btnClose.addEventListener('click', e=>{ e.preventDefault(); hideModal(); });
     btnCancel.addEventListener('click', e=>{ e.preventDefault(); hideModal(); });
-    sys.addEventListener('change', ()=>{ rr.style.display = sys.value==='round_robin' ? 'block':'none'; });
-    rr.style.display = sys.value==='round_robin' ? 'block':'none';
+    const ko = document.getElementById('ko-fields');
+    function switchSystem(){
+      rr.style.display = sys.value==='round_robin' ? 'block':'none';
+      ko.style.display = sys.value==='knockout' ? 'block':'none';
+      rrError.style.display='none'; rrError.textContent='';
+      const koError = document.getElementById('ko-error');
+      koError.style.display='none'; koError.textContent='';
+    }
+    sys.addEventListener('change', switchSystem);
+    switchSystem();
 
     function getCookie(name) {
       const value = `; ${document.cookie}`;
@@ -161,6 +180,8 @@
         ruleset_id: document.getElementById('f-ruleset').value,
         groups_count: document.getElementById('f-groups').value,
         participants: document.getElementById('f-participants').value,
+        ko_participants: document.getElementById('k-participants').value,
+        brackets_count: document.getElementById('k-brackets').value,
       };
       if(!payload.name || !payload.date){ return alert('Заполните название и дату'); }
       if(payload.system==='round_robin'){
@@ -168,6 +189,16 @@
         if(p && g && p <= g*2){
           rrError.style.display='block';
           rrError.textContent='Слишком мало участников для такого количества групп. Уменьшите количество групп или увеличьте количество участников или выберите другую систему проведения';
+          return;
+        }
+      } else if (payload.system==='knockout'){
+        const p = parseInt(payload.ko_participants||'0',10), b = parseInt(payload.brackets_count||'1',10);
+        const koError = document.getElementById('ko-error');
+        if(!p || p<1){ koError.style.display='block'; koError.textContent='Укажите число участников'; return; }
+        if(b<1){ koError.style.display='block'; koError.textContent='Число сеток должно быть не менее 1'; return; }
+        if(p <= b*2){
+          koError.style.display='block';
+          koError.textContent='Слишком мало участников для такого количества сеток. Уменьшите число сеток или увеличьте количество участников.';
           return;
         }
       }

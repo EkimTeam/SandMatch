@@ -15,6 +15,8 @@ from apps.tournaments.views import (
     cancel_start_match,
     cancel_score,
     get_group_stats,
+    brackets_json,
+    generate_knockout,
 )
 from apps.players.views import search_players, create_player
 from apps.players.views import PlayersListView
@@ -34,6 +36,9 @@ urlpatterns = [
     path("tournaments/<int:pk>/cancel-start-match/", cancel_start_match, name="tournament_cancel_start_match"),
     path("tournaments/<int:pk>/cancel-score/", cancel_score, name="tournament_cancel_score"),
     path("tournaments/<int:pk>/group-stats/", get_group_stats, name="tournament_group_stats"),
+    # Олимпийская система
+    path("tournaments/<int:pk>/generate/knockout/", generate_knockout, name="tournament_generate_knockout"),
+    path("tournaments/<int:pk>/brackets.json", brackets_json, name="tournament_brackets_json"),
     path("players/", PlayersListView.as_view(), name="players"),
     path("players/search/", search_players, name="players_search"),
     path("players/create/", create_player, name="players_create"),

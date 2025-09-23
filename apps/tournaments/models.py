@@ -57,6 +57,7 @@ class Tournament(models.Model):
         max_length=16, choices=ParticipantMode.choices, default=ParticipantMode.DOUBLES
     )
     groups_count = models.IntegerField(default=1)
+    brackets_count = models.IntegerField("Число сеток", null=True, blank=True)
     set_format = models.ForeignKey(SetFormat, on_delete=models.PROTECT)
     ruleset = models.ForeignKey(Ruleset, on_delete=models.PROTECT)
     planned_participants = models.PositiveIntegerField(
@@ -110,3 +111,70 @@ class TournamentEntryStats(models.Model):
 
     def __str__(self) -> str:
         return f"Stats: {self.entry}"
+
+
+# --- Олимпийская сетка (Knockout) ---
+class KnockoutBracket(models.Model):
+    """Метаданные одной сетки плей-офф в рамках турнира.
+
+    size — мощность сетки: 8/16/32/64/128
+    index — порядковый номер сетки, если их несколько
+    """
+
+    tournament = models.ForeignKey(
+        Tournament, on_delete=models.CASCADE, related_name="knockout_brackets"
+    )
+    index = models.PositiveSmallIntegerField()
+    size = models.PositiveSmallIntegerField()
+    has_third_place = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tournament", "index"], name="uniq_knockout_bracket_in_tournament"
+            )
+        ]
+        verbose_name = "Сетка плей-офф"
+        verbose_name_plural = "Сетки плей-офф"
+
+    def __str__(self) -> str:
+        return f"KO #{self.index} ({self.size}) — {self.tournament}"
+
+
+class DrawPosition(models.Model):
+    """Стартовая позиция участника в первом раунде сетки.
+
+    position — номер ячейки 1..size
+    source — источник участника: MAIN|LL|WC|Q|BYE
+    seed — посев (может быть null)
+    """
+
+    class Source(models.TextChoices):
+        MAIN = "MAIN", "Main"
+        LL = "LL", "Lucky Loser"
+        WC = "WC", "Wild Card"
+        Q = "Q", "Qualifier"
+        BYE = "BYE", "Bye"
+
+    bracket = models.ForeignKey(
+        KnockoutBracket, on_delete=models.CASCADE, related_name="positions"
+    )
+    position = models.PositiveSmallIntegerField()
+    entry = models.ForeignKey(
+        TournamentEntry, on_delete=models.SET_NULL, null=True, blank=True, related_name="draw_positions"
+    )
+    seed = models.PositiveSmallIntegerField(null=True, blank=True)
+    source = models.CharField(max_length=8, choices=Source.choices, default=Source.MAIN)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["bracket", "position"], name="uniq_draw_position_in_bracket"
+            )
+        ]
+        verbose_name = "Позиция жеребьёвки"
+        verbose_name_plural = "Позиции жеребьёвки"
+
+    def __str__(self) -> str:
+        return f"{self.bracket} pos {self.position} ({self.source})"

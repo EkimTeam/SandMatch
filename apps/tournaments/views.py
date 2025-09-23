@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from django.db.models import Q
-from django.http import JsonResponse, HttpRequest, HttpResponseBadRequest
+from django.http import JsonResponse, HttpRequest, HttpResponseBadRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 from django.views.generic import TemplateView, DetailView
@@ -49,11 +49,17 @@ def create_tournament(request: HttpRequest):
     ruleset_id = data.get("ruleset_id")
     groups_count = int(data.get("groups_count") or 1)
     planned_participants = int(data.get("participants") or 0)
+    # поля для олимпийки
+    ko_participants_raw = data.get("ko_participants")
+    brackets_count_raw = data.get("brackets_count")
+    ko_participants = int(ko_participants_raw or 0)
+    brackets_count = int(brackets_count_raw or 0) if brackets_count_raw is not None else None
 
     if not all([name, date, participant_mode, system, set_format_id, ruleset_id]):
         return HttpResponseBadRequest("missing fields")
 
-    # Валидация ограничения для круговой
+    # Валидации
+    # Круговая
     if system == Tournament.System.ROUND_ROBIN and planned_participants and groups_count:
         if planned_participants <= groups_count * 2:
             return JsonResponse(
@@ -64,6 +70,15 @@ def create_tournament(request: HttpRequest):
                 status=400,
             )
 
+    # Олимпийка
+    if system == Tournament.System.KNOCKOUT:
+        if not ko_participants or ko_participants < 1:
+            return JsonResponse({"ok": False, "error": "Укажите число участников для олимпийки"}, status=400)
+        if not brackets_count or brackets_count < 1:
+            return JsonResponse({"ok": False, "error": "Число сеток должно быть не менее 1"}, status=400)
+        if ko_participants <= brackets_count * 2:
+            return JsonResponse({"ok": False, "error": "Слишком мало участников для такого количества сеток. Уменьшите число сеток или увеличьте количество участников."}, status=400)
+
     t = Tournament.objects.create(
         name=name,
         date=date,
@@ -72,7 +87,8 @@ def create_tournament(request: HttpRequest):
         groups_count=groups_count,
         set_format_id=set_format_id,
         ruleset_id=ruleset_id,
-        planned_participants=(planned_participants or None),
+        planned_participants=(ko_participants if system == Tournament.System.KNOCKOUT else (planned_participants or None)),
+        brackets_count=(brackets_count if system == Tournament.System.KNOCKOUT else None),
     )
 
     # Ответ для fetch и для обычной формы
@@ -84,6 +100,12 @@ def create_tournament(request: HttpRequest):
 class TournamentDetailView(DetailView):
     model = Tournament
     template_name = "tournaments/detail.html"
+
+    def get_template_names(self):
+        t: Tournament = self.get_object()
+        if t.system == Tournament.System.KNOCKOUT:
+            return ["tournaments/knockout.html"]
+        return [self.template_name]
 
     def _split(self, total: int, groups: int):
         if total <= 0:
@@ -99,28 +121,44 @@ class TournamentDetailView(DetailView):
         ctx = super().get_context_data(**kwargs)
         t: Tournament = self.object
         planned = t.planned_participants or 0
-        groups = max(1, t.groups_count)
-        group_sizes = self._split(planned, groups) if planned else []
+
+        # Ветка круговой системы — готовим группы как раньше
+        if t.system == Tournament.System.ROUND_ROBIN:
+            groups = max(1, t.groups_count)
+            group_sizes = self._split(planned, groups) if planned else []
 
         # Готовим контекст групп, чтобы в шаблоне не вызывать range()
-        groups_ctx = []
-        for idx, sz in enumerate(group_sizes, start=1):
-            cols = list(range(1, sz + 1))
-            rows = list(range(1, sz + 1))
-            if sz >= 2:
-                tours = _round_robin_pairings(cols)
-                orders_text = [", ".join(f"{a}-{b}" for a, b in tour) for tour in tours]
-            else:
-                orders_text = []
-            groups_ctx.append({
-                "idx": idx,
-                "size": sz,
-                "cols": cols,
-                "rows": rows,
-                "orders": orders_text,
-            })
+            groups_ctx = []
+            for idx, sz in enumerate(group_sizes, start=1):
+                cols = list(range(1, sz + 1))
+                rows = list(range(1, sz + 1))
+                if sz >= 2:
+                    tours = _round_robin_pairings(cols)
+                    orders_text = [", ".join(f"{a}-{b}" for a, b in tour) for tour in tours]
+                else:
+                    orders_text = []
+                groups_ctx.append({
+                    "idx": idx,
+                    "size": sz,
+                    "cols": cols,
+                    "rows": rows,
+                    "orders": orders_text,
+                })
 
-        # Получаем текущих участников из БД с их точными позициями
+        # Для олимпийки формируем другой контекст и завершаем
+        if t.system == Tournament.System.KNOCKOUT:
+            from apps.tournaments.services.knockout import build_knockout_context
+            ko_ctx = build_knockout_context(t)
+            ctx.update({
+                "planned": planned,
+                "knockout": ko_ctx,
+                "participant_label": (
+                    "Участник" if t.participant_mode == Tournament.ParticipantMode.SINGLES else "Пара"
+                ),
+            })
+            return ctx
+
+        # Получаем текущих участников из БД с их точными позициями (круговая)
         from apps.tournaments.models import TournamentEntry
         entries = (
             TournamentEntry.objects.filter(tournament=t)
@@ -248,6 +286,10 @@ class TournamentDetailView(DetailView):
 @require_POST
 def complete_tournament(request: HttpRequest, pk: int):
     t = get_object_or_404(Tournament, pk=pk)
+    if t.status == Tournament.Status.COMPLETED:
+        return HttpResponseBadRequest("tournament is completed")
+    if t.status == Tournament.Status.COMPLETED:
+        return HttpResponseBadRequest("tournament is completed")
     # TODO: проверить, что все матчи сыграны; пока пропускаем проверку
     # TODO: обсчёт рейтинга
     t.status = Tournament.Status.COMPLETED
@@ -258,6 +300,9 @@ def complete_tournament(request: HttpRequest, pk: int):
 @require_POST
 def delete_tournament(request: HttpRequest, pk: int):
     t = get_object_or_404(Tournament, pk=pk)
+    # Запрещаем удалять завершённый турнир через HTTP-обработчик
+    if t.status == Tournament.Status.COMPLETED:
+        return HttpResponseBadRequest("tournament is completed")
     # Каскадное удаление произойдёт по FK связям (Match, TournamentEntry, пр.)
     t.delete()
     return redirect("tournaments")
@@ -421,6 +466,47 @@ def save_participants(request: HttpRequest, pk: int):
             removed += 1
 
     return JsonResponse({"ok": True, "saved": created_entries})
+
+
+def brackets_json(request: HttpRequest, pk: int) -> JsonResponse:
+    """JSON‑представление текущего состояния сеток олимпийки.
+
+    Используется инлайновым JS в шаблоне `templates/tournaments/knockout.html`.
+    """
+    t = get_object_or_404(Tournament, pk=pk)
+    if t.system != Tournament.System.KNOCKOUT:
+        return HttpResponseBadRequest("tournament is not knockout")
+    from apps.tournaments.services.knockout import serialize_brackets
+    payload = serialize_brackets(t)
+    return JsonResponse(payload)
+
+
+@require_POST
+def generate_knockout(request: HttpRequest, pk: int) -> HttpResponse:
+    """Генерация каркаса сетки плей‑офф для турнира.
+
+    Тело (опционально JSON): {"brackets_count": int, "has_third_place": bool}
+    """
+    t = get_object_or_404(Tournament, pk=pk)
+    if t.system != Tournament.System.KNOCKOUT:
+        return HttpResponseBadRequest("tournament is not knockout")
+
+    brackets_count = None
+    has_third_place = True
+    if request.content_type == "application/json":
+        try:
+            data = json.loads(request.body.decode("utf-8"))
+            brackets_count = data.get("brackets_count")
+            has_third_place = bool(data.get("has_third_place", True))
+        except Exception:
+            return HttpResponseBadRequest("invalid json")
+
+    from apps.tournaments.services.knockout import generate_brackets
+    generate_brackets(t, brackets_count=brackets_count, has_third_place=has_third_place)
+
+    if request.headers.get("x-requested-with") == "XMLHttpRequest" or request.content_type == "application/json":
+        return JsonResponse({"ok": True})
+    return redirect("tournament_detail", pk=t.id)
 
 
 def _find_match_for_cell(tournament, group_index: int, row_index: int, col_index: int):
@@ -769,18 +855,72 @@ def _team_display_name(team) -> str:
 
 def _build_group_table(t: Tournament, gi: int):
     from apps.tournaments.services.stats import _aggregate_for_group
+    from apps.matches.models import Match
+    from apps.players.models import Player
     agg = _aggregate_for_group(t, gi)
-    # Собираем список участников с координатами строк
+
+    # Служебные функции
+    def _roman(n: int) -> str:
+        vals = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1]
+        syms = ["M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I"]
+        res = []
+        i = 0
+        while n > 0:
+            for _ in range(n // vals[i]):
+                res.append(syms[i])
+                n -= vals[i]
+            i += 1
+        return "".join(res) if res else ""
+
+    def _team_has_petrov(team) -> bool:
+        p1 = team.player_1
+        p2 = team.player_2
+        def is_petrov(p: Player | None) -> bool:
+            return bool(p and p.last_name == "Петров" and p.first_name == "Михаил")
+        return is_petrov(p1) or is_petrov(p2)
+
+    def _team_rating(team) -> int:
+        p1 = team.player_1
+        p2 = team.player_2
+        # Для пар — суммарный рейтинг, для одиночки — рейтинг игрока
+        if p1 is None and p2 is None:
+            return 0
+        if p2 is not None:
+            return int((p1.current_rating if p1 else 0) + (p2.current_rating if p2 else 0))
+        return int(p1.current_rating if p1 else 0)
+
+    def _head_to_head(a_team_id: int, b_team_id: int) -> int:
+        """Возвращает -1 если A выше B по личной встрече, 1 если ниже, 0 если нельзя определить."""
+        m = (
+            Match.objects.filter(tournament=t, stage=Match.Stage.GROUP, group_index=gi)
+            .filter(
+                (
+                    (Q(team_1_id=a_team_id) & Q(team_2_id=b_team_id)) |
+                    (Q(team_1_id=b_team_id) & Q(team_2_id=a_team_id))
+                )
+            )
+            .only("winner_id", "team_1_id", "team_2_id")
+            .first()
+        )
+        if not m or not m.winner_id:
+            return 0
+        if m.winner_id == a_team_id:
+            return -1
+        if m.winner_id == b_team_id:
+            return 1
+        return 0
+
+    # Собираем список участников с координатами строк и метриками
     entries = (
         TournamentEntry.objects.filter(tournament=t, group_index=gi)
         .select_related("team__player_1", "team__player_2")
         .order_by("row_index")
     )
-    rows = []
+    items = []
     for e in entries:
         data = agg.get(e.team_id, {"wins": 0, "sets_won": 0, "sets_lost": 0, "games_won": 0, "games_lost": 0})
         sets_won = int(data["sets_won"]) ; sets_lost = int(data["sets_lost"]) ; games_won = int(data["games_won"]) ; games_lost = int(data["games_lost"]) ; wins = int(data["wins"])
-        rows.append({
+        items.append({
             "row_index": e.row_index,
             "team_name": _team_display_name(e.team),
             "wins": wins,
@@ -790,21 +930,74 @@ def _build_group_table(t: Tournament, gi: int):
             "games": f"{games_won}-{games_lost}",
             "games_diff": _diff(games_won, games_lost),
             "games_ratio": _safe_ratio(games_won, games_lost),
+            "team_id": e.team_id,
+            "team": e.team,
+            "has_petrov": _team_has_petrov(e.team),
+            "rating": _team_rating(e.team),
         })
-    # Ранжирование: wins desc, sets_diff desc, games_diff desc, team_name asc
-    ranked = sorted(rows, key=lambda r: (-r["wins"], -r["sets_diff"], -r["games_diff"], r["team_name"]))
-    place_map = {}
-    place = 0
-    prev_key = None
+
+    # Группировка и ранжирование с поэтапными правилами
+    def group_by(arr, key_fn):
+        groups = {}
+        for it in arr:
+            k = key_fn(it)
+            groups.setdefault(k, []).append(it)
+        # порядок по ключу убыв/возр управляем самим key_fn
+        return groups
+
+    # Этап 1: по победам (desc)
+    buckets1 = group_by(items, lambda r: r["wins"])
+    ordered_wins = sorted(buckets1.keys(), reverse=True)
+    ranked: list[dict] = []
+    for w in ordered_wins:
+        g1 = buckets1[w]
+        if len(g1) == 1:
+            ranked.extend(g1)
+            continue
+        # Этап 2: по разнице сетов (desc)
+        buckets2 = group_by(g1, lambda r: r["sets_diff"])
+        for sd in sorted(buckets2.keys(), reverse=True):
+            g2 = buckets2[sd]
+            if len(g2) == 2:
+                a, b = g2[0], g2[1]
+                h2h = _head_to_head(a["team_id"], b["team_id"])
+                if h2h == -1:
+                    ranked.extend([a, b])
+                    continue
+                elif h2h == 1:
+                    ranked.extend([b, a])
+                    continue
+                # иначе продолжаем следующими правилами
+            # Этап 3: по разнице геймов (desc)
+            buckets3 = group_by(g2, lambda r: r["games_diff"])
+            for gd in sorted(buckets3.keys(), reverse=True):
+                g3 = buckets3[gd]
+                if len(g3) == 2:
+                    a, b = g3[0], g3[1]
+                    h2h = _head_to_head(a["team_id"], b["team_id"])
+                    if h2h == -1:
+                        ranked.extend([a, b])
+                        continue
+                    elif h2h == 1:
+                        ranked.extend([b, a])
+                        continue
+                # Этап 4: спец-правила для оставшихся групп (>=2)
+                # 4.1 Петров Михаил в паре/у игрока
+                g_petrov = [x for x in g3 if x["has_petrov"]]
+                g_others = [x for x in g3 if not x["has_petrov"]]
+                # 4.2 Рейтинг по убыванию
+                g_petrov.sort(key=lambda r: (-r["rating"], r["team_name"]))
+                g_others.sort(key=lambda r: (-r["rating"], r["team_name"]))
+                ranked.extend(g_petrov + g_others)
+
+    # Присвоение мест римскими цифрами по итоговому порядку
+    place_map: dict[int, str] = {}
     for idx, r in enumerate(ranked, start=1):
-        key = (r["wins"], r["sets_diff"], r["games_diff"])
-        if key != prev_key:
-            place = idx
-            prev_key = key
-        place_map[r["row_index"]] = place
-    # Формируем финальную структуру
+        place_map[r["row_index"]] = _roman(idx)
+
+    # Формируем финальную структуру (в порядке исходных строк)
     result = []
-    for r in rows:
+    for r in items:
         result.append({
             "row_index": r["row_index"],
             "wins": r["wins"],
