@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SandMatch - Турниры по теннису</title>
+    {% load static %}
+    <link rel="icon" type="image/png" href="{% static 'img/logo.png' %}">
+    
+    <!-- Vite development server assets -->
+    {% if debug %}
+        <script type="module" src="http://localhost:3000/@vite/client"></script>
+        <script type="module" src="http://localhost:3000/src/main.tsx"></script>
+    {% else %}
+        <!-- Production assets will be loaded here -->
+        {% for css in vite_assets.css %}
+            <link rel="stylesheet" href="{% static css %}">
+        {% endfor %}
+    {% endif %}
+</head>
+<body>
+    <div id="root"></div>
+    
+    {% if not debug %}
+        <!-- Production JS assets -->
+        {% for js in vite_assets.js %}
+            <script type="module" src="{% static js %}"></script>
+        {% endfor %}
+    {% endif %}
+</body>
+</html>
