@@ -114,6 +114,10 @@ export const TournamentDetailPage: React.FC = () => {
       const excluded = Array.from(document.querySelectorAll('[data-export-exclude="true"]')) as HTMLElement[];
       const prev: string[] = excluded.map(el => el.style.display);
       excluded.forEach(el => el.style.display = 'none');
+      // Показать элементы только для экспорта (футер с надписями)
+      const exportOnly = Array.from(document.querySelectorAll('[data-export-only="true"]')) as HTMLElement[];
+      const prevOnly: string[] = exportOnly.map(el => el.style.display);
+      exportOnly.forEach(el => el.style.display = 'flex');
       try {
         const canvas: HTMLCanvasElement = await html2canvas(container, {
           backgroundColor: '#ffffff',
@@ -138,6 +142,8 @@ export const TournamentDetailPage: React.FC = () => {
       } finally {
         // Вернём видимость
         excluded.forEach((el, i) => el.style.display = prev[i]);
+        const exportOnly = Array.from(document.querySelectorAll('[data-export-only="true"]')) as HTMLElement[];
+        exportOnly.forEach((el, i) => (el.style.display = prevOnly[i]));
       }
     } catch (e) {
       alert('Не удалось подготовить изображение для поделиться');
@@ -631,6 +637,7 @@ export const TournamentDetailPage: React.FC = () => {
         </div>
       </div>
 
+
       {groups.length === 0 && (
         <div className="card">Пока нет параметров для отображения таблиц. Вернитесь и укажите количество участников и групп.</div>
       )}
@@ -947,8 +954,8 @@ export const TournamentDetailPage: React.FC = () => {
           </div>
         </div>
       ))}
-        {/* Нижний DOM-футер для экспорта (входит в PNG) */}
-        <div style={{ padding: '12px 24px 20px 24px', borderTop: '1px solid #eee', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        {/* Нижний DOM-футер для экспорта: скрыт на странице, показывается только при экспортe */}
+        <div data-export-only="true" style={{ padding: '12px 24px 20px 24px', borderTop: '1px solid #eee', display: 'none', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ fontSize: 14 }}>SandMatch</div>
           <div style={{ fontSize: 16, fontWeight: 600 }}>скоро онлайн</div>
           {/* TODO: как появиться сайт вставить сюда URL */}

@@ -8,8 +8,10 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
+from django.db import transaction
+from typing import Optional
 
-from .models import Tournament, TournamentEntry, SetFormat, Ruleset
+from .models import Tournament, TournamentEntry, SetFormat, Ruleset, KnockoutBracket
 from apps.teams.models import Team
 from apps.matches.models import Match, MatchSet
 from apps.players.models import Player
@@ -18,6 +20,13 @@ from .serializers import (
     ParticipantSerializer,
     MatchSerializer,
     PlayerSerializer,
+)
+from apps.tournaments.services.knockout import (
+    validate_bracket_size,
+    calculate_rounds_structure,
+    generate_initial_matches,
+    seed_participants,
+    advance_winner,
 )
 
 
@@ -131,6 +140,170 @@ class TournamentViewSet(viewsets.ModelViewSet):
         )
 
         return Response({"ok": True, "entry_id": entry.id})
+
+    # --- ПЛЕЙ-ОФФ (ОЛИМПИЙКА) ---
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="create_knockout_bracket", permission_classes=[AllowAny], authentication_classes=[])
+    def create_knockout_bracket(self, request, pk=None):
+        """Создать сетку плей-офф для турнира: позиции жеребьёвки и пустые матчи всех раундов.
+
+        Body: { size: 8|16|32|..., has_third_place: bool }
+        """
+        tournament: Tournament = self.get_object()
+        size = int(request.data.get("size", 16))
+        has_third_place = bool(request.data.get("has_third_place", True))
+        if not validate_bracket_size(size):
+            return Response({"ok": False, "error": "Размер сетки должен быть степенью двойки"}, status=400)
+
+        # Политика создания: если достигнут лимит (brackets_count) — не создаём новую, возвращаем первую (для редактирования)
+        planned = tournament.brackets_count or 1
+        existing_count = tournament.knockout_brackets.count()
+        if existing_count >= planned:
+            existing = tournament.knockout_brackets.order_by("id").first()
+            if existing:
+                created = 0
+                if not existing.matches.exists():
+                    created = generate_initial_matches(existing)
+                return Response({
+                    "ok": True,
+                    "bracket": {
+                        "id": existing.id,
+                        "index": existing.index,
+                        "size": existing.size,
+                        "has_third_place": existing.has_third_place,
+                    },
+                    "matches_created": created,
+                })
+
+        next_index = existing_count + 1
+        with transaction.atomic():
+            bracket = KnockoutBracket.objects.create(
+                tournament=tournament,
+                index=next_index,
+                size=size,
+                has_third_place=has_third_place,
+            )
+            # Создадим все позиции жеребьёвки
+            from apps.tournaments.models import DrawPosition
+            for pos in range(1, size + 1):
+                DrawPosition.objects.create(bracket=bracket, position=pos)
+            # Сгенерируем пустые матчи
+            created = generate_initial_matches(bracket)
+
+        return Response({
+            "ok": True,
+            "bracket": {
+                "id": bracket.id,
+                "index": bracket.index,
+                "size": bracket.size,
+                "has_third_place": bracket.has_third_place,
+            },
+            "matches_created": created,
+        })
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="seed_bracket", permission_classes=[AllowAny], authentication_classes=[])
+    def seed_bracket(self, request, pk=None):
+        """Автоматическая расстановка участников в сетке (посевы + случайная раскладка)."""
+        tournament: Tournament = self.get_object()
+        bracket_id = request.data.get("bracket_id")
+        if not bracket_id:
+            return Response({"ok": False, "error": "Не указан bracket_id"}, status=400)
+        try:
+            bracket = tournament.knockout_brackets.get(id=int(bracket_id))
+        except KnockoutBracket.DoesNotExist:
+            return Response({"ok": False, "error": "Сетка не найдена"}, status=404)
+
+        entries = list(tournament.entries.select_related("team"))
+        seed_participants(bracket, entries)
+        return Response({"ok": True})
+
+    @action(detail=True, methods=["get"], url_path="brackets/(?P<bracket_id>[^/.]+)/draw", permission_classes=[AllowAny], authentication_classes=[])
+    def bracket_draw(self, request, pk=None, bracket_id=None):
+        """Получить данные для отрисовки сетки с информацией о соединениях (для SVG)."""
+        tournament: Tournament = self.get_object()
+        try:
+            bracket = tournament.knockout_brackets.get(id=int(bracket_id))
+        except KnockoutBracket.DoesNotExist:
+            return Response({"ok": False, "error": "Сетка не найдена"}, status=404)
+
+        rounds_info = calculate_rounds_structure(bracket.size, bracket.has_third_place)
+
+        def serialize_team(team):
+            if not team:
+                return None
+            name = str(team)
+            return {"id": team.id, "name": name}
+
+        def get_connection_info(m: Match) -> Optional[dict]:
+            # финал не имеет целевых связей
+            if m.is_third_place:
+                # для матча за 3-е место истоки — из двух полуфиналов (проигравшие)
+                semis = Match.objects.filter(bracket=bracket, round_name__icontains="Полуфинал").order_by("order_in_round")
+                if semis.count() == 2:
+                    return {
+                        "type": "third_place",
+                        "sources": [
+                            {"match_id": semis[0].id, "slot": "loser"},
+                            {"match_id": semis[1].id, "slot": "loser"},
+                        ],
+                    }
+                return None
+
+            # обычный матч: целевой следующий матч и слот
+            # последний раунд (финал) не имеет следующий матч
+            if (m.round_index or 0) is None:
+                return None
+            next_order = (m.order_in_round + 1) // 2
+            next_round = (m.round_index or 0) + 1
+            next_match = Match.objects.filter(
+                bracket=bracket, round_index=next_round, order_in_round=next_order, is_third_place=False
+            ).first()
+            if not next_match:
+                return None
+            return {
+                "type": "normal",
+                "target_match_id": next_match.id,
+                "target_slot": "team_1" if (m.order_in_round % 2 == 1) else "team_2",
+                "source_slot": "top" if (m.order_in_round % 2 == 1) else "bottom",
+            }
+
+        draw_data = []
+        for info in rounds_info:
+            matches_qs = bracket.matches.filter(
+                round_index=info.round_index, is_third_place=info.is_third_place
+            ).order_by("order_in_round").select_related("team_1", "team_2", "winner")
+
+            round_payload = {
+                "round_name": info.round_name,
+                "round_index": info.round_index,
+                "is_third_place": info.is_third_place,
+                "matches": [],
+            }
+            for m in matches_qs:
+                round_payload["matches"].append({
+                    "id": m.id,
+                    "order_in_round": m.order_in_round,
+                    "team_1": serialize_team(m.team_1),
+                    "team_2": serialize_team(m.team_2),
+                    "winner_id": m.winner_id,
+                    "status": m.status,
+                    "is_third_place": m.is_third_place,
+                    "connection_info": get_connection_info(m),
+                    "position_data": {
+                        "round_index": info.round_index,
+                        "match_order": m.order_in_round,
+                        "total_matches_in_round": info.matches_count,
+                    },
+                })
+            draw_data.append(round_payload)
+
+        return Response({
+            "ok": True,
+            "bracket": {"id": bracket.id, "index": bracket.index, "size": bracket.size, "has_third_place": bracket.has_third_place},
+            "rounds": draw_data,
+            "visual_config": {"match_width": 250, "match_height": 100, "round_gap": 80, "match_gap": 40},
+        })
 
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], permission_classes=[AllowAny], authentication_classes=[])
@@ -384,6 +557,12 @@ class TournamentViewSet(viewsets.ModelViewSet):
         m.winner_id = winner_id
         m.status = Match.Status.COMPLETED
         m.save(update_fields=["finished_at", "winner", "status", "updated_at"])
+        # Продвинем победителя в плей-офф (если матч относится к сетке)
+        try:
+            advance_winner(m)
+        except Exception:
+            # не прерываем основной поток; продвижение возможно только для плей-офф матчей
+            pass
         return Response({"ok": True, "match": MatchSerializer(m).data})
 
     @method_decorator(csrf_exempt)

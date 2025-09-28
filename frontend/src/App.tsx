@@ -5,6 +5,7 @@ import { HomePage } from './pages/HomePage';
 import { TournamentListPage } from './pages/TournamentListPage';
 import { TournamentDetailPage } from './pages/TournamentDetailPage';
 import { PlayersPage } from './pages/PlayersPage';
+import { KnockoutPage } from './pages/KnockoutPage';
 import { StatsPage } from './pages/StatsPage';
 
 function App() {
@@ -15,6 +16,7 @@ function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/tournaments" element={<TournamentListPage />} />
           <Route path="/tournaments/:id" element={<TournamentDetailPage />} />
+          <Route path="/tournaments/:id/knockout" element={<KnockoutPage />} />
           <Route path="/players" element={<PlayersPage />} />
           <Route path="/stats" element={<StatsPage />} />
         </Routes>

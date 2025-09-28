@@ -89,6 +89,31 @@ export const tournamentApi = {
     const response = await api.get(`/tournaments/${id}/group_stats/`);
     return response.data;
   },
+
+  // --- Плей-офф ---
+  createKnockoutBracket: async (
+    id: number,
+    params: { size: number; has_third_place?: boolean }
+  ): Promise<{ ok: boolean; bracket: { id: number; index: number; size: number; has_third_place: boolean } }> => {
+    const response = await api.post(`/tournaments/${id}/create_knockout_bracket/`, params);
+    return response.data;
+  },
+
+  seedBracket: async (
+    id: number,
+    bracketId: number
+  ): Promise<{ ok: boolean }> => {
+    const response = await api.post(`/tournaments/${id}/seed_bracket/`, { bracket_id: bracketId });
+    return response.data;
+  },
+
+  getBracketDraw: async (
+    id: number,
+    bracketId: number
+  ): Promise<any> => {
+    const response = await api.get(`/tournaments/${id}/brackets/${bracketId}/draw/`);
+    return response.data;
+  },
 };
 
 // API методы для игроков
@@ -117,6 +142,24 @@ export const matchApi = {
   // Сохранить счет матча
   saveScore: async (id: number, score1: number, score2: number): Promise<Match> => {
     const response = await api.post<Match>(`/matches/${id}/save_score/`, { score1, score2 });
+    return response.data;
+  },
+  // Сохранить счёт (плей-офф, через tournament action)
+  savePlayoffScore: async (
+    tournamentId: number,
+    matchId: number,
+    idTeamFirst: number,
+    idTeamSecond: number,
+    gamesFirst: number,
+    gamesSecond: number,
+  ): Promise<{ ok: boolean; match: any }> => {
+    const response = await api.post(`/tournaments/${tournamentId}/match_save_score/`, {
+      match_id: matchId,
+      id_team_first: idTeamFirst,
+      id_team_second: idTeamSecond,
+      games_first: gamesFirst,
+      games_second: gamesSecond,
+    });
     return response.data;
   },
 };
