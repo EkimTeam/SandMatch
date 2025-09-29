@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { BracketData } from '../types/bracket';
 import { BracketWithSVGConnectors } from '../components/BracketWithSVGConnectors';
 import { tournamentApi, matchApi } from '../services/api';
+import { formatDate } from '../services/date';
 
 export const KnockoutPage: React.FC = () => {
   const { id } = useParams();
@@ -18,6 +19,8 @@ export const KnockoutPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [highlight, setHighlight] = useState<Set<number>>(new Set());
+  const [tMeta, setTMeta] = useState<any | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const loadDraw = useCallback(async () => {
     if (!tournamentId || !bracketId) return;
@@ -34,6 +37,17 @@ export const KnockoutPage: React.FC = () => {
   }, [tournamentId, bracketId]);
 
   useEffect(() => {
+    // загрузим метаданные турнира для шапки
+    (async () => {
+      if (!tournamentId) return;
+      try {
+        const resp = await fetch(`/api/tournaments/${tournamentId}/`);
+        if (resp.ok) {
+          const j = await resp.json();
+          setTMeta(j);
+        }
+      } catch {}
+    })();
     // Если bracketId не задан в URL — попробуем создать/получить его автоматически
     (async () => {
       if (!tournamentId) return;
@@ -64,21 +78,7 @@ export const KnockoutPage: React.FC = () => {
     })();
   }, [loadDraw, bracketId, tournamentId]);
 
-  const createBracket = async (size: number) => {
-    if (!tournamentId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const resp = await tournamentApi.createKnockoutBracket(tournamentId, { size, has_third_place: true });
-      if (resp?.ok && resp?.bracket?.id) {
-        setBracketId(resp.bracket.id);
-      }
-    } catch (e: any) {
-      setError(e?.response?.data?.error || 'Не удалось создать сетку');
-    } finally {
-      setLoading(false);
-    }
-  };
+  // createBracket/demos удалены — управление сетками теперь через бэк/модалку создания турнира
 
   const seed = async () => {
     if (!tournamentId || !bracketId) return;
@@ -94,25 +94,7 @@ export const KnockoutPage: React.FC = () => {
     }
   };
 
-  const demoCreateSeed8 = async () => {
-    if (!tournamentId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const resp = await tournamentApi.createKnockoutBracket(tournamentId, { size: 8, has_third_place: true });
-      const bid = resp?.bracket?.id;
-      if (bid) {
-        setBracketId(bid);
-        setSearchParams(prev => { const sp = new URLSearchParams(prev); sp.set('bracket', String(bid)); return sp; }, { replace: true });
-        await tournamentApi.seedBracket(tournamentId, bid);
-        await loadDraw();
-      }
-    } catch (e: any) {
-      setError(e?.response?.data?.error || 'Не удалось создать и засеять сетку');
-    } finally {
-      setLoading(false);
-    }
-  };
+  // demoCreateSeed8 удалена
 
   const onMatchClick = async (matchId: number) => {
     if (!data) return;
@@ -155,20 +137,19 @@ export const KnockoutPage: React.FC = () => {
 
   return (
     <div className="container" style={{ padding: 16 }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
-        <button onClick={() => navigate(`/tournaments/${tournamentId}`)}>&larr; К турниру</button>
-        <h2 style={{ margin: 0 }}>Плей-офф</h2>
+      {/* Шапка в стиле кругового турнира */}
+      <div style={{ position: 'relative', padding: '16px 16px 8px 16px', borderBottom: '1px solid #eee', background: '#fff', marginBottom: 12 }}>
+        <img src="/static/img/logo.png" alt="SandMatch" style={{ position: 'absolute', right: 16, top: 16, height: 40 }} />
+        <div style={{ fontSize: 24, fontWeight: 700 }}>{tMeta?.name || 'Плей-офф'}</div>
+        <div className="meta" style={{ color: '#666' }}>
+          {tMeta ? `${formatDate(tMeta.date)} • ${tMeta.get_system_display} • ${tMeta.get_participant_mode_display}` : ''}
+        </div>
       </div>
 
-      {/* Панель управления сеткой */}
+      {/* Панель управления сеткой (только нужные кнопки) */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-        <button onClick={demoCreateSeed8}>Показать сетку на 8 (создать+посев)</button>
-        <button onClick={() => createBracket(8)}>Создать сетку на 8</button>
-        <button onClick={() => createBracket(16)}>Создать сетку на 16</button>
-        <button onClick={() => createBracket(32)}>Создать сетку на 32</button>
-        {/* Ручной ввод ID скрыт — используем URL-параметр ?bracket= */}
-        <button disabled={!bracketId} onClick={seed}>Автозасев</button>
-        <button disabled={!bracketId} onClick={loadDraw}>Обновить</button>
+        <button className="btn" disabled={!bracketId} onClick={seed}>Автозасев</button>
+        <button className="btn" disabled={!bracketId} onClick={loadDraw}>Обновить</button>
       </div>
 
       {loading && <div>Загрузка...</div>}
@@ -179,14 +160,27 @@ export const KnockoutPage: React.FC = () => {
       )}
 
       {/* Нижние общие кнопки */}
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 24 }}>
-        <button onClick={() => alert('TODO: Экспорт/Поделиться')}>Поделиться</button>
-        <button onClick={() => navigate(`/api/tournaments/${tournamentId}/complete/`, { replace: false })}>
-          Завершить турнир
-        </button>
-        <button onClick={() => navigate(`/api/tournaments/${tournamentId}/remove/`, { replace: false })}>
-          Удалить турнир
-        </button>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-start', marginTop: 24 }}>
+        <button className="btn" disabled={saving || !tMeta} onClick={async () => {
+          if (!tMeta) return;
+          setSaving(true);
+          try { await fetch(`/api/tournaments/${tMeta.id}/complete/`, { method: 'POST' }); } finally { setSaving(false); }
+          await loadDraw();
+        }}>Завершить турнир</button>
+        <button className="btn" style={{ background: '#dc3545', borderColor: '#dc3545' }} disabled={saving || !tMeta} onClick={async () => {
+          if (!tMeta) return;
+          if (!confirm('Удалить турнир без возможности восстановления?')) return;
+          setSaving(true);
+          try { await fetch(`/api/tournaments/${tMeta.id}/remove/`, { method: 'POST' }); } finally { setSaving(false); }
+          navigate('/tournaments');
+        }}>Удалить турнир</button>
+        <button className="btn" disabled title="Скоро">Поделиться</button>
+      </div>
+
+      {/* Нижний DOM-футер для экспорта: скрыт на странице, показывается только при экспортe */}
+      <div data-export-only="true" style={{ padding: '12px 24px 20px 24px', borderTop: '1px solid #eee', display: 'none', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ fontSize: 14 }}>SandMatch</div>
+        <div style={{ fontSize: 16, fontWeight: 600 }}>скоро онлайн</div>
       </div>
     </div>
   );

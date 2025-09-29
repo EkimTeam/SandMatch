@@ -11,10 +11,15 @@ export const BracketWithSVGConnectors: React.FC<{
   const svgRef = useRef<SVGSVGElement>(null);
   const [positions, setPositions] = useState<Map<number, DOMRect>>(new Map());
 
-  // Вычислить позиции карточек матчей после рендера
+  // Вычислить позиции карточек матчей после рендера (устойчиво)
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+
+    let raf1: number | null = null;
+    let raf2: number | null = null;
+    let timer: number | null = null;
+
     const compute = () => {
       const rectMap = new Map<number, DOMRect>();
       const nodes = el.querySelectorAll('[data-match-id]');
@@ -27,13 +32,43 @@ export const BracketWithSVGConnectors: React.FC<{
       });
       setPositions(rectMap);
     };
-    const onScroll = () => requestAnimationFrame(compute);
-    requestAnimationFrame(compute);
-    window.addEventListener('resize', compute);
+
+    const scheduleCompute = () => {
+      if (raf1) cancelAnimationFrame(raf1);
+      if (raf2) cancelAnimationFrame(raf2);
+      raf1 = requestAnimationFrame(() => {
+        // Второй кадр — когда браузер уже переложил layout
+        raf2 = requestAnimationFrame(() => compute());
+      });
+      if (timer) clearTimeout(timer);
+      // Дополнительная гарантия через микрозадержку
+      timer = window.setTimeout(compute, 60) as unknown as number;
+    };
+
+    // Первичная отрисовка
+    scheduleCompute();
+
+    // На ресайз и скролл
+    const onScroll = () => scheduleCompute();
+    window.addEventListener('resize', scheduleCompute);
     el.addEventListener('scroll', onScroll, { passive: true });
+
+    // ResizeObserver — если размеры карточек поменяются
+    const ro = new ResizeObserver(() => scheduleCompute());
+    ro.observe(el);
+
+    // MutationObserver — если DOM карточек изменился (например, пришли данные)
+    const mo = new MutationObserver(() => scheduleCompute());
+    mo.observe(el, { childList: true, subtree: true, attributes: true });
+
     return () => {
-      window.removeEventListener('resize', compute);
+      if (raf1) cancelAnimationFrame(raf1);
+      if (raf2) cancelAnimationFrame(raf2);
+      if (timer) clearTimeout(timer);
+      window.removeEventListener('resize', scheduleCompute);
       el.removeEventListener('scroll', onScroll);
+      ro.disconnect();
+      mo.disconnect();
     };
   }, [data.rounds]);
 
@@ -72,14 +107,13 @@ export const BracketWithSVGConnectors: React.FC<{
       // Пользователь просил: для матча за 3-е место линии не рисуем
       if (next.is_third_place) continue;
 
-      const providedNext = next.matches.length;
-      const prevCount = round.matches.length || 0;
-      const inferredNext = next.is_third_place ? 1 : Math.max(1, Math.floor(prevCount / 2));
-      const countNext = Math.max(providedNext, inferredNext);
+      const prevLen = (round.matches?.length || (round as any).matches_count || 0);
+      const nextLen = (next.matches?.length || (next as any).matches_count || 0) || Math.max(1, Math.floor(prevLen / 2));
+      const countNext = nextLen || Math.max(1, Math.floor(prevLen / 2));
 
       for (let k = 0; k < countNext; k++) {
-        const src1Id = round.matches[2 * k]?.id;
-        const src2Id = round.matches[2 * k + 1]?.id;
+        const src1Id = cardId(ri, 2 * k) as number;
+        const src2Id = cardId(ri, 2 * k + 1) as number;
         const dstId = cardId(ri + 1, k);
         if (!dstId) continue;
         const dst = getRect(dstId);
@@ -115,12 +149,13 @@ export const BracketWithSVGConnectors: React.FC<{
           // Вычисляем tops для round 0 по формуле: top0[i] = i*H + (i+1)*G0
           const topsByRound: number[][] = [];
           const r0 = data.rounds[0];
-          const top0: number[] = r0 ? r0.matches.map((_, i) => i * H + (i + 1) * G0) : [];
+          const r0Count = r0 ? (r0.matches?.length || (r0 as any).matches_count || 0) : 0;
+          const top0: number[] = r0 ? Array.from({ length: r0Count }, (_, i) => i * H + (i + 1) * G0) : [];
           if (r0) topsByRound.push(top0);
           // Для последующих раундов: top_next[k] = (top_prev[2k] + top_prev[2k+1]) / 2
           for (let ri = 1; ri < data.rounds.length; ri++) {
             const prev = topsByRound[ri - 1] || [];
-            const provided = data.rounds[ri].matches.length;
+            const provided = data.rounds[ri].matches?.length || (data.rounds[ri] as any).matches_count || 0;
             const inferred = data.rounds[ri].is_third_place ? 1 : Math.max(1, Math.floor(prev.length / 2));
             const count = Math.max(provided, inferred);
             const curr: number[] = [];
@@ -140,23 +175,19 @@ export const BracketWithSVGConnectors: React.FC<{
               : H + 2 * G0;
 
             // Определим префикс стадии предыдущего раунда для плейсхолдеров
-            const prevName = data.rounds[idx - 1]?.round_name?.toLowerCase() || '';
-            const toStageCode = (name: string, prevMatchCount: number): string => {
-              if (name.includes('полуфин')) return 'SMF';
-              if (name.includes('финал')) return 'F';
+            const prevName = (data.rounds[idx - 1]?.round_name || '').toLowerCase();
+            const toStageCode = (name: string, prevRoundIndex: number): string => {
+              // Сначала конкретные стадии, затем общий случай
               if (name.includes('1/4')) return 'QF';
-              if (name.includes('1/8')) return 'R16';
-              if (name.includes('1/16')) return 'R32';
-              // Fallback: по количеству матчей
-              if (prevMatchCount === 2) return 'SMF';
-              if (prevMatchCount === 4) return 'QF';
-              if (prevMatchCount === 8) return 'R16';
-              if (prevMatchCount === 16) return 'R32';
-              return 'R';
+              if (name.includes('полуфин')) return 'SMF';
+              // Ровно "финал" (а не "финала") — крайне редкий кейс для prev; оставим для полноты
+              if (name.trim() === 'финал') return 'F';
+              // Общая схема для ранних раундов: R{index}, где index = prevRoundIndex + 1
+              const rIdx = Math.max(0, prevRoundIndex) + 1;
+              return `R${rIdx}`;
             };
-            const prevCount = idx > 0 ? (topsByRound[idx - 1]?.length || 0) : 0;
-            const placeholderPrevCode = round.is_third_place ? 'SMF' : toStageCode(prevName, prevCount);
-            const placeholderMode: 'winner' | 'loser' | undefined = round.is_third_place ? 'loser' : (idx > 0 ? 'winner' : undefined);
+            const placeholderPrevCode = round.is_third_place ? 'SMF' : toStageCode(prevName, idx - 1);
+            const placeholderMode: 'winner' | 'loser' | 'seed' | undefined = round.is_third_place ? 'loser' : (idx === 0 ? 'seed' : 'winner');
             items.push(
               <RoundComponent
                 key={round.round_index}

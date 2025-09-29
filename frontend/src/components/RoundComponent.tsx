@@ -15,7 +15,7 @@ export const RoundComponent: React.FC<{
   betweenSpacer?: number;    // вертикальные отступы между матчами раунда
   // Плейсхолдеры
   placeholderPrevCode?: string; // код стадии предыдущего раунда (например, QF, R16, SMF)
-  placeholderMode?: 'winner' | 'loser';
+  placeholderMode?: 'winner' | 'loser' | 'seed';
 }> = ({ round, matchWidth, onMatchClick, highlightIds, tops, totalHeight, preSpacer = 0, placeholderPrevCode, placeholderMode }) => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minWidth: matchWidth }}>
@@ -24,18 +24,19 @@ export const RoundComponent: React.FC<{
         {tops && tops.length > 0 ? (
           Array.from({ length: tops.length }).map((_, idx) => {
             const m = round.matches[idx];
-            // Формирование подписей плейсхолдера
+            // Формирование подписей плейсхолдера (всегда, даже если матч существует, но команда пустая)
             const code = placeholderPrevCode || 'R';
-            const phTop =
-              !m && placeholderMode === 'winner' ? `Winner of ${code}${2 * idx + 1}`
-              : !m && placeholderMode === 'loser' ? `Loser of ${code}${idx + 1}`
+            const codeText = code.startsWith('R') ? `${code}_` : code;
+            const placeholderTop =
+              placeholderMode === 'seed' ? `Игрок ${2 * idx + 1}`
+              : placeholderMode === 'winner' ? `Winner of ${codeText}${2 * idx + 1}`
+              : placeholderMode === 'loser' ? `Loser of ${codeText}${idx + 1}`
               : '';
-            const phBottom =
-              !m && placeholderMode === 'winner' ? `Winner of ${code}${2 * idx + 2}`
-              : !m && placeholderMode === 'loser' ? `Loser of ${code}${idx + 2}`
+            const placeholderBottom =
+              placeholderMode === 'seed' ? `Игрок ${2 * idx + 2}`
+              : placeholderMode === 'winner' ? `Winner of ${codeText}${2 * idx + 2}`
+              : placeholderMode === 'loser' ? `Loser of ${codeText}${idx + 2}`
               : '';
-            const placeholderTop = phTop;
-            const placeholderBottom = phBottom;
             const team1 = m?.team_1?.name ?? placeholderTop;
             const team2 = m?.team_2?.name ?? placeholderBottom;
             const winnerId = m?.winner_id ?? null;

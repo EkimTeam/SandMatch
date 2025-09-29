@@ -15,6 +15,7 @@ function App() {
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/tournaments" element={<TournamentListPage />} />
+          <Route path="/tournaments/:id/round_robin" element={<TournamentDetailPage />} />
           <Route path="/tournaments/:id" element={<TournamentDetailPage />} />
           <Route path="/tournaments/:id/knockout" element={<KnockoutPage />} />
           <Route path="/players" element={<PlayersPage />} />

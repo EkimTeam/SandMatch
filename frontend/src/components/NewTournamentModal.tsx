@@ -148,11 +148,17 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
             </div>
 
             <div className="form-row">
-              <label htmlFor="participant_mode">Тип турнира</label>
-              <select id="participant_mode" name="participant_mode" value={formData.participant_mode} onChange={handleChange}>
-                <option value="singles">Индивидуальный</option>
-                <option value="doubles">Парный</option>
-              </select>
+              <label>Тип турнира</label>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <input type="radio" name="participant_mode" value="singles" checked={formData.participant_mode === 'singles'} onChange={handleChange} />
+                  <span>Индивидуальный</span>
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <input type="radio" name="participant_mode" value="doubles" checked={formData.participant_mode === 'doubles'} onChange={handleChange} />
+                  <span>Парный</span>
+                </label>
+              </div>
             </div>
 
             <div className="form-row">
@@ -167,12 +173,21 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
             </div>
 
             <div className="form-row">
-              <label htmlFor="system">Система проведения</label>
-              <select id="system" name="system" value={formData.system} onChange={handleChange}>
-                <option value="round_robin">Круговая</option>
-                <option value="knockout">Олимпийская</option>
-                <option value="mixed" disabled>Смешанная</option>
-              </select>
+              <label>Система проведения</label>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <input type="radio" name="system" value="round_robin" checked={formData.system === 'round_robin'} onChange={handleChange} />
+                  <span>Круговая</span>
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <input type="radio" name="system" value="knockout" checked={formData.system === 'knockout'} onChange={handleChange} />
+                  <span>Олимпийская</span>
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: 0.6 }} title="Скоро">
+                  <input type="radio" name="system" value="mixed" disabled />
+                  <span>Смешанная</span>
+                </label>
+              </div>
             </div>
 
             {isRoundRobin && (

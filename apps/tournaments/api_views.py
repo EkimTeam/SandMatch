@@ -235,6 +235,15 @@ class TournamentViewSet(viewsets.ModelViewSet):
             name = str(team)
             return {"id": team.id, "name": name}
 
+        def serialize_team_by_id(team_id: Optional[int]):
+            if not team_id:
+                return None
+            try:
+                t = Team.objects.get(id=team_id)
+                return {"id": t.id, "name": str(t)}
+            except Team.DoesNotExist:
+                return None
+
         def get_connection_info(m: Match) -> Optional[dict]:
             # финал не имеет целевых связей
             if m.is_third_place:
@@ -278,14 +287,18 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 "round_name": info.round_name,
                 "round_index": info.round_index,
                 "is_third_place": info.is_third_place,
+                "matches_count": info.matches_count,
                 "matches": [],
             }
             for m in matches_qs:
+                # Надёжно сериализуем команды: сначала пробуем related, затем по *_id, затем по low/high id
+                t1 = serialize_team(m.team_1) or serialize_team_by_id(getattr(m, "team_1_id", None)) or serialize_team_by_id(getattr(m, "team_low_id", None))
+                t2 = serialize_team(m.team_2) or serialize_team_by_id(getattr(m, "team_2_id", None)) or serialize_team_by_id(getattr(m, "team_high_id", None))
                 round_payload["matches"].append({
                     "id": m.id,
                     "order_in_round": m.order_in_round,
-                    "team_1": serialize_team(m.team_1),
-                    "team_2": serialize_team(m.team_2),
+                    "team_1": t1,
+                    "team_2": t2,
                     "winner_id": m.winner_id,
                     "status": m.status,
                     "is_third_place": m.is_third_place,

@@ -62,7 +62,9 @@ export const TournamentListPage: React.FC = () => {
 
   const handleCreateTournament = async (payload: any) => {
     try {
-      const res = await fetch('/api/tournaments/new/', {
+      const isRR = payload.system === 'round_robin';
+      const url = isRR ? '/api/tournaments/new_round_robin/' : '/api/tournaments/new_knockout/';
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -115,8 +117,14 @@ export const TournamentListPage: React.FC = () => {
               <div key={t.id} className="card">
                 <h3>{t.name}</h3>
                 <div className="meta">{formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}</div>
+                
                 <div style={{ marginTop: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                  <Link to={`/tournaments/${t.id}/`} className="btn">Открыть</Link>
+                  <Link
+                    to={t.system === 'round_robin' ? `/tournaments/${t.id}/round_robin` : `/tournaments/${t.id}/knockout`}
+                    className="btn"
+                  >
+                    Открыть
+                  </Link>
                 </div>
               </div>
             ))}
@@ -129,8 +137,9 @@ export const TournamentListPage: React.FC = () => {
                   <div>
                     <h3 className="m-0">{t.name}</h3>
                     <div className="meta">{formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}</div>
+                    
                   </div>
-                  <Link to={`/tournaments/${t.id}/`} className="btn">Открыть</Link>
+                  <Link to={t.system === 'round_robin' ? `/tournaments/${t.id}/round_robin` : `/tournaments/${t.id}/knockout`} className="btn">Открыть</Link>
                 </div>
               </div>
             ))}
@@ -149,7 +158,7 @@ export const TournamentListPage: React.FC = () => {
                 <h3>{t.name}</h3>
                 <div className="meta">{formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}</div>
                 <div style={{ marginTop: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                  <Link to={`/tournaments/${t.id}/`} className="btn">Открыть</Link>
+                  <Link to={t.system === 'round_robin' ? `/tournaments/${t.id}/round_robin` : `/tournaments/${t.id}/knockout`} className="btn">Открыть</Link>
                 </div>
               </div>
             ))}
@@ -163,7 +172,7 @@ export const TournamentListPage: React.FC = () => {
                     <h3 className="m-0">{t.name}</h3>
                     <div className="meta">{formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}</div>
                   </div>
-                  <Link to={`/tournaments/${t.id}/`} className="btn">Открыть</Link>
+                  <Link to={t.system === 'round_robin' ? `/tournaments/${t.id}/round_robin` : `/tournaments/${t.id}/knockout`} className="btn">Открыть</Link>
                 </div>
               </div>
             ))}
