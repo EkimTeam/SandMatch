@@ -638,6 +638,353 @@ class TournamentViewSet(viewsets.ModelViewSet):
 
         return Response({"ok": True, "redirect": f"/tournaments/{tournament.id}/"})
 
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["get"], url_path="participants", permission_classes=[AllowAny], authentication_classes=[])
+    def get_participants(self, request, pk=None):
+        """Получить список участников турнира для Drag-and-Drop."""
+        tournament: Tournament = self.get_object()
+        entries = tournament.entries.select_related('team__player_1', 'team__player_2').all()
+        
+        participants = []
+        for entry in entries:
+            team = entry.team
+            name = str(team)
+            participants.append({
+                'id': entry.id,
+                'name': name,
+                'team_id': team.id,
+                'isInBracket': False
+            })
+        
+        return Response({'participants': participants})
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="brackets/(?P<bracket_id>[^/.]+)/assign_participant", permission_classes=[AllowAny], authentication_classes=[])
+    def assign_participant(self, request, pk=None, bracket_id=None):
+        """Назначить участника в слот сетки."""
+        tournament: Tournament = self.get_object()
+        match_id = request.data.get('match_id')
+        slot = request.data.get('slot')
+        participant_id = request.data.get('participant_id')
+        
+        if not all([match_id, slot, participant_id]):
+            return Response({'ok': False, 'error': 'Недостаточно параметров'}, status=400)
+        
+        if slot not in ['team_1', 'team_2']:
+            return Response({'ok': False, 'error': 'Неверный слот'}, status=400)
+        
+        try:
+            bracket = tournament.knockout_brackets.get(id=int(bracket_id))
+            match = Match.objects.get(id=match_id, bracket=bracket)
+            entry = TournamentEntry.objects.get(id=participant_id, tournament=tournament)
+            
+            current_team_id = getattr(match, slot + '_id')
+            if current_team_id:
+                return Response({'ok': False, 'error': 'Слот уже занят'}, status=400)
+            
+            setattr(match, slot, entry.team)
+            match.save(update_fields=[slot])
+            
+            from apps.tournaments.models import DrawPosition
+            draw_pos = DrawPosition.objects.filter(bracket=bracket, entry=None).first()
+            if draw_pos:
+                draw_pos.entry = entry
+                draw_pos.save(update_fields=['entry'])
+            
+            return Response({'ok': True})
+            
+        except (KnockoutBracket.DoesNotExist, Match.DoesNotExist, TournamentEntry.DoesNotExist) as e:
+            return Response({'ok': False, 'error': str(e)}, status=404)
+        except Exception as e:
+            return Response({'ok': False, 'error': str(e)}, status=500)
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["delete"], url_path="brackets/(?P<bracket_id>[^/.]+)/remove_participant", permission_classes=[AllowAny], authentication_classes=[])
+    def remove_participant(self, request, pk=None, bracket_id=None):
+        """Удалить участника из слота сетки."""
+        tournament: Tournament = self.get_object()
+        match_id = request.data.get('match_id')
+        slot = request.data.get('slot')
+        
+        if not all([match_id, slot]):
+            return Response({'ok': False, 'error': 'Недостаточно параметров'}, status=400)
+        
+        if slot not in ['team_1', 'team_2']:
+            return Response({'ok': False, 'error': 'Неверный слот'}, status=400)
+        
+        try:
+            bracket = tournament.knockout_brackets.get(id=int(bracket_id))
+            match = Match.objects.get(id=match_id, bracket=bracket)
+            
+            setattr(match, slot, None)
+            match.save(update_fields=[slot])
+            
+            return Response({'ok': True})
+            
+        except (KnockoutBracket.DoesNotExist, Match.DoesNotExist) as e:
+            return Response({'ok': False, 'error': str(e)}, status=404)
+        except Exception as e:
+            return Response({'ok': False, 'error': str(e)}, status=500)
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="add_participant", permission_classes=[AllowAny], authentication_classes=[])
+    def add_participant(self, request, pk=None):
+        """Добавить нового участника в турнир."""
+        tournament: Tournament = self.get_object()
+        name = request.data.get('name')
+        player_id = request.data.get('player_id')
+        player1_id = request.data.get('player1_id')
+        player2_id = request.data.get('player2_id')
+        
+        if not name and not (player1_id and player2_id):
+            return Response({'ok': False, 'error': 'Не указано имя или игроки'}, status=400)
+        
+        try:
+            with transaction.atomic():
+                # Проверка, не участвует ли уже игрок в турнире
+                existing_entries = tournament.entries.select_related('team').all()
+                
+                if player_id:
+                    # Одиночный игрок
+                    player = Player.objects.get(id=player_id)
+                    
+                    # Проверка дубликата
+                    for entry in existing_entries:
+                        if entry.team.player_1_id == player.id and not entry.team.player_2_id:
+                            return Response({
+                                'ok': False, 
+                                'error': f'{player.display_name} уже участвует в турнире'
+                            }, status=400)
+                    
+                    # Найти или создать команду для этого игрока
+                    team = Team.objects.filter(player_1=player, player_2__isnull=True).first()
+                    if not team:
+                        team = Team.objects.create(player_1=player)
+                    
+                elif player1_id and player2_id:
+                    # Пара игроков
+                    player1 = Player.objects.get(id=player1_id)
+                    player2 = Player.objects.get(id=player2_id)
+                    
+                    # Проверка дубликата
+                    for entry in existing_entries:
+                        team_players = {entry.team.player_1_id, entry.team.player_2_id}
+                        if team_players == {player1.id, player2.id}:
+                            return Response({
+                                'ok': False, 
+                                'error': f'Пара {player1.display_name}/{player2.display_name} уже участвует'
+                            }, status=400)
+                    
+                    # Найти или создать команду для этой пары
+                    team = Team.objects.filter(
+                        player_1=player1, player_2=player2
+                    ).first() or Team.objects.filter(
+                        player_1=player2, player_2=player1
+                    ).first()
+                    
+                    if not team:
+                        team = Team.objects.create(player_1=player1, player_2=player2)
+                else:
+                    # Создание нового игрока
+                    names = name.split(maxsplit=1)
+                    player = Player.objects.create(
+                        last_name=names[0] if names else name,
+                        first_name=names[1] if len(names) > 1 else '',
+                        display_name=name,
+                        current_rating=1000
+                    )
+                    team = Team.objects.create(player_1=player)
+                
+                # Найти первый свободный row_index
+                existing_entries = tournament.entries.all()
+                used_positions = set(existing_entries.values_list('row_index', flat=True))
+                
+                # Найти первую свободную позицию от 1 до planned_participants
+                max_participants = tournament.planned_participants or 32
+                row_index = 1
+                for i in range(1, max_participants + 1):
+                    if i not in used_positions:
+                        row_index = i
+                        break
+                
+                # Создать запись участника
+                entry = TournamentEntry.objects.create(
+                    tournament=tournament,
+                    team=team,
+                    group_index=1,
+                    row_index=row_index,
+                    is_out_of_competition=False
+                )
+                
+                return Response({
+                    'ok': True,
+                    'id': entry.id,
+                    'name': str(team),
+                    'team_id': team.id
+                })
+                
+        except Player.DoesNotExist:
+            return Response({'ok': False, 'error': 'Игрок не найден'}, status=404)
+        except Exception as e:
+            return Response({'ok': False, 'error': str(e)}, status=500)
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="brackets/(?P<bracket_id>[^/.]+)/lock_participants", permission_classes=[AllowAny], authentication_classes=[])
+    def lock_participants(self, request, pk=None, bracket_id=None):
+        """Зафиксировать участников в сетке."""
+        tournament: Tournament = self.get_object()
+        slots_data = request.data.get('slots', [])
+        
+        if not slots_data:
+            return Response({'ok': False, 'error': 'Не указаны слоты'}, status=400)
+        
+        try:
+            bracket = tournament.knockout_brackets.get(id=int(bracket_id))
+            
+            with transaction.atomic():
+                # Собрать текущее состояние матчей для проверки изменений
+                existing_matches = {}
+                for match in Match.objects.filter(bracket=bracket, round_index=0):
+                    existing_matches[match.id] = {
+                        'team_1_id': match.team_1_id,
+                        'team_2_id': match.team_2_id
+                    }
+                
+                # Обновить матчи первого раунда
+                changes_detected = False
+                for slot_info in slots_data:
+                    match_id = slot_info.get('match_id')
+                    slot = slot_info.get('slot')
+                    participant_id = slot_info.get('participant_id')
+                    
+                    if not match_id or not slot:
+                        continue
+                    
+                    try:
+                        match = Match.objects.get(id=match_id, bracket=bracket)
+                        
+                        # Получить команду из TournamentEntry
+                        team = None
+                        if participant_id:
+                            entry = TournamentEntry.objects.get(id=participant_id, tournament=tournament)
+                            team = entry.team
+                        
+                        # Проверить изменения
+                        old_team_id = existing_matches.get(match_id, {}).get(f'{slot}_id')
+                        new_team_id = team.id if team else None
+                        
+                        if old_team_id != new_team_id:
+                            changes_detected = True
+                            
+                            # Если участник изменился - очистить победителя и следующие раунды
+                            if old_team_id:
+                                # Очистить winner если это был старый участник
+                                if match.winner_id == old_team_id:
+                                    match.winner = None
+                                    match.status = Match.Status.SCHEDULED
+                                
+                                # Убрать старого участника из следующего раунда
+                                if match.connection_info:
+                                    target_match_id = match.connection_info.get('target_match_id')
+                                    target_slot = match.connection_info.get('target_slot')
+                                    if target_match_id and target_slot:
+                                        try:
+                                            next_match = Match.objects.get(id=target_match_id)
+                                            current_team_in_next = getattr(next_match, target_slot + '_id')
+                                            # Убрать только если там был старый участник
+                                            if current_team_in_next == old_team_id:
+                                                setattr(next_match, target_slot, None)
+                                                next_match.save(update_fields=[target_slot])
+                                        except Match.DoesNotExist:
+                                            pass
+                            
+                            # Также очистить winner если это был другой участник из этого матча
+                            other_slot = 'team_2' if slot == 'team_1' else 'team_1'
+                            other_team_id = getattr(match, other_slot + '_id')
+                            if match.winner_id and match.winner_id in [old_team_id, other_team_id]:
+                                match.winner = None
+                                match.status = Match.Status.SCHEDULED
+                        
+                        # Установить команду
+                        setattr(match, slot, team)
+                        match.save(update_fields=[slot, 'winner', 'status'])
+                        
+                        # Обновить DrawPosition (по позиции в сетке)
+                        if participant_id:
+                            from apps.tournaments.models import DrawPosition
+                            # Определить позицию: для первого раунда позиция начинается с 1
+                            # position = (match.order_in_round - 1) * 2 + (1 если team_1 иначе 2)
+                            # Но order_in_round начинается с 0, поэтому:
+                            position = (match.order_in_round * 2) + (1 if slot == 'team_1' else 2)
+                            
+                            draw_pos, created = DrawPosition.objects.get_or_create(
+                                bracket=bracket,
+                                position=position,
+                                defaults={'entry': entry, 'source': DrawPosition.Source.MAIN}
+                            )
+                            
+                            if not created and draw_pos.entry != entry:
+                                draw_pos.entry = entry
+                                draw_pos.save(update_fields=['entry'])
+                            
+                    except (Match.DoesNotExist, TournamentEntry.DoesNotExist):
+                        continue
+                
+                return Response({'ok': True, 'changes_detected': changes_detected})
+                
+        except KnockoutBracket.DoesNotExist:
+            return Response({'ok': False, 'error': 'Сетка не найдена'}, status=404)
+        except Exception as e:
+            return Response({'ok': False, 'error': str(e)}, status=500)
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["delete"], url_path="brackets/(?P<bracket_id>[^/.]+)/remove_from_slot", permission_classes=[AllowAny], authentication_classes=[])
+    def remove_from_slot(self, request, pk=None, bracket_id=None):
+        """Удалить участника из слота матча."""
+        tournament: Tournament = self.get_object()
+        match_id = request.data.get('match_id')
+        slot = request.data.get('slot')
+        
+        if not match_id or not slot:
+            return Response({'ok': False, 'error': 'Не указаны match_id или slot'}, status=400)
+        
+        if slot not in ['team_1', 'team_2']:
+            return Response({'ok': False, 'error': 'Неверный слот'}, status=400)
+        
+        try:
+            bracket = tournament.knockout_brackets.get(id=int(bracket_id))
+            match = Match.objects.get(id=match_id, bracket=bracket)
+            
+            # Очистить слот
+            setattr(match, slot, None)
+            match.save(update_fields=[slot])
+            
+            return Response({'ok': True})
+            
+        except (KnockoutBracket.DoesNotExist, Match.DoesNotExist) as e:
+            return Response({'ok': False, 'error': str(e)}, status=404)
+        except Exception as e:
+            return Response({'ok': False, 'error': str(e)}, status=500)
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["delete"], url_path="remove_participant", permission_classes=[AllowAny], authentication_classes=[])
+    def remove_participant_from_tournament(self, request, pk=None):
+        """Удалить участника из турнира."""
+        tournament: Tournament = self.get_object()
+        entry_id = request.data.get('entry_id')
+        
+        if not entry_id:
+            return Response({'ok': False, 'error': 'Не указан entry_id'}, status=400)
+        
+        try:
+            entry = TournamentEntry.objects.get(id=entry_id, tournament=tournament)
+            entry.delete()
+            return Response({'ok': True})
+        except TournamentEntry.DoesNotExist:
+            return Response({'ok': False, 'error': 'Участник не найден'}, status=404)
+        except Exception as e:
+            return Response({'ok': False, 'error': str(e)}, status=500)
+
 
 class ParticipantViewSet(viewsets.ModelViewSet):
     queryset = TournamentEntry.objects.all()

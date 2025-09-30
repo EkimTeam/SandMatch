@@ -114,6 +114,53 @@ export const tournamentApi = {
     const response = await api.get(`/tournaments/${id}/brackets/${bracketId}/draw/`);
     return response.data;
   },
+
+  // Получить участников турнира
+  getTournamentParticipants: async (tournamentId: number): Promise<any[]> => {
+    const response = await api.get(`/tournaments/${tournamentId}/participants/`);
+    return response.data.participants || [];
+  },
+
+  // Добавить участника в слот сетки
+  addParticipantToBracket: async (
+    tournamentId: number,
+    bracketId: number,
+    matchId: number,
+    slot: 'team_1' | 'team_2',
+    participantId: number
+  ): Promise<{ ok: boolean }> => {
+    const response = await api.post(
+      `/tournaments/${tournamentId}/brackets/${bracketId}/assign_participant/`,
+      { match_id: matchId, slot, participant_id: participantId }
+    );
+    return response.data;
+  },
+
+  // Удалить участника из слота
+  removeParticipantFromBracket: async (
+    tournamentId: number,
+    bracketId: number,
+    matchId: number,
+    slot: 'team_1' | 'team_2'
+  ): Promise<{ ok: boolean }> => {
+    const response = await api.delete(
+      `/tournaments/${tournamentId}/brackets/${bracketId}/remove_participant/`,
+      { data: { match_id: matchId, slot } }
+    );
+    return response.data;
+  },
+
+  // Добавить нового участника в турнир
+  addParticipantToTournament: async (
+    tournamentId: number,
+    participantData: { player_id?: number; name: string }
+  ): Promise<{ id: number; name: string; team_id: number }> => {
+    const response = await api.post(
+      `/tournaments/${tournamentId}/add_participant/`,
+      participantData
+    );
+    return response.data;
+  },
 };
 
 // API методы для игроков

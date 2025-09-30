@@ -20,10 +20,10 @@ class Match(models.Model):
         "tournaments.KnockoutBracket", on_delete=models.SET_NULL, null=True, blank=True, related_name="matches"
     )
     team_1 = models.ForeignKey(
-        "teams.Team", on_delete=models.PROTECT, related_name="matches_as_team1"
+        "teams.Team", on_delete=models.PROTECT, related_name="matches_as_team1", null=True, blank=True
     )
     team_2 = models.ForeignKey(
-        "teams.Team", on_delete=models.PROTECT, related_name="matches_as_team2"
+        "teams.Team", on_delete=models.PROTECT, related_name="matches_as_team2", null=True, blank=True
     )
     # Нормализованные ссылки для уникальности пары на уровне БД
     team_low = models.ForeignKey(

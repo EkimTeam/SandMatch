@@ -1,5 +1,6 @@
 import React from 'react';
 import { BracketRound } from '../types/bracket';
+import { DropSlot, DraggableParticipant } from '../types/dragdrop';
 
 export const RoundComponent: React.FC<{
   round: BracketRound;
@@ -16,7 +17,12 @@ export const RoundComponent: React.FC<{
   // Плейсхолдеры
   placeholderPrevCode?: string; // код стадии предыдущего раунда (например, QF, R16, SMF)
   placeholderMode?: 'winner' | 'loser' | 'seed';
-}> = ({ round, matchWidth, onMatchClick, highlightIds, tops, totalHeight, preSpacer = 0, placeholderPrevCode, placeholderMode }) => {
+  // Drag-and-Drop (только для первого раунда)
+  dropSlots?: DropSlot[];
+  onDrop?: (matchId: number, slot: 'team_1' | 'team_2', participant: DraggableParticipant) => void;
+  onRemoveFromSlot?: (matchId: number, slot: 'team_1' | 'team_2') => void;
+  isLocked?: boolean;
+}> = ({ round, matchWidth, onMatchClick, highlightIds, tops, totalHeight, preSpacer = 0, placeholderPrevCode, placeholderMode, dropSlots, onDrop, onRemoveFromSlot, isLocked }) => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minWidth: matchWidth }}>
       <h3 style={{ textAlign: 'center', fontWeight: 700, fontSize: 14, marginBottom: 8 }}>{round.round_name}</h3>
@@ -43,6 +49,32 @@ export const RoundComponent: React.FC<{
             const status = m?.status ?? 'scheduled';
             const idAttr = m ? m.id : -1 * (round.round_index * 1000 + idx + 1);
             const isPlaceholder = !m;
+            
+            // Drop-зоны только для первого раунда
+            const isFirstRound = round.round_index === 0;
+            const canDrop = isFirstRound && dropSlots && onDrop && !isLocked;
+            
+            // Найти участников в слотах для этого матча
+            const slot1 = dropSlots?.find(s => s.matchId === (m?.id ?? idAttr) && s.slot === 'team_1');
+            const slot2 = dropSlots?.find(s => s.matchId === (m?.id ?? idAttr) && s.slot === 'team_2');
+            
+            const handleDragOver = (e: React.DragEvent) => {
+              if (canDrop) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+              }
+            };
+            
+            const handleDrop = (e: React.DragEvent, slot: 'team_1' | 'team_2') => {
+              if (!canDrop || !m) return;
+              e.preventDefault();
+              try {
+                const participantData = JSON.parse(e.dataTransfer.getData('application/json'));
+                onDrop(m.id, slot, participantData);
+              } catch (error) {
+                console.error('Error parsing dropped data:', error);
+              }
+            };
             return (
             <div
               key={idAttr}
@@ -61,18 +93,50 @@ export const RoundComponent: React.FC<{
               }}
               onClick={() => m && onMatchClick?.(m.id)}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                <div style={{ fontWeight: winnerId && m?.team_1?.id === winnerId ? 700 : 400, color: m ? undefined : '#9ca3af' }}>
-                  {team1}
+              <div 
+                style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, padding: canDrop ? 4 : 0, border: canDrop && !slot1?.currentParticipant ? '1px dashed #d1d5db' : 'none', borderRadius: 4, background: canDrop && !slot1?.currentParticipant ? '#f9fafb' : 'transparent' }}
+                onDragOver={canDrop ? handleDragOver : undefined}
+                onDrop={canDrop ? (e) => handleDrop(e, 'team_1') : undefined}
+              >
+                <div style={{ fontWeight: winnerId && m?.team_1?.id === winnerId ? 700 : 400, color: m ? undefined : '#9ca3af', flex: 1 }}>
+                  {slot1?.currentParticipant?.name || team1}
                 </div>
+                {canDrop && slot1?.currentParticipant && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRemoveFromSlot?.(m!.id, 'team_1');
+                    }}
+                    style={{ marginLeft: 8, padding: '0 6px', fontSize: 14, border: 'none', background: 'transparent', cursor: 'pointer', color: '#6b7280' }}
+                    title="Удалить участника"
+                  >
+                    ×
+                  </button>
+                )}
               </div>
               <div style={{ textAlign: 'center', color: '#6b7280', fontWeight: 600 }}>
                 {status === 'completed' ? 'Завершён' : status === 'live' ? 'Идёт' : 'VS'}
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-                <div style={{ fontWeight: winnerId && m?.team_2?.id === winnerId ? 700 : 400, color: m ? undefined : '#9ca3af' }}>
-                  {team2}
+              <div 
+                style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, padding: canDrop ? 4 : 0, border: canDrop && !slot2?.currentParticipant ? '1px dashed #d1d5db' : 'none', borderRadius: 4, background: canDrop && !slot2?.currentParticipant ? '#f9fafb' : 'transparent' }}
+                onDragOver={canDrop ? handleDragOver : undefined}
+                onDrop={canDrop ? (e) => handleDrop(e, 'team_2') : undefined}
+              >
+                <div style={{ fontWeight: winnerId && m?.team_2?.id === winnerId ? 700 : 400, color: m ? undefined : '#9ca3af', flex: 1 }}>
+                  {slot2?.currentParticipant?.name || team2}
                 </div>
+                {canDrop && slot2?.currentParticipant && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRemoveFromSlot?.(m!.id, 'team_2');
+                    }}
+                    style={{ marginLeft: 8, padding: '0 6px', fontSize: 14, border: 'none', background: 'transparent', cursor: 'pointer', color: '#6b7280' }}
+                    title="Удалить участника"
+                  >
+                    ×
+                  </button>
+                )}
               </div>
             </div>
           )})

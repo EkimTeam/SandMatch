@@ -1,12 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { BracketData } from '../types/bracket';
 import { RoundComponent } from './RoundComponent';
+import { DropSlot, DraggableParticipant } from '../types/dragdrop';
 
 export const BracketWithSVGConnectors: React.FC<{
   data: BracketData;
   onMatchClick?: (matchId: number) => void;
   highlightIds?: Set<number>;
-}> = ({ data, onMatchClick, highlightIds }) => {
+  dropSlots?: DropSlot[];
+  onDrop?: (matchId: number, slot: 'team_1' | 'team_2', participant: DraggableParticipant) => void;
+  onRemoveFromSlot?: (matchId: number, slot: 'team_1' | 'team_2') => void;
+  isLocked?: boolean;
+}> = ({ data, onMatchClick, highlightIds, dropSlots, onDrop, onRemoveFromSlot, isLocked }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [positions, setPositions] = useState<Map<number, DOMRect>>(new Map());
@@ -200,6 +205,10 @@ export const BracketWithSVGConnectors: React.FC<{
                 totalHeight={totalHeight}
                 placeholderPrevCode={placeholderPrevCode}
                 placeholderMode={placeholderMode}
+                dropSlots={idx === 0 ? dropSlots : undefined}
+                onDrop={idx === 0 ? onDrop : undefined}
+                onRemoveFromSlot={idx === 0 ? onRemoveFromSlot : undefined}
+                isLocked={isLocked}
               />
             );
           });
