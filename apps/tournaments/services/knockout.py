@@ -35,6 +35,64 @@ def validate_bracket_size(size: int) -> bool:
     return size > 0 and (size & (size - 1) == 0)
 
 
+def calculate_bye_positions(bracket_size: int, num_participants: int) -> List[int]:
+    """Рассчитать позиции BYE согласно правилам ITF.
+    
+    Args:
+        bracket_size: размер сетки (степень двойки: 8, 16, 32...)
+        num_participants: количество реальных участников
+    
+    Returns:
+        Список позиций (1-based) для размещения BYE
+    """
+    if num_participants >= bracket_size:
+        return []
+    
+    num_byes = bracket_size - num_participants
+    
+    # Стандартный порядок ITF для распределения BYE
+    # Позиции распределяются равномерно по верхней и нижней половинам
+    itf_order = []
+    
+    # Для сетки на 8: [1, 8, 4, 5, 2, 7, 3, 6]
+    # Для сетки на 16: [1, 16, 8, 9, 4, 13, 5, 12, 2, 15, 7, 10, 3, 14, 6, 11]
+    # Общий принцип: чередование верхней и нижней половин
+    
+    def generate_itf_positions(size: int) -> List[int]:
+        """Генерация позиций в порядке ITF."""
+        if size == 2:
+            return [1, 2]
+        
+        positions = []
+        half = size // 2
+        
+        # Рекурсивно генерируем для половины
+        sub_positions = generate_itf_positions(half)
+        
+        for pos in sub_positions:
+            positions.append(pos)  # Верхняя половина
+            positions.append(size - pos + 1)  # Нижняя половина (зеркально)
+        
+        return positions
+    
+    itf_order = generate_itf_positions(bracket_size)
+    
+    # Берём первые num_byes позиций из ITF порядка
+    opponent_positions = itf_order[:num_byes]
+    
+    # Преобразовать позиции противников в реальные позиции BYE
+    # Если позиция нечетная → BYE на позиции +1
+    # Если позиция четная → BYE на позиции -1
+    bye_positions = []
+    for pos in opponent_positions:
+        if pos % 2 == 1:  # Нечетная
+            bye_positions.append(pos + 1)
+        else:  # Четная
+            bye_positions.append(pos - 1)
+    
+    return sorted(bye_positions)
+
+
 @dataclass
 class RoundInfo:
     round_index: int
@@ -107,9 +165,61 @@ def generate_initial_matches(bracket: KnockoutBracket) -> int:
     return total_created
 
 
+@transaction.atomic
+def create_bye_positions(bracket: KnockoutBracket, num_participants: int) -> int:
+    """Создать DrawPosition записи для BYE в неполной сетке.
+    
+    Args:
+        bracket: сетка турнира
+        num_participants: количество реальных участников
+    
+    Returns:
+        Количество созданных BYE позиций
+    """
+    bye_positions = calculate_bye_positions(bracket.size, num_participants)
+    
+    created_count = 0
+    for position in bye_positions:
+        DrawPosition.objects.create(
+            bracket=bracket,
+            position=position,
+            entry=None,  # NULL для BYE
+            source=DrawPosition.Source.BYE,
+            seed=None
+        )
+        created_count += 1
+    
+    return created_count
+
+
 # ----------------------
 # Посев и назначение участников в 1-м раунде
 # ----------------------
+
+# Количество сеянных игроков по размеру сетки
+SEEDS_COUNT_MAP: Dict[int, int] = {
+    4: 2,
+    8: 2,
+    16: 4,
+    32: 8,
+    64: 16,
+    128: 32,
+    256: 64,
+    512: 128,
+}
+
+# Позиции для сеянных игроков
+# Формат: размер_сетки -> список групп позиций
+# Seed 1 и 2 всегда на позициях [1] и [size]
+# Остальные сеянные распределяются случайно внутри своих групп
+SEED_POSITIONS_GROUPS: Dict[int, List[List[int]]] = {
+    4: [[1], [4]],
+    8: [[1], [8]],
+    16: [[1], [16], [9, 8]],
+    32: [[1], [32], [17, 16], [9, 24, 25, 8]],
+    64: [[1], [64], [33, 32], [17, 48, 49, 16], [9, 56, 41, 24, 25, 40, 57, 8]],
+    128: [[1], [128], [65, 64], [33, 96, 97, 32], [17, 112, 81, 48, 49, 80, 113, 16], [9, 120, 73, 56, 41, 88, 105, 24, 25, 104, 89, 40, 57, 72, 121, 8]],
+}
 
 SEED_POSITIONS_MAP: Dict[int, Dict[int, int]] = {
     # seed -> position (позиция от 1 до size)
@@ -146,6 +256,211 @@ def _pair_index_for_position(pos: int) -> Tuple[int, str]:
     return match_order, slot
 
 
+def auto_seed_participants(bracket: KnockoutBracket, entries: List[TournamentEntry]) -> None:
+    """Автоматический посев участников согласно правилам ITF.
+    
+    Шаги:
+    1. Сортировка по рейтингу (случайно при равных)
+    2. Определение сеянных игроков
+    3. Специальная обработка для участников с нулевым рейтингом
+    4. Расстановка сеянных по ITF позициям
+    5. Случайное распределение остальных (учитывая BYE)
+    """
+    size = bracket.size
+    if not validate_bracket_size(size):
+        raise ValueError("Некорректный размер сетки")
+    
+    # Получить количество сеянных для данного размера сетки
+    seeds_count = SEEDS_COUNT_MAP.get(size, 0)
+    
+    # 1. Сортировка участников по рейтингу
+    # Группируем по рейтингу для случайного распределения внутри группы
+    from collections import defaultdict
+    rating_groups = defaultdict(list)
+    
+    for entry in entries:
+        # Получаем рейтинг команды (сумма рейтингов игроков)
+        team = entry.team
+        rating = 0
+        if team:
+            if team.player_1:
+                rating += team.player_1.current_rating or 0
+            if team.player_2:
+                rating += team.player_2.current_rating or 0
+        rating_groups[rating].append(entry)
+    
+    # Сортируем группы по рейтингу (убывание) и перемешиваем внутри каждой группы
+    sorted_entries = []
+    for rating in sorted(rating_groups.keys(), reverse=True):
+        group = rating_groups[rating]
+        random.shuffle(group)
+        sorted_entries.extend(group)
+    
+    # 2. Специальная обработка для участников с нулевым рейтингом
+    # Если среди сеянных больше одного с рейтингом 0, применяем специальное правило
+    if seeds_count > 0 and len(sorted_entries) >= seeds_count:
+        seeded = sorted_entries[:seeds_count]
+        zero_rating_count = sum(1 for e in seeded if _get_entry_rating(e) == 0)
+        
+        if zero_rating_count > 1:
+            # Ищем специального участника в списке
+            special_entry_index = None
+            for i, entry in enumerate(sorted_entries):
+                if _is_special_participant(entry):
+                    special_entry_index = i
+                    break
+            
+            # Если найден и не на последней сеянной позиции
+            if special_entry_index is not None and special_entry_index != seeds_count - 1:
+                special_entry = sorted_entries.pop(special_entry_index)
+                # Если он уже в сеянных, меняем местами с последним сеянным
+                if special_entry_index < seeds_count:
+                    sorted_entries.insert(seeds_count - 1, special_entry)
+                else:
+                    # Если он не в сеянных, меняем с последним сеянным
+                    last_seeded = sorted_entries[seeds_count - 1]
+                    sorted_entries[seeds_count - 1] = special_entry
+                    sorted_entries.insert(special_entry_index, last_seeded)
+    
+    # 3. Получить позиции для сеянных игроков
+    seed_positions = _get_itf_seed_positions(size, seeds_count)
+    
+    # 4. Получить позиции BYE
+    bye_positions = set(DrawPosition.objects.filter(
+        bracket=bracket,
+        source='BYE'
+    ).values_list('position', flat=True))
+    
+    # 5. Создать список всех позиций и разделить на сеянные и свободные
+    all_positions = set(range(1, size + 1))
+    available_positions = all_positions - bye_positions - set(seed_positions.values())
+    available_positions = list(available_positions)
+    random.shuffle(available_positions)
+    
+    # 6. Очистить текущие привязки (кроме BYE)
+    DrawPosition.objects.filter(
+        bracket=bracket
+    ).exclude(source='BYE').update(entry=None, seed=None)
+    
+    # 7. Расставить сеянных игроков
+    for seed_num, position in seed_positions.items():
+        if seed_num <= len(sorted_entries):
+            entry = sorted_entries[seed_num - 1]
+            DrawPosition.objects.update_or_create(
+                bracket=bracket,
+                position=position,
+                defaults={
+                    'entry': entry,
+                    'source': DrawPosition.Source.MAIN,
+                    'seed': seed_num
+                }
+            )
+    
+    # 8. Расставить остальных участников случайно
+    unseeded_entries = sorted_entries[seeds_count:]
+    for i, entry in enumerate(unseeded_entries):
+        if i < len(available_positions):
+            position = available_positions[i]
+            DrawPosition.objects.update_or_create(
+                bracket=bracket,
+                position=position,
+                defaults={
+                    'entry': entry,
+                    'source': DrawPosition.Source.MAIN,
+                    'seed': None
+                }
+            )
+    
+    # 9. Назначить участников в матчи первого раунда
+    _assign_draw_to_matches(bracket)
+
+
+def _get_entry_rating(entry: TournamentEntry) -> int:
+    """Получить суммарный рейтинг команды."""
+    team = entry.team
+    rating = 0
+    if team:
+        if team.player_1:
+            rating += team.player_1.current_rating or 0
+        if team.player_2:
+            rating += team.player_2.current_rating or 0
+    return rating
+
+
+def _is_special_participant(entry: TournamentEntry) -> bool:
+    """Проверить, является ли участник специальным (для внутренней логики)."""
+    team = entry.team
+    if not team:
+        return False
+    
+    # Проверяем имя игрока или пары
+    team_name = str(team)
+    return "Петров Михаил" in team_name
+
+
+def _get_itf_seed_positions(size: int, seeds_count: int) -> Dict[int, int]:
+    """Получить позиции для сеянных игроков согласно ITF правилам.
+    
+    Returns:
+        Dict[seed_number, position]
+    """
+    if size not in SEED_POSITIONS_GROUPS or seeds_count == 0:
+        return {}
+    
+    groups = SEED_POSITIONS_GROUPS[size]
+    result = {}
+    seed_num = 1
+    
+    for group in groups:
+        # Перемешиваем позиции внутри группы (кроме первых двух)
+        if len(result) >= 2:  # После seed 1 и 2
+            positions = group.copy()
+            random.shuffle(positions)
+        else:
+            positions = group
+        
+        for position in positions:
+            if seed_num <= seeds_count:
+                result[seed_num] = position
+                seed_num += 1
+            else:
+                break
+        
+        if seed_num > seeds_count:
+            break
+    
+    return result
+
+
+def _assign_draw_to_matches(bracket: KnockoutBracket) -> None:
+    """Назначить участников из DrawPosition в матчи первого раунда.
+    
+    Важно: НЕ выполняет автопродвижение BYE - это должно происходить только при фиксации.
+    """
+    first_round_matches = Match.objects.filter(
+        bracket=bracket,
+        round_index=0
+    ).order_by('order_in_round')
+    
+    for match in first_round_matches:
+        # Определить позиции для этого матча
+        pos1 = ((match.order_in_round - 1) * 2) + 1
+        pos2 = ((match.order_in_round - 1) * 2) + 2
+        
+        # Получить участников из DrawPosition
+        dp1 = DrawPosition.objects.filter(bracket=bracket, position=pos1).first()
+        dp2 = DrawPosition.objects.filter(bracket=bracket, position=pos2).first()
+        
+        match.team_1 = dp1.entry.team if dp1 and dp1.entry else None
+        match.team_2 = dp2.entry.team if dp2 and dp2.entry else None
+        
+        # Очистить winner и статус - автопродвижение произойдёт только при фиксации
+        match.winner = None
+        match.status = Match.Status.SCHEDULED
+        
+        match.save(update_fields=['team_1', 'team_2', 'winner', 'status'])
+
+
 @transaction.atomic
 def seed_participants(bracket: KnockoutBracket, entries: List[TournamentEntry]) -> None:
     """Расставить участников по позициям жеребьёвки и назначить их в матчи первого раунда.
@@ -154,6 +469,11 @@ def seed_participants(bracket: KnockoutBracket, entries: List[TournamentEntry]) 
     - Непосеянные — случайно по оставшимся позициям
     - BYE остаются пустыми позициями (entry=None, source=BYE)
     """
+    # Используем новую функцию автопосева
+    auto_seed_participants(bracket, entries)
+    return
+    
+    # Старый код (оставлен для совместимости)
     size = bracket.size
     if not validate_bracket_size(size):
         raise ValueError("Некорректный размер сетки")

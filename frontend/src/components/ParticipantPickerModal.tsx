@@ -218,7 +218,7 @@ export const ParticipantPickerModal: React.FC<Props> = ({ open, onClose, tournam
 
           <div className="flex justify-end gap-2">
             <button className="btn" onClick={onClose}>Отмена</button>
-            <button className="btn" onClick={submit}>{isDoubles ? 'Сохранить пару' : 'Сохранить'}</button>
+            <button className="btn" onClick={submit}>{isDoubles ? 'Добавить в турнир пару' : 'Добавить в турнир участника'}</button>
           </div>
         </div>
       </div>

@@ -22,7 +22,9 @@ export const RoundComponent: React.FC<{
   onDrop?: (matchId: number, slot: 'team_1' | 'team_2', participant: DraggableParticipant) => void;
   onRemoveFromSlot?: (matchId: number, slot: 'team_1' | 'team_2') => void;
   isLocked?: boolean;
-}> = ({ round, matchWidth, onMatchClick, highlightIds, tops, totalHeight, preSpacer = 0, placeholderPrevCode, placeholderMode, dropSlots, onDrop, onRemoveFromSlot, isLocked }) => {
+  showFullNames?: boolean;
+  byePositions?: Set<number>;
+}> = ({ round, matchWidth, onMatchClick, highlightIds, tops, totalHeight, preSpacer = 0, placeholderPrevCode, placeholderMode, dropSlots, onDrop, onRemoveFromSlot, isLocked, showFullNames, byePositions }) => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minWidth: matchWidth }}>
       <h3 style={{ textAlign: 'center', fontWeight: 700, fontSize: 14, marginBottom: 8 }}>{round.round_name}</h3>
@@ -33,20 +35,6 @@ export const RoundComponent: React.FC<{
             // Формирование подписей плейсхолдера (всегда, даже если матч существует, но команда пустая)
             const code = placeholderPrevCode || 'R';
             const codeText = code.startsWith('R') ? `${code}_` : code;
-            const placeholderTop =
-              placeholderMode === 'seed' ? `Игрок ${2 * idx + 1}`
-              : placeholderMode === 'winner' ? `Winner of ${codeText}${2 * idx + 1}`
-              : placeholderMode === 'loser' ? `Loser of ${codeText}${idx + 1}`
-              : '';
-            const placeholderBottom =
-              placeholderMode === 'seed' ? `Игрок ${2 * idx + 2}`
-              : placeholderMode === 'winner' ? `Winner of ${codeText}${2 * idx + 2}`
-              : placeholderMode === 'loser' ? `Loser of ${codeText}${idx + 2}`
-              : '';
-            const team1 = m?.team_1?.name ?? placeholderTop;
-            const team2 = m?.team_2?.name ?? placeholderBottom;
-            const winnerId = m?.winner_id ?? null;
-            const status = m?.status ?? 'scheduled';
             const idAttr = m ? m.id : -1 * (round.round_index * 1000 + idx + 1);
             const isPlaceholder = !m;
             
@@ -57,6 +45,43 @@ export const RoundComponent: React.FC<{
             // Найти участников в слотах для этого матча
             const slot1 = dropSlots?.find(s => s.matchId === (m?.id ?? idAttr) && s.slot === 'team_1');
             const slot2 = dropSlots?.find(s => s.matchId === (m?.id ?? idAttr) && s.slot === 'team_2');
+            
+            // Проверить, является ли позиция BYE
+            const position1 = ((m?.order_in_round || (idx + 1)) - 1) * 2 + 1;
+            const position2 = ((m?.order_in_round || (idx + 1)) - 1) * 2 + 2;
+            const isBye1 = byePositions?.has(position1);
+            const isBye2 = byePositions?.has(position2);
+            
+            const placeholderTop =
+              placeholderMode === 'seed' ? (isBye1 ? 'BYE' : `Игрок ${2 * idx + 1}`)
+              : placeholderMode === 'winner' ? `Winner of ${codeText}${2 * idx + 1}`
+              : placeholderMode === 'loser' ? `Loser of ${codeText}${idx + 1}`
+              : '';
+            const placeholderBottom =
+              placeholderMode === 'seed' ? (isBye2 ? 'BYE' : `Игрок ${2 * idx + 2}`)
+              : placeholderMode === 'winner' ? `Winner of ${codeText}${2 * idx + 2}`
+              : placeholderMode === 'loser' ? `Loser of ${codeText}${idx + 2}`
+              : '';
+            // Если слот пустой и это первый раунд с drag-and-drop, показываем "Свободное место"
+            // Используем display_name по умолчанию, full_name при showFullNames
+            const getTeamName = (team: any) => {
+              if (!team) return null;
+              if (showFullNames) {
+                return team.full_name || team.name;
+              }
+              return team.display_name || team.name;
+            };
+            
+            // Для участников из dropSlots тоже применяем getTeamName
+            const team1Display = (slot1?.currentParticipant ? (m?.team_1 ? getTeamName(m.team_1) : slot1.currentParticipant.name) : null) ?? (m?.team_1 ? getTeamName(m.team_1) : null) ?? (isFirstRound && canDrop ? 'Свободное место' : placeholderTop);
+            const team2Display = (slot2?.currentParticipant ? (m?.team_2 ? getTeamName(m.team_2) : slot2.currentParticipant.name) : null) ?? (m?.team_2 ? getTeamName(m.team_2) : null) ?? (isFirstRound && canDrop ? 'Свободное место' : placeholderBottom);
+            
+            // Для тултипов всегда используем full_name
+            const team1Tooltip = m?.team_1?.full_name || m?.team_1?.name;
+            const team2Tooltip = m?.team_2?.full_name || m?.team_2?.name;
+            
+            const winnerId = m?.winner_id ?? null;
+            const status = m?.status ?? 'scheduled';
             
             const handleDragOver = (e: React.DragEvent) => {
               if (canDrop) {
@@ -75,6 +100,14 @@ export const RoundComponent: React.FC<{
                 console.error('Error parsing dropped data:', error);
               }
             };
+            // Определить фон в зависимости от статуса
+            const getBackgroundColor = () => {
+              if (!m) return '#fff';
+              if (status === 'live') return '#d1fae5'; // светло-зелёный для "идёт"
+              if (status === 'completed') return '#f3f4f6'; // светло-серый для завершённых
+              return '#fff';
+            };
+            
             return (
             <div
               key={idAttr}
@@ -86,7 +119,7 @@ export const RoundComponent: React.FC<{
                 border: m && highlightIds?.has(m.id) ? '2px solid #2563eb' : '1px solid #e5e7eb',
                 borderRadius: 6,
                 padding: 8,
-                background: '#fff',
+                background: getBackgroundColor(),
                 cursor: 'pointer',
                 boxShadow: m && highlightIds?.has(m.id) ? '0 0 0 3px rgba(37,99,235,0.15)' : 'none',
                 opacity: isPlaceholder ? 0.85 : 1,
@@ -98,8 +131,14 @@ export const RoundComponent: React.FC<{
                 onDragOver={canDrop ? handleDragOver : undefined}
                 onDrop={canDrop ? (e) => handleDrop(e, 'team_1') : undefined}
               >
-                <div style={{ fontWeight: winnerId && m?.team_1?.id === winnerId ? 700 : 400, color: m ? undefined : '#9ca3af', flex: 1 }}>
-                  {slot1?.currentParticipant?.name || team1}
+                <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+                  {isFirstRound && <span style={{ marginRight: 6, color: '#6b7280', fontSize: 12 }}>{idx * 2 + 1}.</span>}
+                  <span 
+                    style={{ fontWeight: winnerId === m?.team_1?.id ? 600 : 400 }}
+                    title={team1Tooltip || undefined}
+                  >
+                    {team1Display}
+                  </span>
                 </div>
                 {canDrop && slot1?.currentParticipant && (
                   <button
@@ -115,15 +154,32 @@ export const RoundComponent: React.FC<{
                 )}
               </div>
               <div style={{ textAlign: 'center', color: '#6b7280', fontWeight: 600 }}>
-                {status === 'completed' ? 'Завершён' : status === 'live' ? 'Идёт' : 'VS'}
+                {(() => {
+                  if (status === 'live') return 'Идёт';
+                  if (status === 'completed') {
+                    // Проверить, есть ли BYE
+                    const hasBye = team1Display === 'BYE' || team2Display === 'BYE';
+                    if (hasBye) return ''; // Не показывать текст для матчей с BYE
+                    // Показать счёт, если есть
+                    if (m?.score) return <span style={{ fontWeight: 700 }}>{m.score}</span>;
+                    return 'Завершён';
+                  }
+                  return 'VS';
+                })()}
               </div>
               <div 
                 style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, padding: canDrop ? 4 : 0, border: canDrop && !slot2?.currentParticipant ? '1px dashed #d1d5db' : 'none', borderRadius: 4, background: canDrop && !slot2?.currentParticipant ? '#f9fafb' : 'transparent' }}
                 onDragOver={canDrop ? handleDragOver : undefined}
                 onDrop={canDrop ? (e) => handleDrop(e, 'team_2') : undefined}
               >
-                <div style={{ fontWeight: winnerId && m?.team_2?.id === winnerId ? 700 : 400, color: m ? undefined : '#9ca3af', flex: 1 }}>
-                  {slot2?.currentParticipant?.name || team2}
+                <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+                  {isFirstRound && <span style={{ marginRight: 6, color: '#6b7280', fontSize: 12 }}>{idx * 2 + 2}.</span>}
+                  <span 
+                    style={{ fontWeight: winnerId && m?.team_2?.id === winnerId ? 700 : 400, color: m ? undefined : '#9ca3af' }}
+                    title={team2Tooltip || undefined}
+                  >
+                    {team2Display}
+                  </span>
                 </div>
                 {canDrop && slot2?.currentParticipant && (
                   <button

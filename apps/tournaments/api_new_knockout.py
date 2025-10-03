@@ -6,7 +6,7 @@ import math
 
 from .models import Tournament, KnockoutBracket, DrawPosition, Ruleset
 from apps.matches.models import Match
-from .services.knockout import generate_initial_matches
+from .services.knockout import generate_initial_matches, create_bye_positions
 
 
 @api_view(["POST"])
@@ -31,6 +31,8 @@ def new_knockout(request):
         brackets_count = int(data.get("brackets_count") or 1)
         if planned_participants < 1:
             return Response({"ok": False, "error": "ko_participants (planned_participants) должен быть >= 1"}, status=400)
+        if planned_participants > 512:
+            return Response({"ok": False, "error": "Количество участников не может превышать 512"}, status=400)
         if brackets_count < 1:
             return Response({"ok": False, "error": "brackets_count должен быть >= 1"}, status=400)
     except Exception:
@@ -77,16 +79,32 @@ def new_knockout(request):
                 )
                 brackets.append(b)
 
-            # 4) Позиции жеребьёвки
+            # 4) Позиции жеребьёвки и BYE
+            from .services.knockout import calculate_bye_positions
             for b in brackets:
+                # Определить позиции BYE
+                bye_positions_set = set(calculate_bye_positions(size_per_bracket, planned_participants))
+                
+                # Создать все позиции: BYE и обычные
                 for pos in range(1, size_per_bracket + 1):
-                    DrawPosition.objects.create(
-                        bracket=b,
-                        position=pos,
-                        source=DrawPosition.Source.MAIN if hasattr(DrawPosition, 'Source') else 'MAIN',
-                        entry=None,
-                        seed=None,
-                    )
+                    if pos in bye_positions_set:
+                        # Позиция BYE
+                        DrawPosition.objects.create(
+                            bracket=b,
+                            position=pos,
+                            source=DrawPosition.Source.BYE,
+                            entry=None,
+                            seed=None,
+                        )
+                    else:
+                        # Обычная позиция
+                        DrawPosition.objects.create(
+                            bracket=b,
+                            position=pos,
+                            source=DrawPosition.Source.MAIN if hasattr(DrawPosition, 'Source') else 'MAIN',
+                            entry=None,
+                            seed=None,
+                        )
 
             # 5) Матчи всех раундов — используем сервис генерации
             for b in brackets:

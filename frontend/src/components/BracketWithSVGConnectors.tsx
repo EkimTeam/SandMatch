@@ -11,7 +11,9 @@ export const BracketWithSVGConnectors: React.FC<{
   onDrop?: (matchId: number, slot: 'team_1' | 'team_2', participant: DraggableParticipant) => void;
   onRemoveFromSlot?: (matchId: number, slot: 'team_1' | 'team_2') => void;
   isLocked?: boolean;
-}> = ({ data, onMatchClick, highlightIds, dropSlots, onDrop, onRemoveFromSlot, isLocked }) => {
+  showFullNames?: boolean;
+  byePositions?: Set<number>;
+}> = ({ data, onMatchClick, highlightIds, dropSlots, onDrop, onRemoveFromSlot, isLocked, showFullNames, byePositions }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [positions, setPositions] = useState<Map<number, DOMRect>>(new Map());
@@ -144,7 +146,7 @@ export const BracketWithSVGConnectors: React.FC<{
   }, [positions, data]);
 
   return (
-    <div ref={containerRef} style={{ position: 'relative', padding: 16, minHeight: 400, overflow: 'auto' }}>
+    <div ref={containerRef} data-bracket-container="true" style={{ position: 'relative', padding: 16, minHeight: 400, overflow: 'auto' }}>
       <svg ref={svgRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 1 }} />
       <div style={{ position: 'relative', display: 'flex', gap: data.visual_config.round_gap, zIndex: 2 }}>
         {(() => {
@@ -174,6 +176,8 @@ export const BracketWithSVGConnectors: React.FC<{
           // Теперь отрисуем каждый раунд, прокинув tops и высоту колонки
           data.rounds.forEach((round, idx) => {
             const tops = topsByRound[idx] || [];
+            const isFirstRound = idx === 0;
+            const roundDropSlots = isFirstRound ? dropSlots : undefined;
             // высота колонки: нижний край последней карточки + нижний отступ G0
             const totalHeight = tops.length
               ? tops[tops.length - 1] + H + G0
@@ -209,6 +213,8 @@ export const BracketWithSVGConnectors: React.FC<{
                 onDrop={idx === 0 ? onDrop : undefined}
                 onRemoveFromSlot={idx === 0 ? onRemoveFromSlot : undefined}
                 isLocked={isLocked}
+                showFullNames={showFullNames}
+                byePositions={byePositions}
               />
             );
           });

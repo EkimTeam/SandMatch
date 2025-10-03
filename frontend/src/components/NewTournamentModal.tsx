@@ -67,13 +67,10 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
       }
     } else if (formData.system === 'knockout') {
       const participants = parseInt(formData.ko_participants || '0', 10);
-      const brackets = parseInt(formData.brackets_count.toString(), 10);
       if (!participants || participants < 1) {
         newErrors.ko_participants = 'Укажите число участников';
-      } else if (brackets < 1) {
-        newErrors.brackets_count = 'Число сеток должно быть не менее 1';
-      } else if (participants <= brackets * 2) {
-        newErrors.ko_participants = 'Слишком мало участников для такого количества сеток.';
+      } else if (participants > 512) {
+        newErrors.ko_participants = 'Количество участников не может превышать 512';
       }
     }
 
@@ -92,7 +89,7 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
       groups_count: Number(formData.groups_count) || 1,
       participants: formData.participants ? Number(formData.participants) : undefined,
       ko_participants: formData.ko_participants ? Number(formData.ko_participants) : undefined,
-      brackets_count: Number(formData.brackets_count) || undefined,
+      brackets_count: 1, // Всегда 1 сетка
     };
     onSubmit(payload);
   };
@@ -185,7 +182,7 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
                 </label>
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: 0.6 }} title="Скоро">
                   <input type="radio" name="system" value="mixed" disabled />
-                  <span>Смешанная</span>
+                  <span>Американо</span>
                 </label>
               </div>
             </div>
@@ -251,19 +248,7 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
                   />
                   {errors.ko_participants && <div className="error">{errors.ko_participants}</div>}
                 </div>
-                <div className="form-row">
-                  <label htmlFor="brackets_count">Число сеток</label>
-                  <input
-                    type="number"
-                    id="brackets_count"
-                    name="brackets_count"
-                    min={1}
-                    step={1}
-                    value={formData.brackets_count}
-                    onChange={handleChange}
-                  />
-                  {errors.brackets_count && <div className="error">{errors.brackets_count}</div>}
-                </div>
+                {/* Поле "Число сеток" скрыто, всегда = 1 */}
               </div>
             )}
           </div>

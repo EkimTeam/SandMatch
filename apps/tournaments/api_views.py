@@ -11,7 +11,7 @@ from django.utils.decorators import method_decorator
 from django.db import transaction
 from typing import Optional
 
-from .models import Tournament, TournamentEntry, SetFormat, Ruleset, KnockoutBracket
+from .models import Tournament, TournamentEntry, SetFormat, Ruleset, KnockoutBracket, DrawPosition
 from apps.teams.models import Team
 from apps.matches.models import Match, MatchSet
 from apps.players.models import Player
@@ -233,14 +233,35 @@ class TournamentViewSet(viewsets.ModelViewSet):
             if not team:
                 return None
             name = str(team)
-            return {"id": team.id, "name": name}
+            # Получить display_name и full_name для игроков
+            display_name = name
+            full_name = name
+            
+            if team.player_1:
+                p1 = team.player_1
+                if team.player_2:
+                    # Пара
+                    p2 = team.player_2
+                    display_name = f"{p1.display_name or p1.first_name} / {p2.display_name or p2.first_name}"
+                    full_name = f"{p1.last_name} {p1.first_name} / {p2.last_name} {p2.first_name}"
+                else:
+                    # Одиночка
+                    display_name = p1.display_name or p1.first_name
+                    full_name = f"{p1.last_name} {p1.first_name}"
+            
+            return {
+                "id": team.id, 
+                "name": name,
+                "display_name": display_name,
+                "full_name": full_name
+            }
 
         def serialize_team_by_id(team_id: Optional[int]):
             if not team_id:
                 return None
             try:
-                t = Team.objects.get(id=team_id)
-                return {"id": t.id, "name": str(t)}
+                t = Team.objects.select_related('player_1', 'player_2').get(id=team_id)
+                return serialize_team(t)
             except Team.DoesNotExist:
                 return None
 
@@ -294,6 +315,18 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 # Надёжно сериализуем команды: сначала пробуем related, затем по *_id, затем по low/high id
                 t1 = serialize_team(m.team_1) or serialize_team_by_id(getattr(m, "team_1_id", None)) or serialize_team_by_id(getattr(m, "team_low_id", None))
                 t2 = serialize_team(m.team_2) or serialize_team_by_id(getattr(m, "team_2_id", None)) or serialize_team_by_id(getattr(m, "team_high_id", None))
+                
+                # Получить счёт матча
+                score_str = None
+                if m.status == Match.Status.COMPLETED and m.winner_id:
+                    sets = m.sets.all().order_by('index')
+                    if sets:
+                        # Формат: "6:4" для одного сета
+                        score_parts = []
+                        for s in sets:
+                            score_parts.append(f"{s.games_1}:{s.games_2}")
+                        score_str = " ".join(score_parts)
+                
                 round_payload["matches"].append({
                     "id": m.id,
                     "order_in_round": m.order_in_round,
@@ -308,14 +341,18 @@ class TournamentViewSet(viewsets.ModelViewSet):
                         "match_order": m.order_in_round,
                         "total_matches_in_round": info.matches_count,
                     },
+                    "score": score_str,
                 })
             draw_data.append(round_payload)
 
+        # Увеличить расстояние между матчами для парных турниров
+        match_gap = 80 if tournament.participant_mode == Tournament.ParticipantMode.DOUBLES else 40
+        
         return Response({
             "ok": True,
             "bracket": {"id": bracket.id, "index": bracket.index, "size": bracket.size, "has_third_place": bracket.has_third_place},
             "rounds": draw_data,
-            "visual_config": {"match_width": 250, "match_height": 100, "round_gap": 80, "match_gap": 40},
+            "visual_config": {"match_width": 250, "match_height": 100, "round_gap": 80, "match_gap": match_gap},
         })
 
     @method_decorator(csrf_exempt)
@@ -392,6 +429,10 @@ class TournamentViewSet(viewsets.ModelViewSet):
         Повторный вызов удаляет неактуальные матчи и добавляет недостающие.
         """
         tournament: Tournament = self.get_object()
+        
+        # Блокировка для завершённых турниров
+        if tournament.status == Tournament.Status.COMPLETED:
+            return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
         if tournament.system != Tournament.System.ROUND_ROBIN:
             return Response({"ok": False, "error": "Турнир не круговой системы"}, status=400)
 
@@ -507,7 +548,28 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     if upd:
                         obj.save(update_fields=["round_index", "round_name", "order_in_round", "team_1", "team_2"])
 
+        # Изменить статус турнира на active при фиксации
+        if tournament.status == Tournament.Status.CREATED:
+            tournament.status = Tournament.Status.ACTIVE
+            tournament.save(update_fields=['status'])
+
         return Response({"ok": True, "created": created})
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="unlock_participants", permission_classes=[AllowAny], authentication_classes=[])
+    def unlock_participants(self, request, pk=None):
+        """Снять фиксацию участников в круговой системе - изменить статус турнира на created."""
+        tournament: Tournament = self.get_object()
+        
+        if tournament.system != Tournament.System.ROUND_ROBIN:
+            return Response({"ok": False, "error": "Турнир не круговой системы"}, status=400)
+        
+        # Изменить статус турнира на created при снятии фиксации
+        if tournament.status == Tournament.Status.ACTIVE:
+            tournament.status = Tournament.Status.CREATED
+            tournament.save(update_fields=['status'])
+        
+        return Response({"ok": True})
 
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="match_start", permission_classes=[AllowAny], authentication_classes=[])
@@ -527,12 +589,207 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return Response({"ok": True, "match": MatchSerializer(m).data})
 
     @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="match_save_score_full", permission_classes=[AllowAny], authentication_classes=[])
+    def match_save_score_full(self, request, pk=None):
+        """Сохранить ПОЛНЫЙ счёт матча (все сеты) и завершить матч.
+        Ожидает JSON: { match_id: int, sets: [ {index, games_1, games_2, tb_1?, tb_2?, is_tiebreak_only?} ] }
+        games_1/games_2 — очки геймов для team_1 / team_2.
+        Для обычного тай-брейка допускается указывать только очки победителя и проигравшего,
+        но предпочтительно передавать tb_1/tb_2 как очки тай-брейка для каждой стороны.
+        """
+        tournament: Tournament = self.get_object()
+
+        if tournament.status == Tournament.Status.COMPLETED:
+            return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
+
+        match_id = request.data.get("match_id")
+        sets_payload = request.data.get("sets")
+        if not match_id or not isinstance(sets_payload, list) or len(sets_payload) == 0:
+            return Response({"ok": False, "error": "match_id и непустой массив sets обязательны"}, status=400)
+
+        try:
+            m = Match.objects.get(id=int(match_id), tournament=tournament)
+        except Match.DoesNotExist:
+            return Response({"ok": False, "error": "Матч не найден"}, status=404)
+
+        # Очистим старые сеты и создадим новые
+        m.sets.all().delete()
+
+        team1_sets_won = 0
+        team2_sets_won = 0
+
+        def decide_set_winner(g1: int, g2: int, tb1: int | None, tb2: int | None, is_tb_only: bool) -> int:
+            # Возвращает 1 если выиграл team_1, 2 если team_2
+            if is_tb_only:
+                # Чемпионский тай‑брейк — сравниваем tb1/tb2
+                return 1 if (tb1 or 0) > (tb2 or 0) else 2
+            # Обычный сет: сравниваем games
+            if g1 == g2:
+                # На практике такого не должно быть — защита на всякий
+                return 1
+            return 1 if g1 > g2 else 2
+
+        created = []
+        for i, s in enumerate(sets_payload, start=1):
+            idx = int(s.get("index") or i)
+            g1 = int(s.get("games_1") or 0)
+            g2 = int(s.get("games_2") or 0)
+            tb1 = s.get("tb_1")
+            tb2 = s.get("tb_2")
+            tb1 = int(tb1) if tb1 is not None else None
+            tb2 = int(tb2) if tb2 is not None else None
+            is_tb_only = bool(s.get("is_tiebreak_only") or False)
+
+            created.append(MatchSet(match=m, index=idx, games_1=g1, games_2=g2, tb_1=tb1, tb_2=tb2, is_tiebreak_only=is_tb_only))
+            w = decide_set_winner(g1, g2, tb1, tb2, is_tb_only)
+            if w == 1:
+                team1_sets_won += 1
+            else:
+                team2_sets_won += 1
+
+        MatchSet.objects.bulk_create(created)
+
+        # Определяем победителя по числу выигранных сетов
+        if team1_sets_won == team2_sets_won:
+            # На всякий случай — выбираем по последнему сету
+            last = created[-1]
+            w = 1 if (last.games_1 > last.games_2) or ((last.tb_1 or 0) > (last.tb_2 or 0)) else 2
+        else:
+            w = 1 if team1_sets_won > team2_sets_won else 2
+
+        winner_team = m.team_1 if w == 1 else m.team_2
+        if not winner_team:
+            return Response({"ok": False, "error": "Нельзя определить победителя: в паре отсутствует команда"}, status=400)
+
+        from django.utils import timezone
+        m.finished_at = timezone.now()
+        m.winner = winner_team
+        m.status = Match.Status.COMPLETED
+        m.save(update_fields=["finished_at", "winner", "status", "updated_at"])
+
+        # Продвинем победителя в плей-офф (если матч относится к сетке)
+        if m.bracket:
+            try:
+                from apps.tournaments.services.knockout import advance_winner
+                advance_winner(m)
+            except Exception as e:
+                import logging, traceback
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to advance winner for match {m.id}: {e}")
+                logger.error(traceback.format_exc())
+                return Response({"ok": False, "error": f"Не удалось продвинуть победителя: {str(e)}"}, status=500)
+
+        return Response({"ok": True, "match": MatchSerializer(m).data})
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="match_start", permission_classes=[AllowAny], authentication_classes=[])
+    def match_start(self, request, pk=None):
+        """Начать матч (установить статус live и время начала)."""
+        tournament: Tournament = self.get_object()
+        
+        # Блокировка для завершённых турниров
+        if tournament.status == Tournament.Status.COMPLETED:
+            return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
+        match_id = request.data.get("match_id")
+        
+        if not match_id:
+            return Response({"ok": False, "error": "match_id обязателен"}, status=400)
+        
+        try:
+            m = Match.objects.get(id=int(match_id), tournament=tournament)
+        except Match.DoesNotExist:
+            return Response({"ok": False, "error": "Матч не найден"}, status=404)
+        
+        from django.utils import timezone
+        m.started_at = timezone.now()
+        m.status = Match.Status.LIVE
+        m.save(update_fields=["started_at", "status", "updated_at"])
+        
+        return Response({"ok": True, "match": {"id": m.id, "status": m.status}})
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="match_cancel", permission_classes=[AllowAny], authentication_classes=[])
+    def match_cancel(self, request, pk=None):
+        """Отменить матч (вернуть в статус scheduled, очистить время начала)."""
+        tournament: Tournament = self.get_object()
+        
+        # Блокировка для завершённых турниров
+        if tournament.status == Tournament.Status.COMPLETED:
+            return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
+        match_id = request.data.get("match_id")
+        
+        if not match_id:
+            return Response({"ok": False, "error": "match_id обязателен"}, status=400)
+        
+        try:
+            m = Match.objects.get(id=int(match_id), tournament=tournament)
+        except Match.DoesNotExist:
+            return Response({"ok": False, "error": "Матч не найден"}, status=404)
+        
+        m.started_at = None
+        m.status = Match.Status.SCHEDULED
+        m.save(update_fields=["started_at", "status", "updated_at"])
+        
+        return Response({"ok": True, "match": {"id": m.id, "status": m.status}})
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="match_reset", permission_classes=[AllowAny], authentication_classes=[])
+    def match_reset(self, request, pk=None):
+        """Сбросить результат матча (удалить счёт, победителя, убрать из следующего раунда)."""
+        tournament: Tournament = self.get_object()
+        
+        # Блокировка для завершённых турниров
+        if tournament.status == Tournament.Status.COMPLETED:
+            return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
+        match_id = request.data.get("match_id")
+        
+        if not match_id:
+            return Response({"ok": False, "error": "match_id обязателен"}, status=400)
+        
+        try:
+            m = Match.objects.get(id=int(match_id), tournament=tournament)
+        except Match.DoesNotExist:
+            return Response({"ok": False, "error": "Матч не найден"}, status=404)
+        
+        # Удалить победителя из следующего раунда
+        if m.winner_id and m.bracket:
+            next_round = (m.round_index or 0) + 1
+            next_order = (m.order_in_round + 1) // 2
+            target_slot = 'team_1' if (m.order_in_round % 2 == 1) else 'team_2'
+            
+            next_match = Match.objects.filter(
+                bracket=m.bracket,
+                round_index=next_round,
+                order_in_round=next_order
+            ).first()
+            
+            if next_match:
+                setattr(next_match, target_slot, None)
+                next_match.save(update_fields=[target_slot, 'updated_at'])
+        
+        # Удалить сеты
+        m.sets.all().delete()
+        
+        # Очистить результат матча
+        m.winner = None
+        m.started_at = None
+        m.finished_at = None
+        m.status = Match.Status.SCHEDULED
+        m.save(update_fields=["winner", "started_at", "finished_at", "status", "updated_at"])
+        
+        return Response({"ok": True})
+
+    @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="match_save_score", permission_classes=[AllowAny], authentication_classes=[])
     def match_save_score(self, request, pk=None):
         """Сохранить счёт одного сета и завершить матч.
         Ожидает JSON: { match_id, id_team_first, id_team_second, games_first, games_second }
         """
         tournament: Tournament = self.get_object()
+        
+        # Блокировка для завершённых турниров
+        if tournament.status == Tournament.Status.COMPLETED:
+            return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
         match_id = request.data.get("match_id")
         id_team_first = request.data.get("id_team_first")
         id_team_second = request.data.get("id_team_second")
@@ -571,11 +828,19 @@ class TournamentViewSet(viewsets.ModelViewSet):
         m.status = Match.Status.COMPLETED
         m.save(update_fields=["finished_at", "winner", "status", "updated_at"])
         # Продвинем победителя в плей-офф (если матч относится к сетке)
-        try:
-            advance_winner(m)
-        except Exception:
-            # не прерываем основной поток; продвижение возможно только для плей-офф матчей
-            pass
+        if m.bracket:
+            try:
+                from apps.tournaments.services.knockout import advance_winner
+                advance_winner(m)
+            except Exception as e:
+                # Логируем ошибку, но не прерываем основной поток
+                import logging
+                import traceback
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to advance winner for match {m.id}: {e}")
+                logger.error(traceback.format_exc())
+                # Возвращаем ошибку в ответе для отладки
+                return Response({"ok": False, "error": f"Не удалось продвинуть победителя: {str(e)}"}, status=500)
         return Response({"ok": True, "match": MatchSerializer(m).data})
 
     @method_decorator(csrf_exempt)
@@ -649,20 +914,56 @@ class TournamentViewSet(viewsets.ModelViewSet):
         for entry in entries:
             team = entry.team
             name = str(team)
+            
+            # Получить full_name для отображения в списке участников
+            full_name = name
+            if team.player_1:
+                p1 = team.player_1
+                if team.player_2:
+                    # Пара
+                    p2 = team.player_2
+                    full_name = f"{p1.last_name} {p1.first_name} / {p2.last_name} {p2.first_name}"
+                else:
+                    # Одиночка
+                    full_name = f"{p1.last_name} {p1.first_name}"
+            
             participants.append({
                 'id': entry.id,
-                'name': name,
+                'name': full_name,  # Всегда полное ФИО для списка участников
                 'team_id': team.id,
                 'isInBracket': False
             })
         
         return Response({'participants': participants})
+    
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["get"], url_path="brackets/(?P<bracket_id>[^/.]+)/bye_positions", permission_classes=[AllowAny], authentication_classes=[])
+    def get_bye_positions(self, request, pk=None, bracket_id=None):
+        """Получить список позиций BYE для сетки."""
+        tournament: Tournament = self.get_object()
+        
+        try:
+            bracket = tournament.knockout_brackets.get(id=int(bracket_id))
+            bye_positions = DrawPosition.objects.filter(
+                bracket=bracket,
+                source='BYE'
+            ).values_list('position', flat=True)
+            
+            return Response({'bye_positions': list(bye_positions)})
+        except KnockoutBracket.DoesNotExist:
+            return Response({'ok': False, 'error': 'Сетка не найдена'}, status=404)
+        except Exception as e:
+            return Response({'ok': False, 'error': str(e)}, status=500)
 
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="brackets/(?P<bracket_id>[^/.]+)/assign_participant", permission_classes=[AllowAny], authentication_classes=[])
     def assign_participant(self, request, pk=None, bracket_id=None):
         """Назначить участника в слот сетки."""
         tournament: Tournament = self.get_object()
+        
+        # Блокировка для завершённых турниров
+        if tournament.status == Tournament.Status.COMPLETED:
+            return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
         match_id = request.data.get('match_id')
         slot = request.data.get('slot')
         participant_id = request.data.get('participant_id')
@@ -731,6 +1032,10 @@ class TournamentViewSet(viewsets.ModelViewSet):
     def add_participant(self, request, pk=None):
         """Добавить нового участника в турнир."""
         tournament: Tournament = self.get_object()
+        
+        # Блокировка для завершённых турниров
+        if tournament.status == Tournament.Status.COMPLETED:
+            return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
         name = request.data.get('name')
         player_id = request.data.get('player_id')
         player1_id = request.data.get('player1_id')
@@ -830,9 +1135,14 @@ class TournamentViewSet(viewsets.ModelViewSet):
 
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="brackets/(?P<bracket_id>[^/.]+)/lock_participants", permission_classes=[AllowAny], authentication_classes=[])
-    def lock_participants(self, request, pk=None, bracket_id=None):
+    def lock_bracket_participants(self, request, pk=None, bracket_id=None):
         """Зафиксировать участников в сетке."""
+        from apps.tournaments.models import DrawPosition
         tournament: Tournament = self.get_object()
+        
+        # Блокировка для завершённых турниров
+        if tournament.status == Tournament.Status.COMPLETED:
+            return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
         slots_data = request.data.get('slots', [])
         
         if not slots_data:
@@ -884,19 +1194,18 @@ class TournamentViewSet(viewsets.ModelViewSet):
                                     match.status = Match.Status.SCHEDULED
                                 
                                 # Убрать старого участника из следующего раунда
-                                if match.connection_info:
-                                    target_match_id = match.connection_info.get('target_match_id')
-                                    target_slot = match.connection_info.get('target_slot')
-                                    if target_match_id and target_slot:
-                                        try:
-                                            next_match = Match.objects.get(id=target_match_id)
-                                            current_team_in_next = getattr(next_match, target_slot + '_id')
-                                            # Убрать только если там был старый участник
-                                            if current_team_in_next == old_team_id:
-                                                setattr(next_match, target_slot, None)
-                                                next_match.save(update_fields=[target_slot])
-                                        except Match.DoesNotExist:
-                                            pass
+                                next_order = (match.order_in_round + 1) // 2
+                                next_round = (match.round_index or 0) + 1
+                                target_slot = 'team_1' if (match.order_in_round % 2 == 1) else 'team_2'
+                                next_match = Match.objects.filter(
+                                    bracket=match.bracket,
+                                    round_index=next_round,
+                                    is_third_place=False,
+                                    order_in_round=next_order,
+                                ).first()
+                                if next_match:
+                                    setattr(next_match, target_slot, None)
+                                    next_match.save(update_fields=[target_slot])
                             
                             # Также очистить winner если это был другой участник из этого матча
                             other_slot = 'team_2' if slot == 'team_1' else 'team_1'
@@ -907,15 +1216,58 @@ class TournamentViewSet(viewsets.ModelViewSet):
                         
                         # Установить команду
                         setattr(match, slot, team)
+                        
+                        # Проверить автопродвижение для BYE
+                        # Если один из слотов NULL (BYE), автоматически продвинуть другого участника
+                        other_slot = 'team_2' if slot == 'team_1' else 'team_1'
+                        other_team = getattr(match, other_slot)
+
+                        # Автопродвижение допускается только в первом раунде и только если противоположная позиция — BYE
+                        is_bye_counterpart = False
+                        if (match.round_index or 0) == 0:
+                            # Определяем позиции team_1/team_2 в первом раунде
+                            current_pos = ((match.order_in_round - 1) * 2) + (1 if slot == 'team_1' else 2)
+                            other_pos = ((match.order_in_round - 1) * 2) + (2 if slot == 'team_1' else 1)
+                            is_bye_counterpart = DrawPosition.objects.filter(
+                                bracket=match.bracket,
+                                position=other_pos,
+                                source='BYE',
+                            ).exists()
+
+                        if is_bye_counterpart and (team is None or other_team is None):
+                            # Противоположная позиция — BYE, автоматически продвигаем другого
+                            winner = team if team else other_team
+                            if winner:
+                                match.winner = winner
+                                match.status = Match.Status.COMPLETED
+
+                                # Продвинуть в следующий раунд
+                                next_order = (match.order_in_round + 1) // 2
+                                next_round = (match.round_index or 0) + 1
+                                target_slot = 'team_1' if (match.order_in_round % 2 == 1) else 'team_2'
+                                next_match = Match.objects.filter(
+                                    bracket=match.bracket,
+                                    round_index=next_round,
+                                    is_third_place=False,
+                                    order_in_round=next_order,
+                                ).first()
+                                if next_match:
+                                    setattr(next_match, target_slot, winner)
+                                    next_match.save(update_fields=[target_slot])
+                        
                         match.save(update_fields=[slot, 'winner', 'status'])
                         
                         # Обновить DrawPosition (по позиции в сетке)
                         if participant_id:
                             from apps.tournaments.models import DrawPosition
                             # Определить позицию: для первого раунда позиция начинается с 1
-                            # position = (match.order_in_round - 1) * 2 + (1 если team_1 иначе 2)
-                            # Но order_in_round начинается с 0, поэтому:
-                            position = (match.order_in_round * 2) + (1 if slot == 'team_1' else 2)
+                            # order_in_round начинается с 1 (не с 0)
+                            # Для матча 1: team_1 → position=1, team_2 → position=2
+                            # Для матча 2: team_1 → position=3, team_2 → position=4
+                            position = ((match.order_in_round - 1) * 2) + (1 if slot == 'team_1' else 2)
+                            
+                            # Удалить старые записи для этой позиции перед созданием новой
+                            DrawPosition.objects.filter(bracket=bracket, position=position).delete()
                             
                             draw_pos, created = DrawPosition.objects.get_or_create(
                                 bracket=bracket,
@@ -930,8 +1282,34 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     except (Match.DoesNotExist, TournamentEntry.DoesNotExist):
                         continue
                 
+                # Изменить статус турнира на active при фиксации
+                if tournament.status == Tournament.Status.CREATED:
+                    tournament.status = Tournament.Status.ACTIVE
+                    tournament.save(update_fields=['status'])
+                
                 return Response({'ok': True, 'changes_detected': changes_detected})
                 
+        except KnockoutBracket.DoesNotExist:
+            return Response({'ok': False, 'error': 'Сетка не найдена'}, status=404)
+        except Exception as e:
+            return Response({'ok': False, 'error': str(e)}, status=500)
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="brackets/(?P<bracket_id>[^/.]+)/unlock_participants", permission_classes=[AllowAny], authentication_classes=[])
+    def unlock_bracket_participants(self, request, pk=None, bracket_id=None):
+        """Снять фиксацию участников в сетке - изменить статус турнира на created."""
+        tournament: Tournament = self.get_object()
+        
+        try:
+            bracket = tournament.knockout_brackets.get(id=int(bracket_id))
+            
+            # Изменить статус турнира на created при снятии фиксации
+            if tournament.status == Tournament.Status.ACTIVE:
+                tournament.status = Tournament.Status.CREATED
+                tournament.save(update_fields=['status'])
+            
+            return Response({'ok': True})
+            
         except KnockoutBracket.DoesNotExist:
             return Response({'ok': False, 'error': 'Сетка не найдена'}, status=404)
         except Exception as e:

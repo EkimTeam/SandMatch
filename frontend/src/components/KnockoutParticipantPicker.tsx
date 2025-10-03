@@ -353,7 +353,7 @@ export const KnockoutParticipantPicker: React.FC<Props> = ({
           <div className="flex justify-end gap-2">
             <button className="btn" onClick={onClose}>Отмена</button>
             <button className="btn" onClick={submit}>
-              {isDoubles ? 'Сохранить пару' : 'Сохранить'}
+              {isDoubles ? 'Добавить в турнир пару' : 'Добавить в турнир участника'}
             </button>
           </div>
         </div>

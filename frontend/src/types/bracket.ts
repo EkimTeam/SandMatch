@@ -11,6 +11,8 @@ export interface MatchConnection {
 export interface SimpleTeam {
   id: number;
   name: string;
+  display_name?: string;
+  full_name?: string;
 }
 
 export interface BracketMatch {
@@ -27,6 +29,7 @@ export interface BracketMatch {
     match_order: number;
     total_matches_in_round: number;
   };
+  score?: string;
 }
 
 export interface BracketRound {

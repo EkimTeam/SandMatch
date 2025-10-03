@@ -2,7 +2,7 @@ from rest_framework import serializers
 from apps.players.models import Player
 from apps.teams.models import Team
 from apps.matches.models import Match, MatchSet
-from .models import Tournament, TournamentEntry
+from .models import Tournament, TournamentEntry, SetFormat
 
 
 class PlayerSerializer(serializers.ModelSerializer):
@@ -122,6 +122,7 @@ class MatchSerializer(serializers.ModelSerializer):
 
 class TournamentSerializer(serializers.ModelSerializer):
     participants = ParticipantSerializer(source="entries", many=True, read_only=True)
+    set_format = serializers.SerializerMethodField()
     matches = MatchSerializer(many=True, read_only=True)
     participants_count = serializers.SerializerMethodField()
     tournament_type = serializers.SerializerMethodField()
@@ -152,6 +153,7 @@ class TournamentSerializer(serializers.ModelSerializer):
             "used_player_ids",
             "tournament_type",
             "status",
+            "set_format",
             "participants",
             "matches",
             "participants_count",
@@ -185,3 +187,18 @@ class TournamentSerializer(serializers.ModelSerializer):
                 if e.team.player_2_id:
                     ids.add(e.team.player_2_id)
         return sorted(ids)
+
+    def get_set_format(self, obj: Tournament):
+        try:
+            sf: SetFormat = obj.set_format
+            return {
+                "name": sf.name,
+                "games_to": sf.games_to,
+                "tiebreak_at": sf.tiebreak_at,
+                "allow_tiebreak_only_set": sf.allow_tiebreak_only_set,
+                "max_sets": sf.max_sets,
+                "tiebreak_points": sf.tiebreak_points,
+                "decider_tiebreak_points": sf.decider_tiebreak_points,
+            }
+        except Exception:
+            return None

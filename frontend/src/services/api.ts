@@ -72,7 +72,18 @@ export const tournamentApi = {
     const response = await api.get<Tournament>(`/tournaments/${id}/`);
     return response.data;
   },
-
+  // Сохранить ПОЛНЫЙ счёт (все сеты) — для плей-офф
+  savePlayoffScoreFull: async (
+    tournamentId: number,
+    matchId: number,
+    sets: Array<{ index: number; games_1: number; games_2: number; tb_1?: number | null; tb_2?: number | null; is_tiebreak_only?: boolean }>,
+  ): Promise<{ ok: boolean; match: any }> => {
+    const response = await api.post(`/tournaments/${tournamentId}/match_save_score_full/`, {
+      match_id: matchId,
+      sets,
+    });
+    return response.data;
+  },
   // Создать новый турнир
   create: async (data: { name: string; tournament_type: string }): Promise<Tournament> => {
     const response = await api.post<Tournament>('/tournaments/', data);
@@ -82,6 +93,18 @@ export const tournamentApi = {
   // Сохранить участников турнира
   saveParticipants: async (id: number, participants: { player_id: number; group: number }[]): Promise<void> => {
     await api.post(`/tournaments/${id}/save_participants/`, { participants });
+  },
+
+  // Зафиксировать участников (создать матчи по расписанию)
+  lockParticipants: async (id: number): Promise<any> => {
+    const response = await api.post(`/tournaments/${id}/lock_participants/`);
+    return response.data;
+  },
+
+  // Снять фиксацию участников в круговой системе
+  unlockParticipants: async (id: number): Promise<any> => {
+    const response = await api.post(`/tournaments/${id}/unlock_participants/`);
+    return response.data;
   },
 
   // Получить статистику групп
@@ -111,7 +134,20 @@ export const tournamentApi = {
     id: number,
     bracketId: number
   ): Promise<any> => {
-    const response = await api.get(`/tournaments/${id}/brackets/${bracketId}/draw/`);
+    // Добавляем timestamp для предотвращения кэширования
+    const response = await api.get(`/tournaments/${id}/brackets/${bracketId}/draw/?_t=${Date.now()}`);
+    return response.data;
+  },
+
+  // Зафиксировать участников в сетке
+  lockBracketParticipants: async (tournamentId: number, bracketId: number, slots: any[]): Promise<any> => {
+    const response = await api.post(`/tournaments/${tournamentId}/brackets/${bracketId}/lock_participants/`, { slots });
+    return response.data;
+  },
+
+  // Снять фиксацию участников в сетке
+  unlockBracketParticipants: async (tournamentId: number, bracketId: number): Promise<any> => {
+    const response = await api.post(`/tournaments/${tournamentId}/brackets/${bracketId}/unlock_participants/`);
     return response.data;
   },
 
@@ -206,6 +242,39 @@ export const matchApi = {
       id_team_second: idTeamSecond,
       games_first: gamesFirst,
       games_second: gamesSecond,
+    });
+    return response.data;
+  },
+  // Сохранить ПОЛНЫЙ счёт (все сеты) — для плей-офф
+  savePlayoffScoreFull: async (
+    tournamentId: number,
+    matchId: number,
+    sets: Array<{ index: number; games_1: number; games_2: number; tb_1?: number | null; tb_2?: number | null; is_tiebreak_only?: boolean }>,
+  ): Promise<{ ok: boolean; match: any }> => {
+    const response = await api.post(`/tournaments/${tournamentId}/match_save_score_full/`, {
+      match_id: matchId,
+      sets,
+    });
+    return response.data;
+  },
+  // Начать матч
+  startMatch: async (tournamentId: number, matchId: number): Promise<{ ok: boolean; match: any }> => {
+    const response = await api.post(`/tournaments/${tournamentId}/match_start/`, {
+      match_id: matchId,
+    });
+    return response.data;
+  },
+  // Отменить матч
+  cancelMatch: async (tournamentId: number, matchId: number): Promise<{ ok: boolean; match: any }> => {
+    const response = await api.post(`/tournaments/${tournamentId}/match_cancel/`, {
+      match_id: matchId,
+    });
+    return response.data;
+  },
+  // Сбросить результат матча (удалить счёт, победителя, убрать из следующего раунда)
+  resetMatch: async (tournamentId: number, matchId: number): Promise<{ ok: boolean }> => {
+    const response = await api.post(`/tournaments/${tournamentId}/match_reset/`, {
+      match_id: matchId,
     });
     return response.data;
   },

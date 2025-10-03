@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { formatDate } from '../services/date';
 import { ParticipantPickerModal } from '../components/ParticipantPickerModal';
+import { tournamentApi } from '../services/api';
+import { MatchScoreModal } from '../components/MatchScoreModal';
 
 type Participant = {
   id: number;
@@ -70,12 +72,11 @@ export const TournamentDetailPage: React.FC = () => {
   const [pickerOpen, setPickerOpen] = useState<null | { group: number; row: number }>(null);
   // Модалка действий по ячейке счёта
   const [scoreDialog, setScoreDialog] = useState<null | { group: number; a: number; b: number; matchId?: number; isLive: boolean }>(null);
-  // Модалка ввода счёта (пока один сет)
+  // Модалка ввода счёта (унифицированная с олимпийкой)
   const [scoreInput, setScoreInput] = useState<null | {
     matchId: number;
-    id_team_first: number; name_first: string;
-    id_team_second: number; name_second: string;
-    g_first: number; g_second: number;
+    team1: { id: number; name: string };
+    team2: { id: number; name: string };
   }>(null);
   // Расписание по группам: { [groupIndex]: [ [a,b], [c,d] ][] } — туры, каждый тур: массив пар [a,b]
   const [schedule, setSchedule] = useState<Record<number, [number, number][][]>>({});
@@ -157,13 +158,8 @@ export const TournamentDetailPage: React.FC = () => {
       const data = await resp.json();
       setT(data);
       setShowTech(Array.from({ length: data.groups_count || 1 }).map(() => false));
-      // Автофиксация, если участники набраны по плану
-      if ((data.participants_count || 0) > 0 && data.planned_participants && data.participants_count === data.planned_participants) {
-        if (!lockParticipants) {
-          try {
-            await fetch(`/api/tournaments/${data.id}/lock_participants/`, { method: 'POST' });
-          } catch {}
-        }
+      // Определить состояние фиксации на основе статуса турнира
+      if (data.status === 'active') {
         setLockParticipants(true);
       }
     } catch (e) {
@@ -527,6 +523,9 @@ export const TournamentDetailPage: React.FC = () => {
   };
 
   const handleCellClick = (type: 'participant' | 'score', groupIdx: number, rowIdx: number, colIdx?: number) => {
+    // Блокировка для завершённых турниров
+    if (t?.status === 'completed') return;
+    
     if (type === 'participant') {
       setPickerOpen({ group: groupIdx, row: rowIdx });
     } else {
@@ -546,6 +545,9 @@ export const TournamentDetailPage: React.FC = () => {
   };
 
   const startMatch = async () => {
+    // Блокировка для завершённых турниров
+    if (t?.status === 'completed') return;
+    
     if (!t || !scoreDialog?.matchId) return;
     try {
       await fetch(`/api/tournaments/${t.id}/match_start/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ match_id: scoreDialog.matchId }) });
@@ -556,6 +558,9 @@ export const TournamentDetailPage: React.FC = () => {
   };
 
   const cancelMatch = async () => {
+    // Блокировка для завершённых турниров
+    if (t?.status === 'completed') return;
+    
     if (!t || !scoreDialog?.matchId) return;
     try {
       await fetch(`/api/tournaments/${t.id}/match_cancel/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ match_id: scoreDialog.matchId }) });
@@ -650,82 +655,57 @@ export const TournamentDetailPage: React.FC = () => {
           <div style={{ fontSize: 28, fontWeight: 700 }}>{t.name}</div>
           <div style={{ fontSize: 16, color: '#666' }}>{formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}</div>
         </div>
-        {/* Модалка ввода счёта (один сет) */}
-      {scoreInput && (
-        <div
-          onClick={() => setScoreInput(null)}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}
-          >
-          <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 420, background: '#fff', borderRadius: 10, boxShadow: '0 10px 30px rgba(0,0,0,0.15)', overflow: 'hidden' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid #eee' }}>
-              <strong>Ввод счёта</strong>
-              <button onClick={() => setScoreInput(null)} style={{ border: 0, background: 'transparent', fontSize: 18, lineHeight: 1, cursor: 'pointer' }}>×</button>
-            </div>
-            <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <div style={{ fontSize: 13, color: '#555', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div style={{ fontWeight: 600 }}>{scoreInput.name_first}</div>
-                <div>
-                  <input
-                    type="number"
-                    value={scoreInput.g_first}
-                    onChange={(e) => setScoreInput(v => v ? { ...v, g_first: Math.max(0, Math.min(9, parseInt(e.target.value || '0', 10))) } : v)}
-                    style={{ width: 60, padding: '6px 8px' }}
-                    min={0}
-                    max={9}
-                  />
-                </div>
-                <div style={{ height: 1, background: '#eee', margin: '6px 0' }} />
-                <div style={{ fontWeight: 600 }}>{scoreInput.name_second}</div>
-                <div>
-                  <input
-                    type="number"
-                    value={scoreInput.g_second}
-                    onChange={(e) => setScoreInput(v => v ? { ...v, g_second: Math.max(0, Math.min(9, parseInt(e.target.value || '0', 10))) } : v)}
-                    style={{ width: 60, padding: '6px 8px' }}
-                    min={0}
-                    max={9}
-                  />
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-                <button
-                  className="btn"
-                  onClick={async () => {
-                    if (!scoreInput) return;
-                    if (scoreInput.g_first === scoreInput.g_second) {
-                      alert('Нельзя сохранить ничью. Исправьте счёт.');
-                      return;
-                    }
-                    try {
-                      const resp = await fetch(`/api/tournaments/${t.id}/match_save_score/`, {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          match_id: scoreInput.matchId,
-                          id_team_first: scoreInput.id_team_first,
-                          id_team_second: scoreInput.id_team_second,
-                          games_first: scoreInput.g_first,
-                          games_second: scoreInput.g_second,
-                        })
-                      });
-                      if (!resp.ok) {
-                        let msg = `Ошибка сохранения счёта (HTTP ${resp.status})`;
-                        try { const j = await resp.json(); if (j && j.error) msg = j.error; } catch {}
-                        alert(msg);
-                        return;
-                      }
-                      await reload();
-                      setScoreInput(null);
-                    } catch (e) {
-                      alert('Ошибка сохранения счёта');
-                    }
-                  }}
-                >Подтвердить счёт</button>
-                <button className="btn" style={{ background: '#f8f9fa', color: '#111', border: '1px solid #dcdcdc' }} onClick={() => setScoreInput(null)}>Отмена</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+        {/* Модалка ввода счёта (унифицированная) */}
+        <MatchScoreModal
+          isOpen={!!scoreInput}
+          onClose={() => setScoreInput(null)}
+          setFormat={(t as any)?.set_format}
+          onSaveFull={async (sets) => {
+            if (!t || !scoreInput) return;
+            // Блокировка для завершённых турниров
+            if (t.status === 'completed') return;
+            const resp = await fetch(`/api/tournaments/${t.id}/match_save_score_full/`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                match_id: scoreInput.matchId,
+                sets,
+              })
+            });
+            if (!resp.ok) {
+              const err = await resp.json().catch(() => ({}));
+              throw new Error(err?.error || `HTTP ${resp.status}`);
+            }
+            // обновить таблицу сразу после сохранения
+            setScoreInput(null);
+            reload();
+          }}
+          onSave={async (winnerTeamId, loserTeamId, gamesWinner, gamesLoser) => {
+            // Блокировка для завершённых турниров
+            if (t?.status === 'completed') return;
+            
+            if (!scoreInput) return;
+            const resp = await fetch(`/api/tournaments/${t.id}/match_save_score/`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                match_id: scoreInput.matchId,
+                id_team_first: winnerTeamId,
+                id_team_second: loserTeamId,
+                games_first: gamesWinner,
+                games_second: gamesLoser,
+              })
+            });
+            if (!resp.ok) {
+              const err = await resp.json();
+              throw new Error(err?.error || 'Ошибка сохранения');
+            }
+            setScoreInput(null);
+            reload();
+          }}
+          team1={scoreInput?.team1 || null}
+          team2={scoreInput?.team2 || null}
+        />
 
       {/* Диалог действий по ячейке счёта */}
       {scoreDialog && (
@@ -782,9 +762,8 @@ export const TournamentDetailPage: React.FC = () => {
                       const fmt = (team: any) => showFullName ? (team.full_name || '—') : (team.display_name || team.name || '—');
                       setScoreInput({
                         matchId: scoreDialog.matchId!,
-                        id_team_first: aTeam.id, name_first: fmt(aTeam),
-                        id_team_second: bTeam.id, name_second: fmt(bTeam),
-                        g_first: 6, g_second: 4,
+                        team1: { id: aTeam.id, name: fmt(aTeam) },
+                        team2: { id: bTeam.id, name: fmt(bTeam) },
                       });
                       setScoreDialog(null);
                     }}
@@ -811,9 +790,8 @@ export const TournamentDetailPage: React.FC = () => {
                       const fmt = (team: any) => showFullName ? (team.full_name || '—') : (team.display_name || team.name || '—');
                       setScoreInput({
                         matchId: scoreDialog.matchId!,
-                        id_team_first: aTeam.id, name_first: fmt(aTeam),
-                        id_team_second: bTeam.id, name_second: fmt(bTeam),
-                        g_first: 6, g_second: 4,
+                        team1: { id: aTeam.id, name: fmt(aTeam) },
+                        team2: { id: bTeam.id, name: fmt(bTeam) },
                       });
                       setScoreDialog(null);
                     }}
@@ -850,16 +828,26 @@ export const TournamentDetailPage: React.FC = () => {
                       if (next) {
                         try {
                           setSaving(true);
-                          const r = await fetch(`/api/tournaments/${t.id}/lock_participants/`, { method: 'POST' });
-                          if (r.ok) {
-                            setLockParticipants(true);
-                          }
+                          await tournamentApi.lockParticipants(t.id);
+                          setLockParticipants(true);
+                        } catch (error) {
+                          console.error('Failed to lock participants:', error);
+                          alert('Не удалось зафиксировать участников');
                         } finally {
                           setSaving(false);
                         }
                       } else {
-                        // Снятие фиксации только в UI (по ТЗ матчи не удаляем)
-                        setLockParticipants(false);
+                        // Снятие фиксации - вызываем API для изменения статуса турнира
+                        try {
+                          setSaving(true);
+                          await tournamentApi.unlockParticipants(t.id);
+                          setLockParticipants(false);
+                        } catch (error) {
+                          console.error('Failed to unlock participants:', error);
+                          alert('Не удалось снять фиксацию участников');
+                        } finally {
+                          setSaving(false);
+                        }
                       }
                     }}
                   />

@@ -2,7 +2,7 @@
 
 Дата: 2025-09-22
 Ответственный: команда SandMatch
-Стек: Django (Python 3.11+), PostgreSQL 14, Docker + docker-compose, нативный JS без отдельных бандлов/файлов (инлайновые скрипты в Django‑шаблонах, как в `templates/tournaments/list.html`).
+Стек: Django (Python 3.11+), PostgreSQL 14, Docker + docker-compose, DRF, SPA на Vite + React 18 + TypeScript (страница `frontend/src/pages/KnockoutPage.tsx`).
 
 ## Цели
 
@@ -15,7 +15,7 @@
 
 ## Модель данных (дополнения)
 
-Используем существующие `apps/matches/models.py` и добавляем метаданные сетки в `apps/tournaments/`.
+Используем существующие `apps/matches/models.py` и метаданные сетки/сервисы в `apps/tournaments/`.
 
 ### Сущности
 
@@ -66,11 +66,11 @@
 
 - «Сид‑карты» для 8/16/32/64/128 — заготовленные массивы размещения.
 
-## API/URLs
+## API/URLs (DRF)
 
 - `POST /tournaments/new/` — дополнить веткой `system='knockout'` (см. существующий эндпоинт).
 - `POST /tournaments/<id>/generate/knockout/` — ручная генерация сетки. Тело: `{ brackets_count, participants[], seeds{}, has_third_place }`.
-- `GET /tournaments/<id>/brackets.json` — сериализация сетки для фронта:
+- `GET /tournaments/<id>/brackets/<bid>/draw/` — сериализация сетки для фронта (используется в React):
   ```json
   {
     "tournament": {"id":1, "name":"..."},
@@ -81,26 +81,17 @@
     ]
   }
   ```
-- `POST /matches/<id>/score/` — ввод счёта/особого исхода, триггерит `progress_winner`.
+- `POST /tournaments/<id>/match_save_score_full/` — ввод полного счёта (все сеты) и автопродвижение победителя (используется в React модалкой ввода счёта).
 
 Безопасность: транзакции; при вводе результата — `SELECT ... FOR UPDATE` по строке матча, чтобы избежать гонок.
 
-## Шаблоны/Фронтенд
+## Фронтенд (SPA)
 
-- Страница: `templates/tournaments/knockout.html`.
-- Подход в духе проекта: НЕТ отдельных `.js`‑файлов. В шаблоне — небольшой инлайновый `<script>` с нативным JS (как в `templates/tournaments/list.html`).
-- Источник данных: `GET /tournaments/<id>/brackets.json`.
-- Рендер:
-  - Скелет сетки (колонки раундов и карточки матчей) размечается HTML+CSS (flex), линии соединений — CSS (как уже набросано в шаблоне).
-  - Инлайновый JS заполняет карточки команд, счета и статусы из JSON и навешивает обработчики.
-  - Без сторонних библиотек в MVP (возможна позднее замена на `brackets-viewer.js` при необходимости).
-- UX:
-  - Заголовки раундов: «1-й круг», «1/8», «1/4», «1/2», «Финал» (генерация по `log2(size)`).
-  - Ховер подсвечивает пару и линии.
-  - Клик открывает модалку ввода счёта по `SetFormat` (несколько сетов, TB, особый исход).
-  - Статусы: LIVE, время, W/O, RET, DEF.
-  - Горизонтальная прокрутка и адаптив для больших сеток.
-- Экспорт: печать‑CSS + html2canvas → PNG (инлайновый скрипт в шаблоне, без внешних зависимостей кроме html2canvas из CDN при необходимости).
+- Страница: `frontend/src/pages/KnockoutPage.tsx` (React).
+- Источники данных: `tournamentApi.getBracketDraw`, `tournamentApi.getById`.
+- Ввод счёта: единая модалка `frontend/src/components/MatchScoreModal.tsx` с поддержкой нескольких сетов/TB и вызовом `POST /api/tournaments/{id}/match_save_score_full/`.
+- Логика загрузки/перерисовки: после сохранения счёта вызывается `loadDraw()` для обновления сетки.
+- Экспорт: html2canvas → PNG, доступно с кнопки «Поделиться».
 
 ## План работ
 
