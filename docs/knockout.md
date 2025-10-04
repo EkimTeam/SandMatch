@@ -1,7 +1,7 @@
-# ТЗ: Олимпийская система (Single Elimination) для SandMatch
+# ТЗ: Олимпийская система (Single Elimination) для BeachPlay
 
 Дата: 2025-09-22
-Ответственный: команда SandMatch
+Ответственный: команда BeachPlay
 Стек: Django (Python 3.11+), PostgreSQL 14, Docker + docker-compose, DRF, SPA на Vite + React 18 + TypeScript (страница `frontend/src/pages/KnockoutPage.tsx`).
 
 ## Цели

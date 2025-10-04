@@ -1,4 +1,4 @@
-# План публикации SandMatch в Yandex Cloud
+# План публикации BeachPlay в Yandex Cloud
 
 ## Текущее состояние
 - Приложение работает локально (localhost:8080)
@@ -100,9 +100,9 @@ pip install -r requirements.txt
 # Проксирование на Gunicorn (порт 8000)
 # Раздача статики из Object Storage
 
-# Настройка systemd для автозапуска
-sudo systemctl enable sandmatch
-sudo systemctl start sandmatch
+# Настройка systemd для автозапуска (пример)
+sudo systemctl enable beachplay
+sudo systemctl start beachplay
 ```
 
 ### 2.3 CI/CD

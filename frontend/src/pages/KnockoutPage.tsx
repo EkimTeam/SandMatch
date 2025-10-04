@@ -176,7 +176,7 @@ export const KnockoutPage: React.FC = () => {
         ctx.fillRect(0, finalHeight - footerBar, finalWidth, footerBar);
         ctx.fillStyle = '#000';
         ctx.font = 'bold 28px system-ui, -apple-system, Segoe UI, Roboto, Arial';
-        ctx.fillText('SandMatch', 24, finalHeight - footerBar / 2);
+        ctx.fillText('BeachPlay', 24, finalHeight - footerBar / 2);
         ctx.font = '600 28px system-ui, -apple-system, Segoe UI, Roboto, Arial';
         const soon = 'скоро онлайн';
         const textWidth = ctx.measureText(soon).width;
@@ -185,7 +185,7 @@ export const KnockoutPage: React.FC = () => {
         const dataUrl = finalCanvas.toDataURL('image/png');
         const a = document.createElement('a');
         a.href = dataUrl;
-        a.download = `sandmatch_knockout_${tMeta?.id || 'export'}.png`;
+        a.download = `beachplay_knockout_${tMeta?.id || 'export'}.png`;
         document.body.appendChild(a); a.click(); a.remove();
 
         // Восстанавливаем стили
@@ -347,7 +347,7 @@ export const KnockoutPage: React.FC = () => {
         };
       });
     }
-  }, [data]);
+  }, [data, byePositions]);
 
   useEffect(() => {
     // загрузим метаданные турнира для шапки
@@ -819,7 +819,7 @@ export const KnockoutPage: React.FC = () => {
     <div className="knockout-page-container" ref={exportRef}>
       {/* Шапка */}
       <div style={{ position: 'relative', padding: '16px 16px 8px 16px', borderBottom: '1px solid #eee', background: '#fff' }}>
-        <img src="/static/img/logo.png" alt="SandMatch" style={{ position: 'absolute', right: 16, top: 16, height: 40 }} />
+        <img src="/static/img/logo.png" alt="BeachPlay" style={{ position: 'absolute', right: 16, top: 16, height: 40 }} />
         <div style={{ fontSize: 24, fontWeight: 700 }}>{tMeta?.name || 'Плей-офф'}</div>
         <div className="meta" style={{ color: '#666' }}>
           {tMeta ? `${formatDate(tMeta.date)} • ${tMeta.get_system_display} • ${tMeta.get_participant_mode_display}` : ''}
@@ -855,11 +855,11 @@ export const KnockoutPage: React.FC = () => {
             </button>
             
             <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: (allParticipantsInBracket || dragDropState.isSelectionLocked) && tMeta?.status !== 'completed' ? 'pointer' : 'not-allowed', opacity: (allParticipantsInBracket || dragDropState.isSelectionLocked) && tMeta?.status !== 'completed' ? 1 : 0.5 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: ((dragDropState.isSelectionLocked || !canAddMoreParticipants) && tMeta?.status !== 'completed') ? 'pointer' : 'not-allowed', opacity: ((dragDropState.isSelectionLocked || !canAddMoreParticipants) && tMeta?.status !== 'completed') ? 1 : 0.5 }}>
                 <input
                   type="checkbox"
                   checked={dragDropState.isSelectionLocked}
-                  disabled={tMeta?.status === 'completed' || (!allParticipantsInBracket && !dragDropState.isSelectionLocked)}
+                  disabled={tMeta?.status === 'completed' || (canAddMoreParticipants && !dragDropState.isSelectionLocked)}
                   onChange={(e) => handleLockParticipants(e.target.checked)}
                 />
                 Зафиксировать участников
@@ -971,7 +971,7 @@ export const KnockoutPage: React.FC = () => {
 
       {/* Нижний DOM-футер для экспорта: скрыт на странице, показывается только при экспортe */}
       <div data-export-only="true" style={{ padding: '12px 24px 20px 24px', borderTop: '1px solid #eee', display: 'none', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ fontSize: 14 }}>SandMatch</div>
+        <div style={{ fontSize: 14 }}>BeachPlay</div>
         <div style={{ fontSize: 16, fontWeight: 600 }}>скоро онлайн</div>
       </div>
 

@@ -53,7 +53,14 @@ export const MatchScoreModal: React.FC<MatchScoreModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
-      setSets(initialSets);
+      // Инициализация: для формата с решающим TB — последний сет сразу TB-only с 0:0
+      const init = initialSets.map((s, i) => {
+        if (allowTBOnly && i === initialSets.length - 1) {
+          return { ...s, isTBOnly: true, tb1: 0, tb2: 0 };
+        }
+        return s;
+      });
+      setSets(init);
       setError('');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -70,11 +77,17 @@ export const MatchScoreModal: React.FC<MatchScoreModalProps> = ({
   const isTiebreakScore = (a: number, b: number) => (a === tbAt + 1 && b === tbAt) || (b === tbAt + 1 && a === tbAt);
 
   const quickPresets = (): Array<[number, number]> => {
-    // готовые результаты для обычного сета
+    // Готовые результаты для обычного сета
+    // Победитель берёт gTo геймов с разницей >= 2 (до TB), затем возможны варианты gTo+1:gTo-1 и gTo+1:gTo (TB)
     const res: Array<[number, number]> = [];
-    for (let lose = 0; lose <= 4; lose++) res.push([gTo, lose]); // 6:0..6:4
-    res.push([gTo + 1, gTo - 1]); // 7:5
-    res.push([gTo + 1, gTo]); // 7:6 (тай-брейк)
+    // победитель gTo, проигравший 0..gTo-2 — исключаем gTo-1 (например, 4:3 недопустим)
+    for (let lose = 0; lose <= Math.max(0, gTo - 2); lose++) res.push([gTo, lose]);
+    // счёт без TB с перевесом в 2 (например, 7:5) — для укороченного сета до 4 не добавляем (5:3 недопустим)
+    if (gTo >= 4) {
+      res.push([gTo + 1, gTo - 1]);
+    }
+    // тай-брейковый счёт (например, 7:6 или 5:4)
+    res.push([gTo + 1, gTo]);
     return res;
   };
 
@@ -101,7 +114,7 @@ export const MatchScoreModal: React.FC<MatchScoreModalProps> = ({
       const next = [...prev];
       const s = { ...next[idx] };
       s.isTBOnly = true;
-      s.games1 = null; s.games2 = null; s.tb1 = null; s.tb2 = null;
+      s.games1 = null; s.games2 = null; s.tb1 = 0; s.tb2 = 0; // по умолчанию 0:0
       next[idx] = s;
       return next;
     });
@@ -133,26 +146,32 @@ export const MatchScoreModal: React.FC<MatchScoreModalProps> = ({
   };
 
   const canSubmit = (): boolean => {
-    // Простая валидация: как минимум первый сет корректно задан
-    const s0 = sets[0];
-    if (!s0) return false;
-    // Обычный сет
-    if (!s0.isTBOnly) {
-      if (s0.games1 == null || s0.games2 == null) return false;
-      const a = s0.games1, b = s0.games2;
-      if (a === b) return false;
-      // тай-брейк — требуем tb
-      if (isTiebreakScore(a, b)) {
-        if (a > b && (s0.tb1 == null || s0.tb1 < 0)) return false;
-        if (b > a && (s0.tb2 == null || s0.tb2 < 0)) return false;
+    // Матч должен быть "решён" согласно формату: best of 1 или best of 3
+    let wins1 = 0, wins2 = 0;
+    const needed = maxSets === 1 ? 1 : 2;
+    for (let i = 0; i < sets.length; i++) {
+      const s = sets[i];
+      if (!s) break;
+      if (!s.isTBOnly) {
+        if (s.games1 == null || s.games2 == null) continue;
+        const a = s.games1, b = s.games2;
+        if (a === b) continue;
+        if (isTiebreakScore(a, b)) {
+          // требуем tb у проигравшего заполненным (по логике ввода)
+          if (a > b && (s.tb2 == null || s.tb2 < 0)) return false;
+          if (b > a && (s.tb1 == null || s.tb1 < 0)) return false;
+        }
+        if (a > b) wins1++; else wins2++;
+      } else {
+        // Чемпионский тай-брейк
+        if (s.tb1 == null || s.tb2 == null) continue;
+        if (Math.abs(s.tb1 - s.tb2) < 2) return false;
+        if (s.tb1 < deciderTBPts && s.tb2 < deciderTBPts) return false;
+        if (s.tb1 > s.tb2) wins1++; else wins2++;
       }
-      return true;
+      if (wins1 >= needed || wins2 >= needed) return true;
     }
-    // Чемпионский тай-брейк: обе стороны заданы, разница >= 2
-    if (s0.tb1 == null || s0.tb2 == null) return false;
-    if (Math.abs(s0.tb1 - s0.tb2) < 2) return false;
-    if (s0.tb1 < deciderTBPts && s0.tb2 < deciderTBPts) return false;
-    return true;
+    return false;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -166,15 +185,45 @@ export const MatchScoreModal: React.FC<MatchScoreModalProps> = ({
     setSaving(true);
     try {
       if (onSaveFull) {
-        // Полная передача всех сетов (индексация 1..N)
-        const payload = sets.map((s, i) => ({
-          index: i + 1,
-          games_1: s.isTBOnly ? 0 : (s.games1 ?? 0),
-          games_2: s.isTBOnly ? 0 : (s.games2 ?? 0),
-          tb_1: s.tb1 ?? null,
-          tb_2: s.tb2 ?? null,
-          is_tiebreak_only: !!s.isTBOnly,
-        }));
+        // Сформируем только сыгранные сеты до принятия решения и приведём их к формату "от победителя"
+        const needed = maxSets === 1 ? 1 : 2;
+        let wins1 = 0, wins2 = 0;
+        const payload: Array<{ index: number; games_1: number; games_2: number; tb_1?: number | null; tb_2?: number | null; is_tiebreak_only?: boolean }> = [];
+        for (let i = 0; i < sets.length; i++) {
+          const s = sets[i];
+          if (!s) break;
+          if (!s.isTBOnly) {
+            if (s.games1 == null || s.games2 == null) continue;
+            const a = s.games1, b = s.games2;
+            if (a === b) continue;
+            const winnerIs1 = a > b;
+            // Пишем очки геймов в ориентации команд: team1 -> games_1, team2 -> games_2
+            const games_1 = a;
+            const games_2 = b;
+            // tb указываем: tb_1 у победителя (стандартные очки тай-брейка), tb_2 у проигравшего если задан
+            let tb_1: number | null | undefined = null;
+            let tb_2: number | null | undefined = null;
+            if (isTiebreakScore(a, b)) {
+              // tb_1/tb_2 должны соответствовать team1/team2
+              if (winnerIs1) {
+                tb_1 = tbPts;           // team1 победил сет на TB
+                tb_2 = s.tb2 ?? 0;      // очки проигравшего (team2)
+              } else {
+                tb_1 = s.tb1 ?? 0;      // очки проигравшего (team1)
+                tb_2 = tbPts;           // team2 победил сет на TB
+              }
+            }
+            payload.push({ index: payload.length + 1, games_1, games_2, tb_1, tb_2, is_tiebreak_only: false });
+            if (winnerIs1) wins1++; else wins2++;
+          } else {
+            if (s.tb1 == null || s.tb2 == null) continue;
+            // Для чемпионского TB передаём значения как есть для team1/team2, без перестановок
+            const winnerIs1 = (s.tb1 || 0) > (s.tb2 || 0);
+            payload.push({ index: payload.length + 1, games_1: 0, games_2: 0, tb_1: s.tb1!, tb_2: s.tb2!, is_tiebreak_only: true });
+            if (winnerIs1) wins1++; else wins2++;
+          }
+          if (wins1 >= needed || wins2 >= needed) break;
+        }
         await onSaveFull(payload);
       } else {
         // Fallback: только первый сет
@@ -241,11 +290,11 @@ export const MatchScoreModal: React.FC<MatchScoreModalProps> = ({
               </div>
               {s.expanded && (
                 <div style={{ padding: '8px 12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  {/* Быстрые кнопки для обычного сета */}
+                  {/* Быстрые кнопки для обычного сета (в решающем TB-сете скрыты) */}
                   <div>
                     <div style={{ fontWeight: 600, marginBottom: 6 }}>{team1.name}</div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                      {quickPresets().map(([a,b], i) => (
+                      {(allowTBOnly && idx === maxSets - 1) ? null : quickPresets().map(([a,b], i) => (
                         <button key={i} type="button" className="btn btn-outline" onClick={() => applyScore(idx, a, b)}>{a}:{b}</button>
                       ))}
                     </div>
@@ -253,7 +302,7 @@ export const MatchScoreModal: React.FC<MatchScoreModalProps> = ({
                   <div>
                     <div style={{ fontWeight: 600, marginBottom: 6 }}>{team2.name}</div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                      {quickPresets().map(([a,b], i) => (
+                      {(allowTBOnly && idx === maxSets - 1) ? null : quickPresets().map(([a,b], i) => (
                         <button key={i} type="button" className="btn btn-outline" onClick={() => applyScore(idx, b, a)}>{b}:{a}</button>
                       ))}
                     </div>

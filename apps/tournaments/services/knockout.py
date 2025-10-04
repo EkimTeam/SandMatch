@@ -322,27 +322,43 @@ def auto_seed_participants(bracket: KnockoutBracket, entries: List[TournamentEnt
                     sorted_entries[seeds_count - 1] = special_entry
                     sorted_entries.insert(special_entry_index, last_seeded)
     
-    # 3. Получить позиции для сеянных игроков
+    # 3. Обновить/проставить BYE позиции для неполной сетки
+    from apps.tournaments.models import DrawPosition as DP
+    total_positions = set(range(1, size + 1))
+    # Убедимся, что все позиции существуют
+    existing_positions = set(DP.objects.filter(bracket=bracket).values_list('position', flat=True))
+    missing_positions = [p for p in total_positions if p not in existing_positions]
+    if missing_positions:
+        DP.objects.bulk_create([DP(bracket=bracket, position=p) for p in missing_positions])
+
+    num_participants = len([e for e in entries if e.team_id or getattr(e, 'team', None)])
+    computed_bye_positions = set(calculate_bye_positions(size, num_participants))
+    # Сбросим все BYE, затем выставим по рассчитанному набору
+    DP.objects.filter(bracket=bracket, source='BYE').update(source=DP.Source.MAIN)
+    if computed_bye_positions:
+        DP.objects.filter(bracket=bracket, position__in=computed_bye_positions).update(entry=None, source=DP.Source.BYE, seed=None)
+
+    # 4. Получить позиции для сеянных игроков
     seed_positions = _get_itf_seed_positions(size, seeds_count)
     
-    # 4. Получить позиции BYE
+    # 5. Получить позиции BYE
     bye_positions = set(DrawPosition.objects.filter(
         bracket=bracket,
         source='BYE'
     ).values_list('position', flat=True))
     
-    # 5. Создать список всех позиций и разделить на сеянные и свободные
+    # 6. Создать список всех позиций и разделить на сеянные и свободные
     all_positions = set(range(1, size + 1))
     available_positions = all_positions - bye_positions - set(seed_positions.values())
     available_positions = list(available_positions)
     random.shuffle(available_positions)
     
-    # 6. Очистить текущие привязки (кроме BYE)
+    # 7. Очистить текущие привязки (кроме BYE)
     DrawPosition.objects.filter(
         bracket=bracket
     ).exclude(source='BYE').update(entry=None, seed=None)
     
-    # 7. Расставить сеянных игроков
+    # 8. Расставить сеянных игроков
     for seed_num, position in seed_positions.items():
         if seed_num <= len(sorted_entries):
             entry = sorted_entries[seed_num - 1]
@@ -356,7 +372,7 @@ def auto_seed_participants(bracket: KnockoutBracket, entries: List[TournamentEnt
                 }
             )
     
-    # 8. Расставить остальных участников случайно
+    # 9. Расставить остальных участников случайно
     unseeded_entries = sorted_entries[seeds_count:]
     for i, entry in enumerate(unseeded_entries):
         if i < len(available_positions):
@@ -371,7 +387,7 @@ def auto_seed_participants(bracket: KnockoutBracket, entries: List[TournamentEnt
                 }
             )
     
-    # 9. Назначить участников в матчи первого раунда
+    # 10. Назначить участников в матчи первого раунда
     _assign_draw_to_matches(bracket)
 
 

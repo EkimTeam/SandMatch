@@ -10,7 +10,7 @@
 7. Дополнительные тайбрейкеры: рейтинг (для пар — сумма рейтингов) → алфавитная сортировка по имени.
 
 Реализация: `computePlacements`, `rankGroup`, `h2hCompare` в `frontend/src/pages/TournamentDetailPage.tsx`.
-# База данных SandMatch
+# База данных BeachPlay
 
 Этот документ описывает текущую схему БД и операционные процедуры.
 

@@ -71,16 +71,20 @@ export const TournamentDetailPage: React.FC = () => {
   const [showFullName, setShowFullName] = useState(false);
   const [pickerOpen, setPickerOpen] = useState<null | { group: number; row: number }>(null);
   // Модалка действий по ячейке счёта
-  const [scoreDialog, setScoreDialog] = useState<null | { group: number; a: number; b: number; matchId?: number; isLive: boolean }>(null);
+  const [scoreDialog, setScoreDialog] = useState<null | { group: number; a: number; b: number; matchId?: number; isLive: boolean; matchTeam1Id?: number | null; matchTeam2Id?: number | null }>(null);
   // Модалка ввода счёта (унифицированная с олимпийкой)
   const [scoreInput, setScoreInput] = useState<null | {
     matchId: number;
     team1: { id: number; name: string };
     team2: { id: number; name: string };
+    matchTeam1Id?: number | null;
+    matchTeam2Id?: number | null;
   }>(null);
   // Расписание по группам: { [groupIndex]: [ [a,b], [c,d] ][] } — туры, каждый тур: массив пар [a,b]
   const [schedule, setSchedule] = useState<Record<number, [number, number][][]>>({});
   const [scheduleLoaded, setScheduleLoaded] = useState(false);
+  // Данные групп с бэкенда: { [group_index]: { stats: { [team_id]: {...} }, placements: { [team_id]: place } } }
+  const [groupStats, setGroupStats] = useState<Record<number, { stats: Record<number, { wins: number; sets_won: number; sets_lost: number; games_won: number; games_lost: number }>; placements: Record<number, number> }>>({});
   const exportRef = useRef<HTMLDivElement | null>(null);
 
   // Динамическая загрузка html2canvas с CDN
@@ -96,6 +100,20 @@ export const TournamentDetailPage: React.FC = () => {
       document.head.appendChild(s);
     });
     return (window as any).html2canvas;
+  };
+
+  // Явное обновление агрегатов групп с бэка
+  const refreshGroupStats = async () => {
+    if (!id) return;
+    try {
+      const resp = await fetch(`/api/tournaments/${id}/group_stats/`);
+      if (resp.ok) {
+        const data = await resp.json();
+        setGroupStats(data?.groups || {});
+      }
+    } catch (e) {
+      console.warn('Не удалось загрузить агрегаты групп:', e);
+    }
   };
 
   const loadImage = (src: string): Promise<HTMLImageElement> => new Promise((resolve, reject) => {
@@ -138,7 +156,7 @@ export const TournamentDetailPage: React.FC = () => {
         const dataUrl = canvas.toDataURL('image/png');
         const a = document.createElement('a');
         a.href = dataUrl;
-        a.download = `sandmatch_tournament_${t?.id || 'export'}.png`;
+        a.download = `beachplay_tournament_${t?.id || 'export'}.png`;
         document.body.appendChild(a); a.click(); a.remove();
       } finally {
         // Вернём видимость
@@ -223,26 +241,52 @@ export const TournamentDetailPage: React.FC = () => {
 
   // Подсчет тех. столбцов для конкретной строки группы
   const computeRowStats = (g: { idx: number; entries: (Participant | null)[]; cols: number[] }, rIdx: number, rI: number) => {
+    // Если доступны агрегаты с бэка — используем их напрямую
+    const teamId = g.entries[rI]?.team?.id as number | undefined;
+    const groupAgg = groupStats[g.idx];
+    if (teamId && groupAgg && groupAgg.stats && groupAgg.stats[teamId]) {
+      const st = groupAgg.stats[teamId];
+      const setsTotal = st.sets_won + st.sets_lost;
+      const gamesTotal = st.games_won + st.games_lost;
+      const setsRatio = setsTotal > 0 ? (st.sets_won / setsTotal).toFixed(2) : '0.00';
+      const gamesRatio = gamesTotal > 0 ? (st.games_won / gamesTotal).toFixed(2) : '0.00';
+      return {
+        wins: st.wins,
+        sets: `${st.sets_won}/${st.sets_lost}`,
+        setsRatio,
+        games: `${st.games_won}/${st.games_lost}`,
+        gamesRatio,
+        setsRatioNum: setsTotal > 0 ? (st.sets_won / setsTotal) : 0,
+        gamesRatioNum: gamesTotal > 0 ? (st.games_won / gamesTotal) : 0,
+      };
+    }
+
     let wins = 0;
     let setsWon = 0;
     let setsLost = 0;
     let gamesWon = 0;
     let gamesLost = 0;
+    // Признак формата "только тай-брейк" (эвристика: один сет и он TB-only). При нём оставляем поведение игр как есть.
+    const sf: any = (t as any)?.set_format || {};
+    const onlyTiebreakMode = (sf?.max_sets === 1) && !!sf?.allow_tiebreak_only_set;
     for (const cIdx of g.cols) {
       if (cIdx === rIdx) continue;
       const pairs = getCellPairs(g, rIdx, cIdx, rI);
       if (pairs.length === 0) continue;
-      // Победа в матче: в этой ячейке первая сумма больше второй
-      const sumLeft = pairs.reduce((acc, p) => acc + p.left, 0);
-      const sumRight = pairs.reduce((acc, p) => acc + p.right, 0);
-      if (sumLeft > sumRight) wins += 1;
-      // Сеты и геймы считаем по каждому сету
+      // Сначала считаем сеты и игры по каждому сету
+      let setsWonLocal = 0;
+      let setsLostLocal = 0;
       for (const p of pairs) {
-        // TODO: Чемпионский тай-брейк должен учитываться как один сет со счётом 1:0 (или 0:1).
-        // Сейчас TB-only учитывается так же, как обычный сет по числам TB.
-        if (p.left > p.right) setsWon += 1; else setsLost += 1;
+        // Чемпионский TB считаем как 1:0/0:1 по агрегату Сеты (games остаются как есть)
+        if (p.left > p.right) setsWonLocal += 1; else setsLostLocal += 1;
+        // Игры суммируем всегда по факту отображённых чисел.
         gamesWon += p.left; gamesLost += p.right;
       }
+      setsWon += setsWonLocal;
+      setsLost += setsLostLocal;
+      // Победа в матче определяем по числу выигранных сетов, а не по сумме очков
+      if (setsWonLocal > setsLostLocal) wins += 1;
+      // Для onlyTiebreakMode поведение эквивалентно (один сет), поэтому дополнительных условий не требуется
     }
     const setsTotal = setsWon + setsLost;
     const gamesTotal = gamesWon + gamesLost;
@@ -351,7 +395,20 @@ export const TournamentDetailPage: React.FC = () => {
   };
 
   const computePlacements = (g: { idx: number; entries: (Participant | null)[]; rows: number[]; cols: number[] }) => {
-    // подготовим массив со статами
+    // Если есть разметка мест с бэка — используем её
+    const block = groupStats[g.idx];
+    if (block && block.placements) {
+      const placeByRow: Record<number, number> = {};
+      // Преобразуем team_id -> place в row_index -> place
+      g.rows.forEach((rIdx, rI) => {
+        const teamId = g.entries[rI]?.team?.id as number | undefined;
+        if (teamId && block.placements[teamId]) {
+          placeByRow[rIdx] = block.placements[teamId];
+        }
+      });
+      return placeByRow;
+    }
+    // Fallback на локальную логику, если по какой-то причине данных нет
     const rows = g.rows.map((rIdx, rI) => {
       const st = computeRowStats(g, rIdx, rI);
       return { rIdx, rI, wins: st.wins, setsRatio: st.setsRatioNum, gamesRatio: st.gamesRatioNum };
@@ -425,12 +482,10 @@ export const TournamentDetailPage: React.FC = () => {
           const right = aIsWinner ? l : w;
           return `${left}:${right}`;
         }
-        // Обычный сет — сначала соберём как Winner:Loser из games_1/games_2
+        // Обычный сет — собрать как Winner:Loser из games_1/games_2 без принудительного переворота
         const g1 = s.games_1 ?? 0; const g2 = s.games_2 ?? 0;
-        let w = winnerId === team1Id ? g1 : g2;
-        let l = winnerId === team1Id ? g2 : g1;
-        // Если по данным вдруг Winner оказался с меньшим значением — поправим (на случай неконсистентных данных)
-        if (w < l) { const tmp = w; w = l; l = tmp; }
+        const w = winnerId === team1Id ? g1 : g2;
+        const l = winnerId === team1Id ? g2 : g1;
         const tbShown = (s.tb_1 != null && s.tb_2 != null) ? Math.min(s.tb_1, s.tb_2) : null;
         const left = aIsWinner ? w : l;
         const right = aIsWinner ? l : w;
@@ -452,6 +507,8 @@ export const TournamentDetailPage: React.FC = () => {
   useEffect(() => {
     (async () => {
       await reload();
+      // Подгружаем агрегаты групп после первичной загрузки турнира
+      await refreshGroupStats();
     })();
   }, [id]);
 
@@ -540,7 +597,9 @@ export const TournamentDetailPage: React.FC = () => {
         ((m.team_1?.id === aTeamId && m.team_2?.id === bTeamId) || (m.team_1?.id === bTeamId && m.team_2?.id === aTeamId))
       );
       const isLive = m?.status === 'live';
-      setScoreDialog({ group: groupIdx, a: rowIdx, b: colIdx, matchId: m?.id, isLive });
+      const matchTeam1Id = (m as any)?.team_1?.id ?? (m as any)?.team_1_id ?? null;
+      const matchTeam2Id = (m as any)?.team_2?.id ?? (m as any)?.team_2_id ?? null;
+      setScoreDialog({ group: groupIdx, a: rowIdx, b: colIdx, matchId: m?.id, isLive, matchTeam1Id, matchTeam2Id });
     }
   };
 
@@ -651,7 +710,7 @@ export const TournamentDetailPage: React.FC = () => {
       <div ref={exportRef}>
         {/* Шапка для выгрузки с логотипом */}
         <div style={{ position: 'relative', padding: '24px 24px 12px 24px', borderBottom: '1px solid #eee', background: '#fff' }}>
-          <img src="/static/img/logo.png" alt="SandMatch" style={{ position: 'absolute', right: 24, top: 24, height: 48 }} />
+          <img src="/static/img/logo.png" alt="BeachPlay" style={{ position: 'absolute', right: 24, top: 24, height: 48 }} />
           <div style={{ fontSize: 28, fontWeight: 700 }}>{t.name}</div>
           <div style={{ fontSize: 16, color: '#666' }}>{formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}</div>
         </div>
@@ -664,12 +723,27 @@ export const TournamentDetailPage: React.FC = () => {
             if (!t || !scoreInput) return;
             // Блокировка для завершённых турниров
             if (t.status === 'completed') return;
+            // Приводим порядок сторон к порядку матча на бэкенде: Match.team_1 / Match.team_2
+            let setsToSend = sets;
+            const mt1 = scoreInput.matchTeam1Id ?? null;
+            const uiT1 = scoreInput.team1?.id ?? null;
+            if (mt1 && uiT1 && mt1 !== uiT1) {
+              // UI team1 соответствует backend team_2 — нужно поменять стороны в каждом сете
+              setsToSend = sets.map(s => ({
+                index: s.index,
+                games_1: s.games_2,
+                games_2: s.games_1,
+                tb_1: s.tb_2 ?? null,
+                tb_2: s.tb_1 ?? null,
+                is_tiebreak_only: s.is_tiebreak_only,
+              }));
+            }
             const resp = await fetch(`/api/tournaments/${t.id}/match_save_score_full/`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 match_id: scoreInput.matchId,
-                sets,
+                sets: setsToSend,
               })
             });
             if (!resp.ok) {
@@ -678,6 +752,7 @@ export const TournamentDetailPage: React.FC = () => {
             }
             // обновить таблицу сразу после сохранения
             setScoreInput(null);
+            await refreshGroupStats();
             reload();
           }}
           onSave={async (winnerTeamId, loserTeamId, gamesWinner, gamesLoser) => {
@@ -701,6 +776,7 @@ export const TournamentDetailPage: React.FC = () => {
               throw new Error(err?.error || 'Ошибка сохранения');
             }
             setScoreInput(null);
+            await refreshGroupStats();
             reload();
           }}
           team1={scoreInput?.team1 || null}
@@ -764,10 +840,12 @@ export const TournamentDetailPage: React.FC = () => {
                         matchId: scoreDialog.matchId!,
                         team1: { id: aTeam.id, name: fmt(aTeam) },
                         team2: { id: bTeam.id, name: fmt(bTeam) },
+                        matchTeam1Id: scoreDialog.matchTeam1Id ?? null,
+                        matchTeam2Id: scoreDialog.matchTeam2Id ?? null,
                       });
-                      setScoreDialog(null);
+                      setScoreDialog(null); // Закрываем диалог действий, чтобы не перекрывал модалку счета
                     }}
-                    style={{ padding: '8px 12px', borderRadius: 6, background: '#f8f9fa', color: '#111', border: '1px solid #dcdcdc', cursor: 'pointer' }}
+                    className="btn btn-primary"
                   >
                     Ввести счёт
                   </button>
@@ -830,6 +908,7 @@ export const TournamentDetailPage: React.FC = () => {
                           setSaving(true);
                           await tournamentApi.lockParticipants(t.id);
                           setLockParticipants(true);
+                          await reload();
                         } catch (error) {
                           console.error('Failed to lock participants:', error);
                           alert('Не удалось зафиксировать участников');
@@ -842,6 +921,7 @@ export const TournamentDetailPage: React.FC = () => {
                           setSaving(true);
                           await tournamentApi.unlockParticipants(t.id);
                           setLockParticipants(false);
+                          await reload();
                         } catch (error) {
                           console.error('Failed to unlock participants:', error);
                           alert('Не удалось снять фиксацию участников');
@@ -944,7 +1024,7 @@ export const TournamentDetailPage: React.FC = () => {
       ))}
         {/* Нижний DOM-футер для экспорта: скрыт на странице, показывается только при экспортe */}
         <div data-export-only="true" style={{ padding: '12px 24px 20px 24px', borderTop: '1px solid #eee', display: 'none', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ fontSize: 14 }}>SandMatch</div>
+          <div style={{ fontSize: 14 }}>BeachPlay</div>
           <div style={{ fontSize: 16, fontWeight: 600 }}>скоро онлайн</div>
           {/* TODO: как появиться сайт вставить сюда URL */}
         </div>

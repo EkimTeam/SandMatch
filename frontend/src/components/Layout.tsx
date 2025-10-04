@@ -21,8 +21,8 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         <div className="container">
           <div className="flex items-center justify-between py-4">
             <div className="flex items-center gap-3">
-              <img src="/static/img/logo.png" alt="SandMatch" className="h-7 w-auto rounded-md" />
-              <div className="font-bold text-lg">SandMatch</div>
+              <img src="/static/img/logo.png" alt="BeachPlay" className="h-7 w-auto rounded-md" />
+              <div className="font-bold text-lg">BeachPlay</div>
             </div>
             
             <nav className="flex items-center gap-3 flex-wrap">

@@ -124,7 +124,7 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
                 type="text"
                 id="name"
                 name="name"
-                placeholder="Например, SandMatch Open"
+                placeholder="Например, BeachPlay Open"
                 value={formData.name}
                 onChange={handleChange}
               />

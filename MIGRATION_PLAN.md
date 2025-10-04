@@ -1,4 +1,4 @@
-# План миграции SandMatch: Django Templates → React 18 + TypeScript + Tailwind CSS
+# План миграции BeachPlay: Django Templates → React 18 + TypeScript + Tailwind CSS
 
 ## Анализ готовности
 

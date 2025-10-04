@@ -355,6 +355,21 @@ class TournamentViewSet(viewsets.ModelViewSet):
             "visual_config": {"match_width": 250, "match_height": 100, "round_gap": 80, "match_gap": match_gap},
         })
 
+    @action(detail=True, methods=["get"], url_path="brackets/(?P<bracket_id>[^/.]+)/bye_positions", permission_classes=[AllowAny], authentication_classes=[])
+    def bracket_bye_positions(self, request, pk=None, bracket_id=None):
+        """Вернуть список позиций жеребьёвки, помеченных как BYE, для указанной сетки турнира."""
+        tournament: Tournament = self.get_object()
+        try:
+            bracket = tournament.knockout_brackets.get(id=int(bracket_id))
+        except KnockoutBracket.DoesNotExist:
+            return Response({"ok": False, "error": "Сетка не найдена"}, status=404)
+
+        from apps.tournaments.models import DrawPosition
+        bye_positions = list(
+            DrawPosition.objects.filter(bracket=bracket, source='BYE').values_list('position', flat=True)
+        )
+        return Response({"ok": True, "bye_positions": bye_positions})
+
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], permission_classes=[AllowAny], authentication_classes=[])
     def complete(self, request, pk=None):
@@ -517,7 +532,16 @@ class TournamentViewSet(viewsets.ModelViewSet):
             round_name = f"Группа {gi}"
             for low, high, r_index, k in pairs:
                 order_in_round = (r_index - 1) * 100 + k
-                team_1_id, team_2_id = low, high  # порядок отображения можно оставить low/high
+                # ВАЖНО: team_1_id / team_2_id должны соответствовать расписанию позиций (a_pos -> ta, b_pos -> tb),
+                # а не упорядоченным low/high. Пары идентифицируем через low/high, но стороны матча фиксируем как ta/tb.
+                # Для этого найдём обратно team_id по позициям в текущем туре r_index/k.
+                # Поскольку выше мы уже вычисляли ta/tb при построении pairs, восстановим их через pos_to_team и rounds_per_group.
+                # rounds_per_group[gi][r_index-1][k-1] содержит пары позиций (a_pos, b_pos)
+                a_pos, b_pos = rounds_per_group[gi][r_index-1][k-1]
+                ta = pos_to_team.get(gi, {}).get(a_pos)
+                tb = pos_to_team.get(gi, {}).get(b_pos)
+                # На случай, если участники уже не на месте (не должно быть при фиксации): fallback к low/high
+                team_1_id, team_2_id = (ta or low), (tb or high)
                 obj, _created = Match.objects.get_or_create(
                     tournament=tournament,
                     stage=Match.Stage.GROUP,
@@ -586,6 +610,14 @@ class TournamentViewSet(viewsets.ModelViewSet):
         m.started_at = timezone.now()
         m.status = Match.Status.LIVE
         m.save(update_fields=["started_at", "status", "updated_at"])
+        # Если это групповой матч — пересчитаем агрегаты группы сразу
+        if m.stage == Match.Stage.GROUP and m.group_index is not None:
+            try:
+                from apps.tournaments.services.stats import recalc_group_stats
+                recalc_group_stats(tournament, m.group_index)
+            except Exception:
+                pass
+
         return Response({"ok": True, "match": MatchSerializer(m).data})
 
     @method_decorator(csrf_exempt)
@@ -630,6 +662,14 @@ class TournamentViewSet(viewsets.ModelViewSet):
             return 1 if g1 > g2 else 2
 
         created = []
+        sf = getattr(tournament, 'set_format', None)
+        only_tiebreak_mode = False
+        if sf is not None:
+            try:
+                only_tiebreak_mode = bool(getattr(sf, 'allow_tiebreak_only_set', False)) and int(getattr(sf, 'max_sets', 1)) == 1
+            except Exception:
+                only_tiebreak_mode = False
+
         for i, s in enumerate(sets_payload, start=1):
             idx = int(s.get("index") or i)
             g1 = int(s.get("games_1") or 0)
@@ -639,6 +679,18 @@ class TournamentViewSet(viewsets.ModelViewSet):
             tb1 = int(tb1) if tb1 is not None else None
             tb2 = int(tb2) if tb2 is not None else None
             is_tb_only = bool(s.get("is_tiebreak_only") or False)
+
+            if is_tb_only:
+                if only_tiebreak_mode:
+                    # В режиме "только тай-брейк" сохраняем TB очки в games
+                    g1 = int(tb1 or 0)
+                    g2 = int(tb2 or 0)
+                else:
+                    # Чемпионский TB как 1:0/0:1
+                    if int(tb1 or 0) > int(tb2 or 0):
+                        g1, g2 = 1, 0
+                    else:
+                        g1, g2 = 0, 1
 
             created.append(MatchSet(match=m, index=idx, games_1=g1, games_2=g2, tb_1=tb1, tb_2=tb2, is_tiebreak_only=is_tb_only))
             w = decide_set_winner(g1, g2, tb1, tb2, is_tb_only)
@@ -784,6 +836,9 @@ class TournamentViewSet(viewsets.ModelViewSet):
     def match_save_score(self, request, pk=None):
         """Сохранить счёт одного сета и завершить матч.
         Ожидает JSON: { match_id, id_team_first, id_team_second, games_first, games_second }
+        games_1/games_2 — очки геймов для team_1 / team_2.
+        Для обычного тай-брейка допускается указывать только очки победителя и проигравшего,
+        но предпочтительно передавать tb_1/tb_2 как очки тай-брейка для каждой стороны.
         """
         tournament: Tournament = self.get_object()
         
@@ -812,10 +867,30 @@ class TournamentViewSet(viewsets.ModelViewSet):
         winner_games = max(games_first, games_second)
         loser_games = min(games_first, games_second)
 
+        sf = getattr(t, 'set_format', None)
+        only_tiebreak_mode = False
+        if sf is not None:
+            try:
+                only_tiebreak_mode = bool(getattr(sf, 'allow_tiebreak_only_set', False)) and int(getattr(sf, 'max_sets', 1)) == 1
+            except Exception:
+                only_tiebreak_mode = False
+
         # Обновляем/создаём первый сет
         s, _ = MatchSet.objects.get_or_create(match=m, index=1, defaults={"games_1": 0, "games_2": 0})
-        s.games_1 = winner_games
-        s.games_2 = loser_games
+        if s.is_tiebreak_only:
+            if only_tiebreak_mode:
+                # В режиме "только тай-брейк" сохраняем TB очки в games
+                s.games_1 = winner_games
+                s.games_2 = loser_games
+            else:
+                # Чемпионский TB как 1:0/0:1
+                if winner_games > loser_games:
+                    s.games_1, s.games_2 = 1, 0
+                else:
+                    s.games_1, s.games_2 = 0, 1
+        else:
+            s.games_1 = winner_games
+            s.games_2 = loser_games
         s.tb_1 = None
         s.tb_2 = None
         s.is_tiebreak_only = False
@@ -861,8 +936,38 @@ class TournamentViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["get"])
     def group_stats(self, request, pk=None):
-        # Заглушка, будет реализовано позже
-        return Response({"groups": []})
+        tournament: Tournament = self.get_object()
+        # Соберём список групп из участников
+        from apps.tournaments.models import TournamentEntry
+        group_indices = (
+            TournamentEntry.objects.filter(tournament=tournament)
+            .values_list("group_index", flat=True)
+            .distinct()
+        )
+
+        from apps.tournaments.services.stats import _aggregate_for_group, rank_group_with_ruleset
+        payload = {"ok": True, "groups": {}}
+        for gi in group_indices:
+            try:
+                agg = _aggregate_for_group(tournament, gi)
+                # Преобразуем defaultdict в обычный dict с int ключами
+                group_block = {
+                    int(team_id): {
+                        "wins": data.get("wins", 0),
+                        "sets_won": data.get("sets_won", 0),
+                        "sets_lost": data.get("sets_lost", 0),
+                        "games_won": data.get("games_won", 0),
+                        "games_lost": data.get("games_lost", 0),
+                    }
+                    for team_id, data in agg.items()
+                }
+                # Ранжирование согласно правилам Ruleset
+                order = rank_group_with_ruleset(tournament, int(gi), agg)
+                placements = { int(team_id): (idx + 1) for idx, team_id in enumerate(order) }
+                payload["groups"][int(gi)] = { "stats": group_block, "placements": placements }
+            except Exception:
+                payload["groups"][int(gi)] = { "stats": {}, "placements": {} }
+        return Response(payload)
 
     @method_decorator(csrf_exempt)
     @action(
