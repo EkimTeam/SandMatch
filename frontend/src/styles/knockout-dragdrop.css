@@ -1,0 +1,195 @@
+/* Раздельный скролл для олимпийской системы с Drag-and-Drop */
+
+.knockout-page-container {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.knockout-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.participants-panel {
+  width: 25%;
+  min-width: 300px;
+  border-right: 1px solid #e0e0e0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.bracket-panel {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+}
+
+/* Список участников */
+.participant-list-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.participant-list-header {
+  padding: 16px;
+  border-bottom: 1px solid #e0e0e0;
+  background: #f8f9fa;
+}
+
+.participant-list-header h3 {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.participant-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.participant-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+/* Элемент участника */
+.participant-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  margin-bottom: 4px;
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  cursor: grab;
+  transition: all 0.2s;
+}
+
+.participant-item.draggable:hover {
+  background: #f8f9fa;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.participant-item:active {
+  cursor: grabbing;
+}
+
+.participant-item.in-bracket {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.participant-item.dragging {
+  opacity: 0.5;
+  background: #e3f2fd;
+}
+
+.participant-name {
+  flex: 1;
+  font-size: 14px;
+}
+
+.btn-remove {
+  background: none;
+  border: none;
+  color: #dc3545;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.btn-remove:hover {
+  color: #a71d2a;
+}
+
+.in-bracket-badge {
+  font-size: 12px;
+  color: #28a745;
+  background: #e8f5e8;
+  padding: 2px 6px;
+  border-radius: 12px;
+}
+
+/* Пустое состояние */
+.empty-state {
+  text-align: center;
+  padding: 32px 16px;
+  color: #6c757d;
+  font-style: italic;
+}
+
+.info-message {
+  text-align: center;
+  padding: 12px;
+  margin-top: 8px;
+  background: #fff3cd;
+  color: #856404;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+/* Drop-зоны в сетке */
+.match-slot {
+  min-height: 40px;
+  padding: 8px;
+  border: 1px solid #e0e0e0;
+  margin-bottom: 4px;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.match-slot.droppable {
+  border-style: dashed;
+  background: #f8f9fa;
+}
+
+.match-slot.droppable:hover {
+  background: #e9ecef;
+  border-color: #adb5bd;
+}
+
+.match-slot.drag-over {
+  background: #e3f2fd !important;
+  border-color: #2196f3 !important;
+  box-shadow: 0 0 0 2px #2196f3;
+}
+
+.match-slot.filled {
+  background: white;
+  border-style: solid;
+}
+
+.slot-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.slot-placeholder {
+  color: #6c757d;
+  font-style: italic;
+  font-size: 13px;
+}
+
+.btn-remove-small {
+  background: none;
+  border: none;
+  color: #6c757d;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+  margin-left: 8px;
+}
+
+.btn-remove-small:hover {
+  color: #dc3545;
+}

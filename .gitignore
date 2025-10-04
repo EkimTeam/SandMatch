@@ -73,3 +73,18 @@ Thumbs.db
 
 # Misc
 *.sqlite3
+
+# Frontend (Vite + React)
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.eslintcache
+frontend/.DS_Store
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/pnpm-lock.yaml
+frontend/package-lock.json
+
+# Generated exports/previews (if any)
+exports/
