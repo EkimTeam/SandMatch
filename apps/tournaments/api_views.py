@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes, authentication_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from apps.accounts.permissions import IsAdminOrReadOnly
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db.models import Q
@@ -34,6 +35,7 @@ from apps.tournaments.services.knockout import (
 class TournamentViewSet(viewsets.ModelViewSet):
     queryset = Tournament.objects.all().order_by("-created_at")
     serializer_class = TournamentSerializer
+    permission_classes = [IsAdminOrReadOnly]
 
     @action(detail=True, methods=["post"])
     def save_participants(self, request, pk=None):
@@ -60,7 +62,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return Response({"status": "success"})
 
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["post"], url_path="set_participant", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["post"], url_path="set_participant", permission_classes=[IsAuthenticated])
     def set_participant(self, request, pk=None):
         """Создать/обновить участника в конкретной позиции таблицы.
 
@@ -143,7 +145,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
 
     # --- ПЛЕЙ-ОФФ (ОЛИМПИЙКА) ---
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["post"], url_path="create_knockout_bracket", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["post"], url_path="create_knockout_bracket", permission_classes=[IsAuthenticated])
     def create_knockout_bracket(self, request, pk=None):
         """Создать сетку плей-офф для турнира: позиции жеребьёвки и пустые матчи всех раундов.
 
@@ -202,7 +204,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         })
 
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["post"], url_path="seed_bracket", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["post"], url_path="seed_bracket", permission_classes=[IsAuthenticated])
     def seed_bracket(self, request, pk=None):
         """Автоматическая расстановка участников в сетке (посевы + случайная раскладка)."""
         tournament: Tournament = self.get_object()
@@ -218,7 +220,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         seed_participants(bracket, entries)
         return Response({"ok": True})
 
-    @action(detail=True, methods=["get"], url_path="brackets/(?P<bracket_id>[^/.]+)/draw", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["get"], url_path="brackets/(?P<bracket_id>[^/.]+)/draw", permission_classes=[AllowAny])
     def bracket_draw(self, request, pk=None, bracket_id=None):
         """Получить данные для отрисовки сетки с информацией о соединениях (для SVG)."""
         tournament: Tournament = self.get_object()
@@ -355,7 +357,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
             "visual_config": {"match_width": 250, "match_height": 100, "round_gap": 80, "match_gap": match_gap},
         })
 
-    @action(detail=True, methods=["get"], url_path="brackets/(?P<bracket_id>[^/.]+)/bye_positions", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["get"], url_path="brackets/(?P<bracket_id>[^/.]+)/bye_positions", permission_classes=[AllowAny])
     def bracket_bye_positions(self, request, pk=None, bracket_id=None):
         """Вернуть список позиций жеребьёвки, помеченных как BYE, для указанной сетки турнира."""
         tournament: Tournament = self.get_object()
@@ -379,7 +381,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return Response({"ok": True})
 
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["post"], url_path="remove", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["post"], url_path="remove", permission_classes=[IsAuthenticated])
     def remove(self, request, pk=None):
         tournament = self.get_object()
         tournament.delete()
@@ -387,7 +389,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
 
     # --- ГРУППОВОЕ РАСПИСАНИЕ И ФИКСАЦИЯ ---
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["get"], url_path="group_schedule", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["get"], url_path="group_schedule", permission_classes=[AllowAny])
     def group_schedule(self, request, pk=None):
         """Сформировать расписание круговых матчей по группам на основе planned_participants.
         Возвращает для каждой группы массив туров, каждый тур — пары позиций (индексы 1..N).
@@ -438,7 +440,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return Response({"ok": True, "groups": schedule})
 
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["post"], url_path="lock_participants", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["post"], url_path="lock_participants", permission_classes=[IsAuthenticated])
     def lock_participants(self, request, pk=None):
         """Зафиксировать участников: создать/актуализировать матчи в группах по расписанию.
         Повторный вызов удаляет неактуальные матчи и добавляет недостающие.
@@ -580,7 +582,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return Response({"ok": True, "created": created})
 
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["post"], url_path="unlock_participants", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["post"], url_path="unlock_participants", permission_classes=[IsAuthenticated])
     def unlock_participants(self, request, pk=None):
         """Снять фиксацию участников в круговой системе - изменить статус турнира на created."""
         tournament: Tournament = self.get_object()
@@ -596,7 +598,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return Response({"ok": True})
 
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["post"], url_path="match_start", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["post"], url_path="match_start", permission_classes=[IsAuthenticated])
     def match_start(self, request, pk=None):
         tournament: Tournament = self.get_object()
         match_id = request.data.get("match_id")
@@ -621,7 +623,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return Response({"ok": True, "match": MatchSerializer(m).data})
 
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["post"], url_path="match_save_score_full", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["post"], url_path="match_save_score_full", permission_classes=[IsAuthenticated])
     def match_save_score_full(self, request, pk=None):
         """Сохранить ПОЛНЫЙ счёт матча (все сеты) и завершить матч.
         Ожидает JSON: { match_id: int, sets: [ {index, games_1, games_2, tb_1?, tb_2?, is_tiebreak_only?} ] }
@@ -760,7 +762,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return Response({"ok": True, "match": {"id": m.id, "status": m.status}})
 
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["post"], url_path="match_cancel", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["post"], url_path="match_cancel", permission_classes=[IsAuthenticated])
     def match_cancel(self, request, pk=None):
         """Отменить матч (вернуть в статус scheduled, очистить время начала)."""
         tournament: Tournament = self.get_object()
@@ -785,7 +787,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return Response({"ok": True, "match": {"id": m.id, "status": m.status}})
 
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["post"], url_path="match_reset", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["post"], url_path="match_reset", permission_classes=[IsAuthenticated])
     def match_reset(self, request, pk=None):
         """Сбросить результат матча (удалить счёт, победителя, убрать из следующего раунда)."""
         tournament: Tournament = self.get_object()
@@ -832,7 +834,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return Response({"ok": True})
 
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["post"], url_path="match_save_score", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["post"], url_path="match_save_score", permission_classes=[IsAuthenticated])
     def match_save_score(self, request, pk=None):
         """Сохранить счёт одного сета и завершить матч.
         Ожидает JSON: { match_id, id_team_first, id_team_second, games_first, games_second }
@@ -974,8 +976,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         detail=False,
         methods=["post"],
         url_path="new",
-        permission_classes=[AllowAny],
-        authentication_classes=[],
+        permission_classes=[IsAuthenticated],
     )
     def create_new(self, request):
         data = request.data or {}
@@ -1009,7 +1010,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return Response({"ok": True, "redirect": f"/tournaments/{tournament.id}/"})
 
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["get"], url_path="participants", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["get"], url_path="participants", permission_classes=[AllowAny])
     def get_participants(self, request, pk=None):
         """Получить список участников турнира для Drag-and-Drop."""
         tournament: Tournament = self.get_object()
@@ -1042,7 +1043,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return Response({'participants': participants})
     
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["get"], url_path="brackets/(?P<bracket_id>[^/.]+)/bye_positions", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["get"], url_path="brackets/(?P<bracket_id>[^/.]+)/bye_positions", permission_classes=[AllowAny])
     def get_bye_positions(self, request, pk=None, bracket_id=None):
         """Получить список позиций BYE для сетки."""
         tournament: Tournament = self.get_object()
@@ -1061,7 +1062,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
             return Response({'ok': False, 'error': str(e)}, status=500)
 
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["post"], url_path="brackets/(?P<bracket_id>[^/.]+)/assign_participant", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["post"], url_path="brackets/(?P<bracket_id>[^/.]+)/assign_participant", permission_classes=[IsAuthenticated])
     def assign_participant(self, request, pk=None, bracket_id=None):
         """Назначить участника в слот сетки."""
         tournament: Tournament = self.get_object()
@@ -1105,7 +1106,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
             return Response({'ok': False, 'error': str(e)}, status=500)
 
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["delete"], url_path="brackets/(?P<bracket_id>[^/.]+)/remove_participant", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["delete"], url_path="brackets/(?P<bracket_id>[^/.]+)/remove_participant", permission_classes=[IsAuthenticated])
     def remove_participant(self, request, pk=None, bracket_id=None):
         """Удалить участника из слота сетки."""
         tournament: Tournament = self.get_object()
@@ -1133,7 +1134,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
             return Response({'ok': False, 'error': str(e)}, status=500)
 
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["post"], url_path="add_participant", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["post"], url_path="add_participant", permission_classes=[IsAuthenticated])
     def add_participant(self, request, pk=None):
         """Добавить нового участника в турнир."""
         tournament: Tournament = self.get_object()
@@ -1239,7 +1240,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
             return Response({'ok': False, 'error': str(e)}, status=500)
 
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["post"], url_path="brackets/(?P<bracket_id>[^/.]+)/lock_participants", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["post"], url_path="brackets/(?P<bracket_id>[^/.]+)/lock_participants", permission_classes=[IsAuthenticated])
     def lock_bracket_participants(self, request, pk=None, bracket_id=None):
         """Зафиксировать участников в сетке."""
         from apps.tournaments.models import DrawPosition
@@ -1400,7 +1401,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
             return Response({'ok': False, 'error': str(e)}, status=500)
 
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["post"], url_path="brackets/(?P<bracket_id>[^/.]+)/unlock_participants", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["post"], url_path="brackets/(?P<bracket_id>[^/.]+)/unlock_participants", permission_classes=[IsAuthenticated])
     def unlock_bracket_participants(self, request, pk=None, bracket_id=None):
         """Снять фиксацию участников в сетке - изменить статус турнира на created."""
         tournament: Tournament = self.get_object()
@@ -1421,7 +1422,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
             return Response({'ok': False, 'error': str(e)}, status=500)
 
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["delete"], url_path="brackets/(?P<bracket_id>[^/.]+)/remove_from_slot", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["delete"], url_path="brackets/(?P<bracket_id>[^/.]+)/remove_from_slot", permission_classes=[IsAuthenticated])
     def remove_from_slot(self, request, pk=None, bracket_id=None):
         """Удалить участника из слота матча."""
         tournament: Tournament = self.get_object()
@@ -1450,7 +1451,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
             return Response({'ok': False, 'error': str(e)}, status=500)
 
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["delete"], url_path="remove_participant", permission_classes=[AllowAny], authentication_classes=[])
+    @action(detail=True, methods=["delete"], url_path="remove_participant", permission_classes=[IsAuthenticated])
     def remove_participant_from_tournament(self, request, pk=None):
         """Удалить участника из турнира."""
         tournament: Tournament = self.get_object()
@@ -1487,6 +1488,7 @@ class MatchViewSet(viewsets.ModelViewSet):
 
 
 class PlayerListView(APIView):
+    permission_classes = [AllowAny]
     def get(self, request):
         players = Player.objects.all().order_by("last_name", "first_name")
         serializer = PlayerSerializer(players, many=True)
@@ -1494,6 +1496,7 @@ class PlayerListView(APIView):
 
 
 class PlayerSearchView(APIView):
+    permission_classes = [AllowAny]
     def get(self, request):
         query = request.GET.get("q", "")
         if query:
@@ -1515,8 +1518,7 @@ class PlayerSearchView(APIView):
 
 @method_decorator(csrf_exempt, name='dispatch')
 class PlayerCreateView(APIView):
-    permission_classes = [AllowAny]
-    authentication_classes = []
+    permission_classes = [IsAuthenticated]
     def post(self, request):
         serializer = PlayerSerializer(data=request.data)
         if serializer.is_valid():
@@ -1573,8 +1575,7 @@ def rulesets_list(request):
 
 @csrf_exempt
 @api_view(["POST", "OPTIONS"])
-@authentication_classes([])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def tournament_complete(request, pk: int):
     t = get_object_or_404(Tournament, pk=pk)
     t.status = Tournament.Status.COMPLETED
@@ -1584,8 +1585,7 @@ def tournament_complete(request, pk: int):
 
 @csrf_exempt
 @api_view(["POST", "OPTIONS"])
-@authentication_classes([])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def tournament_remove(request, pk: int):
     t = get_object_or_404(Tournament, pk=pk)
     t.delete()
@@ -1594,8 +1594,7 @@ def tournament_remove(request, pk: int):
 
 @csrf_exempt
 @api_view(["POST", "OPTIONS"])
-@authentication_classes([])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def tournament_create(request):
     """Создание турнира по данным из модального окна."""
     data = request.data or {}

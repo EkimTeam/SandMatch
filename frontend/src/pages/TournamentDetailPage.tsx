@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { formatDate } from '../services/date';
 import { ParticipantPickerModal } from '../components/ParticipantPickerModal';
-import { tournamentApi } from '../services/api';
+import api, { tournamentApi } from '../services/api';
 import { MatchScoreModal } from '../components/MatchScoreModal';
 
 type Participant = {
@@ -395,27 +395,24 @@ export const TournamentDetailPage: React.FC = () => {
   };
 
   const computePlacements = (g: { idx: number; entries: (Participant | null)[]; rows: number[]; cols: number[] }) => {
-    // Если есть разметка мест с бэка — используем её
+    // Используем исключительно расклад мест с бэкенда
     const block = groupStats[g.idx];
+    const placeByRow: Record<number, number> = {};
     if (block && block.placements) {
-      const placeByRow: Record<number, number> = {};
-      // Преобразуем team_id -> place в row_index -> place
       g.rows.forEach((rIdx, rI) => {
         const teamId = g.entries[rI]?.team?.id as number | undefined;
-        if (teamId && block.placements[teamId]) {
-          placeByRow[rIdx] = block.placements[teamId];
+        const place = teamId ? block.placements[teamId] : undefined;
+        if (place != null) {
+          placeByRow[rIdx] = place;
         }
       });
-      return placeByRow;
     }
-    // Fallback на локальную логику, если по какой-то причине данных нет
-    const rows = g.rows.map((rIdx, rI) => {
-      const st = computeRowStats(g, rIdx, rI);
-      return { rIdx, rI, wins: st.wins, setsRatio: st.setsRatioNum, gamesRatio: st.gamesRatioNum };
-    });
-    const ranked = rankGroup(g, rows, 0);
-    const placeByRow: Record<number, number> = {};
-    ranked.forEach((r, i) => { placeByRow[r.rIdx] = i + 1; });
+    // Если по какой-то причине для строки не пришло место, зададим по порядку строки
+    if (Object.keys(placeByRow).length !== g.rows.length) {
+      g.rows.forEach((rIdx, i) => {
+        if (placeByRow[rIdx] == null) placeByRow[rIdx] = i + 1;
+      });
+    }
     return placeByRow;
   };
 
@@ -609,7 +606,7 @@ export const TournamentDetailPage: React.FC = () => {
     
     if (!t || !scoreDialog?.matchId) return;
     try {
-      await fetch(`/api/tournaments/${t.id}/match_start/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ match_id: scoreDialog.matchId }) });
+      await api.post(`/tournaments/${t.id}/match_start/`, { match_id: scoreDialog.matchId });
       await reload();
     } finally {
       setScoreDialog(null);
@@ -622,7 +619,7 @@ export const TournamentDetailPage: React.FC = () => {
     
     if (!t || !scoreDialog?.matchId) return;
     try {
-      await fetch(`/api/tournaments/${t.id}/match_cancel/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ match_id: scoreDialog.matchId }) });
+      await api.post(`/tournaments/${t.id}/match_cancel/`, { match_id: scoreDialog.matchId });
       await reload();
     } finally {
       setScoreDialog(null);
@@ -633,8 +630,8 @@ export const TournamentDetailPage: React.FC = () => {
     if (!t) return;
     setSaving(true);
     try {
-      const resp = await fetch(`/api/tournaments/${t.id}/complete/`, { method: 'POST' });
-      if (resp.ok) {
+      await api.post(`/tournaments/${t.id}/complete/`);
+      {
         // Перезагрузим страницу
         const upd = { ...t, status: 'completed' as const };
         setT(upd);
@@ -649,8 +646,8 @@ export const TournamentDetailPage: React.FC = () => {
     if (!confirm('Удалить турнир без возможности восстановления?')) return;
     setSaving(true);
     try {
-      const resp = await fetch(`/api/tournaments/${t.id}/remove/`, { method: 'POST' });
-      if (resp.ok) {
+      await api.post(`/tournaments/${t.id}/remove/`);
+      {
         nav('/tournaments');
       }
     } finally {
@@ -738,18 +735,10 @@ export const TournamentDetailPage: React.FC = () => {
                 is_tiebreak_only: s.is_tiebreak_only,
               }));
             }
-            const resp = await fetch(`/api/tournaments/${t.id}/match_save_score_full/`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                match_id: scoreInput.matchId,
-                sets: setsToSend,
-              })
+            await api.post(`/tournaments/${t.id}/match_save_score_full/`, {
+              match_id: scoreInput.matchId,
+              sets: setsToSend,
             });
-            if (!resp.ok) {
-              const err = await resp.json().catch(() => ({}));
-              throw new Error(err?.error || `HTTP ${resp.status}`);
-            }
             // обновить таблицу сразу после сохранения
             setScoreInput(null);
             await refreshGroupStats();
@@ -760,21 +749,13 @@ export const TournamentDetailPage: React.FC = () => {
             if (t?.status === 'completed') return;
             
             if (!scoreInput) return;
-            const resp = await fetch(`/api/tournaments/${t.id}/match_save_score/`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                match_id: scoreInput.matchId,
-                id_team_first: winnerTeamId,
-                id_team_second: loserTeamId,
-                games_first: gamesWinner,
-                games_second: gamesLoser,
-              })
+            await api.post(`/tournaments/${t.id}/match_save_score/`, {
+              match_id: scoreInput.matchId,
+              id_team_first: winnerTeamId,
+              id_team_second: loserTeamId,
+              games_first: gamesWinner,
+              games_second: gamesLoser,
             });
-            if (!resp.ok) {
-              const err = await resp.json();
-              throw new Error(err?.error || 'Ошибка сохранения');
-            }
             setScoreInput(null);
             await refreshGroupStats();
             reload();

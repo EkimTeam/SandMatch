@@ -4,3 +4,8 @@ gunicorn~=21.2
 python-dotenv~=1.0
 djangorestframework~=3.14
 django-cors-headers~=4.3
+djangorestframework-simplejwt~=5.3
+
+# Security hardening
+django-csp~=3.8
+django-ratelimit~=4.1

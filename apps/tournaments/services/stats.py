@@ -185,59 +185,130 @@ def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[
     """Ранжирование по правилам из Ruleset.ordering_priority.
 
     Поддерживаемые критерии: wins, sets_ratio, games_ratio, h2h, name.
+    Алгоритм:
+    - Группируем участников по текущему критерию
+    - Для групп из 2 участников применяем личную встречу (h2h)
+    - Для групп из 3+ участников рекурсивно применяем следующий критерий
     """
-    ruleset = getattr(tournament, "ruleset", None)
-    priority: List[str] = []
-    if ruleset is not None:
-        try:
-            raw = getattr(ruleset, "ordering_priority", [])
-            if isinstance(raw, list):
-                priority = [str(x) for x in raw]
-        except Exception:
-            priority = []
-    if not priority:
-        priority = ["wins", "sets_ratio", "games_ratio", "name"]
+    # Пресет правил: Победы -> Сеты соот. -> Геймы соот.
+    # H2H применяется для пар после каждого шага, финально — спец/рейтинг/алфавит.
+    # Игнорируем кастомные ruleset.ordering_priority для детерминированности пресета id=5.
+    priority: List[str] = ["wins", "sets_ratio", "games_ratio"]
 
-    # Предрасчёт вспомогательных величин
+    # Предрасчёт вспомогательных величин и состав группы
     sets_ratio: Dict[int, float] = {}
     games_ratio: Dict[int, float] = {}
     name_by_team: Dict[int, str] = {}
+    team_obj_by_id: Dict[int, any] = {}
+    team_rating: Dict[int, float] = {}
+    has_special: Dict[int, bool] = {}
+
     from apps.tournaments.models import TournamentEntry
-    for e in TournamentEntry.objects.filter(tournament=tournament, group_index=group_index).select_related("team"):
-        name_by_team[e.team_id] = str(e.team)
-        d = agg.get(e.team_id, {"wins": 0, "sets_won": 0, "sets_lost": 0, "games_won": 0, "games_lost": 0})
+    entries = (
+        TournamentEntry.objects
+        .filter(tournament=tournament, group_index=group_index)
+        .select_related("team", "team__player_1", "team__player_2")
+    )
+    for e in entries:
+        team_id = e.team_id
+        team = e.team
+        team_obj_by_id[team_id] = team
+        name_by_team[team_id] = str(team)
+        d = agg.get(team_id, {"wins": 0, "sets_won": 0, "sets_lost": 0, "games_won": 0, "games_lost": 0})
         st = d["sets_won"] + d["sets_lost"]
         gt = d["games_won"] + d["games_lost"]
-        sets_ratio[e.team_id] = (d["sets_won"] / st) if st > 0 else 0.0
-        games_ratio[e.team_id] = (d["games_won"] / gt) if gt > 0 else 0.0
+        sets_ratio[team_id] = (d["sets_won"] / st) if st > 0 else 0.0
+        games_ratio[team_id] = (d["games_won"] / gt) if gt > 0 else 0.0
 
-    teams = list(agg.keys())
+        # Суммарный рейтинг команды (если поля rating нет — считаем 0)
+        r1 = 0.0
+        r2 = 0.0
+        try:
+            p1 = getattr(team, "player_1", None)
+            p2 = getattr(team, "player_2", None)
+            r1 = float(getattr(p1, "rating", 0) or 0)
+            r2 = float(getattr(p2, "rating", 0) or 0)
+        except Exception:
+            r1 = r2 = 0.0
+        team_rating[team_id] = r1 + r2
 
-    def cmp(a: int, b: int) -> int:
-        # Возвращает -1 если a выше b, 1 если ниже, 0 если равны
-        for crit in priority:
-            if crit == "wins":
-                wa = agg[a]["wins"]; wb = agg[b]["wins"]
-                if wa != wb: return -1 if wa > wb else 1
-            elif crit == "sets_ratio":
-                sa = sets_ratio.get(a, 0.0); sb = sets_ratio.get(b, 0.0)
-                if sa != sb: return -1 if sa > sb else 1
-            elif crit == "games_ratio":
-                ga = games_ratio.get(a, 0.0); gb = games_ratio.get(b, 0.0)
-                if ga != gb: return -1 if ga > gb else 1
-            elif crit == "h2h":
-                w = _head_to_head_winner(tournament, group_index, a, b)
-                if w is not None and w in (a, b):
-                    return -1 if w == a else 1
-            elif crit == "name":
-                na = (name_by_team.get(a) or "").lower(); nb = (name_by_team.get(b) or "").lower()
-                if na != nb: return -1 if na < nb else 1
+        # Специальный участник: если в команде есть игрок "Петров Михаил"
+        def _is_special_player(p) -> bool:
+            if not p:
+                return False
+            try:
+                last = (getattr(p, "last_name", "") or "").strip().lower()
+                first = (getattr(p, "first_name", "") or "").strip().lower()
+                display = (getattr(p, "display_name", "") or "").strip().lower()
+                full = f"{last} {first}".strip()
+                return full == "петров михаил" or display == "петров михаил"
+            except Exception:
+                return False
+        has_special[team_id] = _is_special_player(getattr(team, "player_1", None)) or _is_special_player(getattr(team, "player_2", None))
+
+    # Команды для ранжирования — именно участники группы, даже если у них пока нет матчей
+    teams = [e.team_id for e in entries if e.team_id is not None]
+
+    def get_criterion_value(team_id: int, crit: str):
+        """Получить значение критерия для команды."""
+        if crit == "wins":
+            return agg[team_id]["wins"]
+        elif crit == "sets_ratio":
+            return sets_ratio.get(team_id, 0.0)
+        elif crit == "games_ratio":
+            return games_ratio.get(team_id, 0.0)
+        elif crit == "name":
+            return (name_by_team.get(team_id) or "").lower()
+        return None
+
+    def rank_teams_recursive(team_list: List[int], criteria_index: int) -> List[int]:
+        """Рекурсивное ранжирование списка команд по критериям."""
+        if len(team_list) <= 1:
+            return team_list
+        if criteria_index >= len(priority):
+            # Закончились критерии — применяем финальные тай-брейкеры: спец → рейтинг → имя
+            return sorted(
+                team_list,
+                key=lambda tid: (
+                    -int(has_special.get(tid, False)),
+                    -float(team_rating.get(tid, 0.0)),
+                    (name_by_team.get(tid) or "").lower(),
+                )
+            )
+
+        current_crit = priority[criteria_index]
+        
+        # Группируем команды по значению текущего критерия
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for tid in team_list:
+            val = get_criterion_value(tid, current_crit)
+            groups[val].append(tid)
+        
+        # Сортируем группы по значению критерия (по убыванию для числовых, по возрастанию для name)
+        is_name = (current_crit == "name")
+        sorted_values = sorted(groups.keys(), reverse=not is_name)
+        
+        result = []
+        for val in sorted_values:
+            group = groups[val]
+            if len(group) == 1:
+                result.extend(group)
+            elif len(group) == 2:
+                # Для пары применяем личную встречу
+                a, b = group[0], group[1]
+                winner = _head_to_head_winner(tournament, group_index, a, b)
+                if winner == a:
+                    result.extend([a, b])
+                elif winner == b:
+                    result.extend([b, a])
+                else:
+                    # Нет данных о личной встрече — переходим к следующему критерию
+                    result.extend(rank_teams_recursive(group, criteria_index + 1))
             else:
-                # неизвестный критерий — пропускаем
-                continue
-        return 0
+                # Для 3+ участников рекурсивно применяем следующий критерий
+                result.extend(rank_teams_recursive(group, criteria_index + 1))
+        
+        return result
 
-    # Стабильная сортировка по cmp
-    from functools import cmp_to_key
-    teams.sort(key=cmp_to_key(cmp))
-    return teams
+    return rank_teams_recursive(teams, 0)
