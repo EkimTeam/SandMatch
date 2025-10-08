@@ -1,6 +1,7 @@
 from django.contrib import admin
 from django.urls import path, include, re_path
 from django.views.generic import RedirectView, TemplateView
+from django.http import JsonResponse
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -29,12 +30,18 @@ from apps.players.views import PlayersListView
 class SPAView(TemplateView):
     template_name = "spa.html"
 
+# Простое health-check представление
+def health(request):
+    return JsonResponse({"ok": True, "status": "healthy"})
+
 urlpatterns = [
     # Django Admin
     path("sm-admin/", admin.site.urls),
     
     # API endpoints
     path("api/", include("apps.tournaments.api_urls")),
+    # Health check
+    path("api/health/", health, name="health"),
     # Auth (JWT)
     path("api/auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),

@@ -9,7 +9,46 @@ SECURE_SSL_REDIRECT = True
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 
-# DATABASES, CACHES, STORAGES will be provided via env in MVP1
+# DATABASES из переменных окружения
+# Приоритет: DATABASE_URL (postgres://user:pass@host:port/db?sslmode=require),
+# иначе POSTGRES_* переменные как fallback
+DATABASES = {}
+_db_url = os.getenv("DATABASE_URL", "").strip()
+if _db_url:
+    from urllib.parse import urlparse, parse_qs
+
+    u = urlparse(_db_url)
+    if u.scheme.startswith("postgres"):
+        name = (u.path or "/")[1:]  # strip leading '/'
+        user = u.username or ""
+        password = u.password or ""
+        host = u.hostname or ""
+        port = int(u.port or 5432)
+        qs = parse_qs(u.query or "")
+        sslmode = (qs.get("sslmode", [""])[0] or "").lower()
+        DATABASES["default"] = {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": name,
+            "USER": user,
+            "PASSWORD": password,
+            "HOST": host,
+            "PORT": port,
+            "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "60")),
+            "OPTIONS": {**({"sslmode": sslmode} if sslmode else {})},
+        }
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.getenv("POSTGRES_DB", "sandmatch"),
+            "USER": os.getenv("POSTGRES_USER", "sandmatch"),
+            "PASSWORD": os.getenv("POSTGRES_PASSWORD", ""),
+            "HOST": os.getenv("POSTGRES_HOST", "localhost"),
+            "PORT": int(os.getenv("POSTGRES_PORT", "5432")),
+            "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "60")),
+            "OPTIONS": {"sslmode": os.getenv("POSTGRES_SSLMODE", "require")},
+        }
+    }
 
 # Hosts and CORS
 ALLOWED_HOSTS = [h.strip() for h in os.getenv("ALLOWED_HOSTS", "*").split(",") if h.strip()]
