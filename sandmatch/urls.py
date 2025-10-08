@@ -1,6 +1,10 @@
 from django.contrib import admin
 from django.urls import path, include, re_path
 from django.views.generic import RedirectView, TemplateView
+from rest_framework_simplejwt.views import (
+    TokenObtainPairView,
+    TokenRefreshView,
+)
 
 from apps.tournaments.views import (
     TournamentsListView,
@@ -31,6 +35,9 @@ urlpatterns = [
     
     # API endpoints
     path("api/", include("apps.tournaments.api_urls")),
+    # Auth (JWT)
+    path("api/auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
+    path("api/auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     
     # Legacy endpoints (временно сохраняем для совместимости)
     path("legacy/tournaments/", TournamentsListView.as_view(), name="tournaments_legacy"),

@@ -4,7 +4,7 @@ import { BracketData } from '../types/bracket';
 import { BracketWithSVGConnectors } from '../components/BracketWithSVGConnectors';
 import { DraggableParticipantList } from '../components/DraggableParticipantList';
 import { KnockoutParticipantPicker } from '../components/KnockoutParticipantPicker';
-import { tournamentApi, matchApi } from '../services/api';
+import api, { tournamentApi, matchApi } from '../services/api';
 import { formatDate } from '../services/date';
 import { DraggableParticipant, DropSlot, DragDropState } from '../types/dragdrop';
 import { MatchActionDialog } from '../components/MatchActionDialog';
@@ -229,17 +229,10 @@ export const KnockoutPage: React.FC = () => {
       // Загрузить BYE позиции (один раз на bracketId)
       try {
         if (bracketId && !byeLoadedRef.current[bracketId]) {
-          const byeResp = await fetch(`/api/tournaments/${tournamentId}/brackets/${bracketId}/bye_positions/`);
-          if (byeResp.ok) {
-            const byeData = await byeResp.json();
-            setByePositions(new Set(byeData.bye_positions || []));
-            byeLoadedRef.current[bracketId] = true;
-          } else {
-            // Попробуем прочитать текст ошибки для диагностики
-            let msg = 'Не удалось загрузить BYE позиции';
-            try { const err = await byeResp.json(); msg = err?.error || msg; } catch {}
-            console.warn(msg);
-          }
+          const byeResp = await api.get(`/tournaments/${tournamentId}/brackets/${bracketId}/bye_positions/`);
+          const byeData = byeResp.data;
+          setByePositions(new Set(byeData.bye_positions || []));
+          byeLoadedRef.current[bracketId] = true;
         }
       } catch (e) {
         console.error('Failed to load BYE positions:', e);
@@ -500,17 +493,9 @@ export const KnockoutPage: React.FC = () => {
 
     try {
       // Отправить запрос на backend для удаления из матча
-      const response = await fetch(`/api/tournaments/${tournamentId}/brackets/${bracketId}/remove_from_slot/`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ match_id: matchId, slot })
+      await api.delete(`/tournaments/${tournamentId}/brackets/${bracketId}/remove_from_slot/`, {
+        data: { match_id: matchId, slot }
       });
-
-      if (!response.ok) {
-        const data = await response.json();
-        alert(data.error || 'Не удалось удалить участника из слота');
-        return;
-      }
 
       // Перезагрузить данные сетки для синхронизации
       await loadDraw();
@@ -542,17 +527,9 @@ export const KnockoutPage: React.FC = () => {
     
     try {
       // Удалить из БД
-      const response = await fetch(`/api/tournaments/${tournamentId}/remove_participant/`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entry_id: participantId })
+      await api.delete(`/tournaments/${tournamentId}/remove_participant/`, {
+        data: { entry_id: participantId }
       });
-      
-      if (!response.ok) {
-        const data = await response.json();
-        alert(data.error || 'Не удалось удалить участника');
-        return;
-      }
       
       // Обновить UI
       setDragDropState(prev => ({
@@ -668,17 +645,7 @@ export const KnockoutPage: React.FC = () => {
           };
         });
 
-        const response = await fetch(`/api/tournaments/${tournamentId}/brackets/${bracketId}/lock_participants/`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ slots: slotsData })
-        });
-
-        if (!response.ok) {
-          const data = await response.json();
-          alert(data.error || 'Не удалось зафиксировать участников');
-          return;
-        }
+        await api.post(`/tournaments/${tournamentId}/brackets/${bracketId}/lock_participants/`, { slots: slotsData });
 
         setDragDropState(prev => ({ ...prev, isSelectionLocked: true }));
         await loadDraw();

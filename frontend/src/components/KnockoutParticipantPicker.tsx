@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import api from '../services/api';
 
 type Player = {
   id: number;
@@ -114,19 +115,10 @@ export const KnockoutParticipantPicker: React.FC<Props> = ({
     }
     setAdding(true);
     try {
-      const resp = await fetch('/api/players/create/', {
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          last_name: newLast.trim(), 
-          first_name: newFirst.trim() 
-        }),
+      const { data: created } = await api.post<Player>('/players/create/', {
+        last_name: newLast.trim(),
+        first_name: newFirst.trim(),
       });
-      if (!resp.ok) { 
-        const txt = await resp.text(); 
-        throw new Error(txt || 'Ошибка создания игрока'); 
-      }
-      const created: Player = await resp.json();
       if (activeField === 'A') {
         setSelectedA(created);
         setQueryA(`${created.last_name} ${created.first_name}`.trim());
@@ -156,19 +148,11 @@ export const KnockoutParticipantPicker: React.FC<Props> = ({
       
       // Для олимпийской системы используем add_participant
       try {
-        const resp = await fetch(`/api/tournaments/${tournamentId}/add_participant/`, { 
-          method: 'POST', 
-          headers: { 'Content-Type': 'application/json' }, 
-          body: JSON.stringify({ 
-            player_id: selectedA.id,
-            name: `${selectedA.last_name} ${selectedA.first_name}`.trim()
-          }) 
+        const { data } = await api.post(`/tournaments/${tournamentId}/add_participant/`, {
+          player_id: selectedA.id,
+          name: `${selectedA.last_name} ${selectedA.first_name}`.trim(),
         });
-        const data = await resp.json();
-        if (!resp.ok || !data.ok) { 
-          setError(data.error || 'Ошибка сохранения'); 
-          return; 
-        }
+        if (!data.ok) { setError(data.error || 'Ошибка сохранения'); return; }
       } catch (e: any) {
         setError(e.message || 'Ошибка сохранения');
         return;
@@ -182,20 +166,12 @@ export const KnockoutParticipantPicker: React.FC<Props> = ({
       // Для пар в олимпийской системе
       try {
         const ids = [selectedA.id, selectedB.id].sort((a, b) => a - b);
-        const resp = await fetch(`/api/tournaments/${tournamentId}/add_participant/`, { 
-          method: 'POST', 
-          headers: { 'Content-Type': 'application/json' }, 
-          body: JSON.stringify({ 
-            player1_id: ids[0], 
-            player2_id: ids[1],
-            name: `${selectedA.last_name}/${selectedB.last_name}`
-          }) 
+        const { data } = await api.post(`/tournaments/${tournamentId}/add_participant/`, {
+          player1_id: ids[0],
+          player2_id: ids[1],
+          name: `${selectedA.last_name}/${selectedB.last_name}`,
         });
-        const data = await resp.json();
-        if (!resp.ok || !data.ok) { 
-          setError(data.error || 'Ошибка сохранения'); 
-          return; 
-        }
+        if (!data.ok) { setError(data.error || 'Ошибка сохранения'); return; }
       } catch (e: any) {
         setError(e.message || 'Ошибка сохранения');
         return;

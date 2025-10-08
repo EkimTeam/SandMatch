@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getAccessToken, refreshAccessToken, clearTokens } from './auth';
 
 // Базовая конфигурация API клиента
 const api = axios.create({
@@ -7,6 +8,16 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+});
+
+// Attach Authorization header with Bearer token on each request
+api.interceptors.request.use((config) => {
+  const token = getAccessToken();
+  if (token) {
+    config.headers = config.headers || {};
+    (config.headers as any).Authorization = `Bearer ${token}`;
+  }
+  return config;
 });
 
 // Интерфейсы TypeScript
@@ -283,7 +294,22 @@ export const matchApi = {
 // Обработка ошибок
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    const original = error?.config || {};
+    const status = error?.response?.status;
+    if (status === 401 && !original._retry) {
+      original._retry = true;
+      try {
+        const newAccess = await refreshAccessToken();
+        if (newAccess) {
+          original.headers = original.headers || {};
+          original.headers.Authorization = `Bearer ${newAccess}`;
+          return api(original);
+        }
+      } catch (_) {}
+      // Refresh failed — cleanup tokens
+      clearTokens();
+    }
     console.error('API Error:', error.response?.data || error.message);
     return Promise.reject(error);
   }

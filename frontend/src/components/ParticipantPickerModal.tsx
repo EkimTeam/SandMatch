@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import api from '../services/api';
 
 type Player = {
   id: number;
@@ -100,12 +101,7 @@ export const ParticipantPickerModal: React.FC<Props> = ({ open, onClose, tournam
     if (!newLast.trim() || !newFirst.trim()) { setError('Укажите фамилию и имя'); return; }
     setAdding(true);
     try {
-      const resp = await fetch('/api/players/create/', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ last_name: newLast.trim(), first_name: newFirst.trim() }),
-      });
-      if (!resp.ok) { const txt = await resp.text(); throw new Error(txt || 'Ошибка создания игрока'); }
-      const created: Player = await resp.json();
+      const { data: created } = await api.post<Player>('/players/create/', { last_name: newLast.trim(), first_name: newFirst.trim() });
       if (activeField === 'A') {
         setSelectedA(created);
         setQueryA(`${created.last_name} ${created.first_name}`.trim());
@@ -128,16 +124,14 @@ export const ParticipantPickerModal: React.FC<Props> = ({ open, onClose, tournam
     if (!isDoubles) {
       if (!selectedA) { setError('Выберите игрока'); return; }
       const body = { group_index: groupIndex, row_index: rowIndex, player_id: selectedA.id };
-      const resp = await fetch(`/api/tournaments/${tournamentId}/set_participant/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const data = await resp.json();
-      if (!resp.ok || !data.ok) { setError(data.error || 'Ошибка сохранения'); return; }
+      const { data } = await api.post(`/tournaments/${tournamentId}/set_participant/`, body);
+      if (!data.ok) { setError(data.error || 'Ошибка сохранения'); return; }
     } else {
       if (!selectedA || !selectedB) { setError('Выберите двух разных игроков'); return; }
       let ids = [selectedA.id, selectedB.id].sort((a, b) => a - b);
       const body = { group_index: groupIndex, row_index: rowIndex, player1_id: ids[0], player2_id: ids[1] };
-      const resp = await fetch(`/api/tournaments/${tournamentId}/set_participant/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const data = await resp.json();
-      if (!resp.ok || !data.ok) { setError(data.error || 'Ошибка сохранения'); return; }
+      const { data } = await api.post(`/tournaments/${tournamentId}/set_participant/`, body);
+      if (!data.ok) { setError(data.error || 'Ошибка сохранения'); return; }
     }
     onClose(); onSaved();
   };

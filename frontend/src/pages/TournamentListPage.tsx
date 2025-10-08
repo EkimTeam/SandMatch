@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import api from '../services/api';
 import { formatDate } from '../services/date';
 import { Link } from 'react-router-dom';
 import { NewTournamentModal } from '../components/NewTournamentModal';
@@ -63,16 +64,9 @@ export const TournamentListPage: React.FC = () => {
   const handleCreateTournament = async (payload: any) => {
     try {
       const isRR = payload.system === 'round_robin';
-      const url = isRR ? '/api/tournaments/new_round_robin/' : '/api/tournaments/new_knockout/';
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        throw new Error(data.error || 'Ошибка создания турнира');
-      }
+      const url = isRR ? '/tournaments/new_round_robin/' : '/tournaments/new_knockout/';
+      const { data } = await api.post(url, payload);
+      if (!data.ok) throw new Error(data.error || 'Ошибка создания турнира');
       setShowModal(false);
       window.location.href = data.redirect;
     } catch (error: any) {

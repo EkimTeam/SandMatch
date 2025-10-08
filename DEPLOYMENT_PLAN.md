@@ -3,39 +3,36 @@
 ## Текущее состояние
 - Приложение работает локально (localhost:8080)
 - Django + PostgreSQL + React (Vite)
-- Нет системы аутентификации
-- Нет разграничения прав доступа
+- JWT-аутентификация реализована через `djangorestframework-simplejwt`
+- Разграничение прав доступа включено (права и роли в `apps.accounts` + DRF permissions)
+- Включены CORS, CSP, rate limiting (DRF throttling), HTTPS/HSTS (в prod-настройках)
 
 ## Этап 1: Подготовка к публикации (ДО деплоя)
 
 ### 1.1 Аутентификация и авторизация
 **Приоритет: КРИТИЧЕСКИЙ**
 
-- [ ] Установить `django-allauth` или `djoser` для аутентификации
-- [ ] Создать модель `UserProfile` с ролями:
-  - `ADMIN` - полный доступ (создание/изменение/удаление турниров)
-  - `VIEWER` - только просмотр (пока отключен)
-  - `REGISTERED_USER` - для будущей статистики (пока отключен)
-- [ ] Добавить middleware для проверки прав доступа
-- [ ] Создать страницу логина в React
-- [ ] Защитить все API endpoints декораторами `@permission_required`
-- [ ] Добавить JWT токены для API (django-rest-framework-simplejwt)
+- [x] JWT-аутентификация через `djangorestframework-simplejwt`
+- [x] Модель `UserProfile` с ролями (`ADMIN`, `VIEWER`, `REGISTERED_USER`)
+- [x] Кастомные DRF permissions на мутации (например, `IsAdminOrReadOnly`)
+- [x] Страница логина в React + хранение токенов + axios-интерцепторы (авто-refresh)
+- [ ] Проверка ролей на всех защищённых эндпоинтах (доп. аудит)
 
 ### 1.2 Безопасность
 **Приоритет: КРИТИЧЕСКИЙ**
 
-- [ ] Переместить SECRET_KEY в переменные окружения
-- [ ] Настроить ALLOWED_HOSTS для продакшена
-- [ ] Включить HTTPS (SECURE_SSL_REDIRECT = True)
-- [ ] Настроить CORS для фронтенда
-- [ ] Добавить rate limiting для API (django-ratelimit)
-- [ ] Настроить CSP (Content Security Policy)
-- [ ] Включить CSRF защиту для всех форм
+- [x] Переместить SECRET_KEY в переменные окружения
+- [x] Настроить ALLOWED_HOSTS для продакшена
+- [x] Включить HTTPS/HSTS (в prod)
+- [x] Настроить CORS для фронтенда
+- [x] Включить rate limiting для API (DRF throttling)
+- [x] Настроить CSP (Content Security Policy)
+- [ ] CSRF защита там, где требуется (для cookie-сессий; JWT не использует CSRF)
 
 ### 1.3 База данных
 **Приоритет: ВЫСОКИЙ**
 
-- [ ] Создать миграции для всех изменений
+- [x] Создать и применить миграции для всех приложений
 - [ ] Настроить резервное копирование БД
 - [ ] Оптимизировать индексы для частых запросов
 - [ ] Добавить `db_index=True` для полей поиска
@@ -44,7 +41,7 @@
 **Приоритет: ВЫСОКИЙ**
 
 - [ ] Настроить `django-storages` для Yandex Object Storage
-- [ ] Собрать статику: `python manage.py collectstatic`
+- [x] Сборка фронтенда Vite (build) + Django collectstatic для выдачи через Nginx
 - [ ] Настроить CDN для статических файлов
 - [ ] Оптимизировать изображения (логотипы и т.д.)
 
@@ -53,9 +50,9 @@
 
 - [ ] Настроить Redis для кэширования
 - [ ] Добавить кэширование для списка турниров
-- [ ] Настроить Gunicorn/uWSGI для Django
-- [ ] Минифицировать и сжать frontend (Vite build)
-- [ ] Настроить gzip компрессию
+- [x] Gunicorn для Django (в docker-контейнере)
+- [x] Минификация фронтенда (Vite build)
+- [x] gzip/brotli на уровне Nginx
 
 ### 1.6 Мониторинг и логирование
 **Приоритет: СРЕДНИЙ**
@@ -86,30 +83,91 @@
   - SSL сертификат (Let's Encrypt)
   - Балансировка нагрузки
 
-### 2.2 Настройка сервера
+### 2.2 Настройка сервера (Docker‑подход)
 
 ```bash
 # На виртуальной машине
 sudo apt update && sudo apt upgrade -y
-sudo apt install python3.11 python3-pip nginx redis-server -y
+# Установка Docker и compose plugin
+sudo apt install -y ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo $VERSION_CODENAME) stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker $USER
 
-# Установка зависимостей
-pip install -r requirements.txt
+# (Опционально) Nginx как reverse-proxy (если не используем ALB TLS termination)
+sudo apt install -y nginx
 
-# Настройка Nginx
-# Проксирование на Gunicorn (порт 8000)
-# Раздача статики из Object Storage
+# Клонирование репозитория / или pull артефактов из CI
+git clone <repo> /opt/sandmatch && cd /opt/sandmatch
 
-# Настройка systemd для автозапуска (пример)
-sudo systemctl enable beachplay
-sudo systemctl start beachplay
+# Подготовка .env
+cp .env.example .env
+# Обновите значения:
+# SECRET_KEY=...
+# DJANGO_SETTINGS_MODULE=sandmatch.settings.prod
+# DATABASE_URL=postgres://user:pass@<pg_host>:5432/<db>
+# ALLOWED_HOSTS=your.domain
+# CORS_ALLOWED_ORIGINS=["https://your.domain"]
+# CSRF_TRUSTED_ORIGINS=["https://your.domain"]
+# SIMPLE_JWT_ACCESS_LIFETIME=3600
+# SIMPLE_JWT_REFRESH_LIFETIME=2592000
+
+# Сборка фронтенда и бэкенда (если собираем на VM)
+cd frontend && npm ci && npm run build && cd ..
+
+# Запуск через docker compose
+docker compose up -d --build
+
+# Миграции и админ
+docker compose exec web python manage.py migrate --noinput
+docker compose exec web python manage.py collectstatic --noinput
+# docker compose exec web python manage.py createsuperuser
+
+# Настройка Nginx (пример upstream на контейнер web:8000)
+# server {
+#   listen 80;
+#   server_name your.domain;
+#   location /static/ { alias /opt/sandmatch/static/; }
+#   location / {
+#     proxy_pass http://127.0.0.1:8000;
+#     proxy_set_header Host $host;
+#     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#     proxy_set_header X-Forwarded-Proto $scheme;
+#   }
+# }
+
+# (Опционально) systemd unit для docker compose stack
+# /etc/systemd/system/sandmatch.service
+# [Unit]
+# Description=SandMatch Stack
+# Requires=docker.service
+# After=docker.service
+# [Service]
+# Type=oneshot
+# WorkingDirectory=/opt/sandmatch
+# ExecStart=/usr/bin/docker compose up -d
+# ExecStop=/usr/bin/docker compose down
+# RemainAfterExit=yes
+# [Install]
+# WantedBy=multi-user.target
+
+sudo systemctl daemon-reload
+sudo systemctl enable sandmatch
+sudo systemctl start sandmatch
 ```
 
 ### 2.3 CI/CD
 
-- [ ] Настроить GitHub Actions для автодеплоя
-- [ ] Создать staging окружение для тестирования
-- [ ] Настроить автоматический запуск тестов перед деплоем
+- [ ] GitHub Actions: линт/тесты + сборка фронтенда + docker build/push в Yandex Container Registry
+- [ ] Автодеплой на VM (ssh + docker compose pull/up)
+- [ ] Staging окружение (отдельная VM / namespace)
+- [ ] Обязательные тесты перед деплоем
 
 ## Этап 3: После публикации
 
@@ -207,10 +265,10 @@ class TournamentRegistration:
 ## Оценка сроков
 
 ### Критический путь (до первой публикации):
-- Аутентификация и безопасность: **5-7 дней**
+- Аутентификация и безопасность: **выполнено базово** (остался аудит ролей) — **1-2 дня**
 - Настройка инфраструктуры Yandex Cloud: **3-5 дней**
 - Деплой и тестирование: **2-3 дня**
-- **ИТОГО: 10-15 дней**
+- **ИТОГО: 6-10 дней**
 
 ### После публикации:
 - Публичный просмотр: **3-5 дней**
@@ -245,5 +303,6 @@ class TournamentRegistration:
 
 1. Утвердить план с заказчиком
 2. Создать аккаунт в Yandex Cloud
-3. Начать с Этапа 1.1 (Аутентификация)
-4. Параллельно подготовить инфраструктуру (Этап 2.1)
+3. Провести аудит ролей и прав на эндпоинтах (Этап 1.1)
+4. Подготовить инфраструктуру (Этап 2.1) и CI/CD (Этап 2.3)
+5. Настроить Object Storage или локальную раздачу статики через Nginx
