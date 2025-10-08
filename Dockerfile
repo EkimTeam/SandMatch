@@ -1,4 +1,13 @@
-FROM python:3.11-slim
+## Stage 1: build frontend with Node (Vite)
+FROM node:18-alpine AS frontend-builder
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+## Stage 2: Python runtime
+FROM python:3.11-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -10,7 +19,15 @@ WORKDIR /app
 COPY requirements.txt /app/
 RUN pip install -r requirements.txt
 
+# Copy project sources
 COPY . /app
 
-EXPOSE 8080
-CMD ["/bin/sh", "-c", "python manage.py migrate --noinput && python manage.py collectstatic --noinput || true && python manage.py runserver 0.0.0.0:8080"]
+# Copy built frontend assets into Django static tree
+RUN mkdir -p /app/static/frontend \
+ && cp -r /app/frontend/dist/* /app/static/frontend/ || true
+
+# Ensure entrypoint is executable
+RUN chmod +x /app/scripts/entrypoint.sh
+
+EXPOSE 8000
+ENTRYPOINT ["/app/scripts/entrypoint.sh"]
