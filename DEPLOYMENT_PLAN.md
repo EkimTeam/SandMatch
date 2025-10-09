@@ -1,7 +1,7 @@
 # План публикации BeachPlay в Yandex Cloud
 
 ## Текущее состояние
-- Приложение работает локально (localhost:8080)
+- Приложение работает локально (localhost:8000)
 - Django + PostgreSQL + React (Vite)
 - JWT-аутентификация реализована через `djangorestframework-simplejwt`
 - Разграничение прав доступа включено (права и роли в `apps.accounts` + DRF permissions)
@@ -113,8 +113,8 @@ cp .env.example .env
 # DJANGO_SETTINGS_MODULE=sandmatch.settings.prod
 # DATABASE_URL=postgres://user:pass@<pg_host>:5432/<db>
 # ALLOWED_HOSTS=your.domain
-# CORS_ALLOWED_ORIGINS=["https://your.domain"]
-# CSRF_TRUSTED_ORIGINS=["https://your.domain"]
+# CORS_ALLOWED_ORIGINS=https://your.domain
+# CSRF_TRUSTED_ORIGINS=https://your.domain
 # SIMPLE_JWT_ACCESS_LIFETIME=3600
 # SIMPLE_JWT_REFRESH_LIFETIME=2592000
 

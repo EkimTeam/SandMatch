@@ -6,7 +6,7 @@
 ## Что сделано
 - Бэкенд и инфраструктура
   - Django-проект со структурой приложений: `players`, `teams`, `tournaments`, `matches`.
-  - Docker + docker-compose, локальный запуск на http://localhost:8080.
+  - Docker + docker-compose, локальный запуск на http://localhost:8000.
   - Миграции Django для всех моделей, удалены устаревшие sql-файлы.
   - Пресеты: management-команды `seed_rulesets`, `reset_presets`.
   - Генерация кругового расписания: `generate_round_robin` (админка + команда).
@@ -55,7 +55,7 @@
   docker compose exec web python manage.py seed_rulesets
   docker compose exec web python manage.py generate_round_robin <tournament_id>
   ```
-- Админка: http://localhost:8080/sm-admin
+- Админка: http://localhost:8000/sm-admin
 
 ## Известные ограничения MVP0
 - Публичного шаринга ещё нет (только локальная выгрузка PNG).
