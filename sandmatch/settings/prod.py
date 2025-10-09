@@ -5,7 +5,8 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_HSTS_SECONDS = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
-SECURE_SSL_REDIRECT = True
+# Разрешить управлять редиректом на HTTPS через переменную окружения
+SECURE_SSL_REDIRECT = os.getenv("DJANGO_SECURE_SSL_REDIRECT", "true").lower() in {"1", "true", "yes"}
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 
@@ -50,7 +51,7 @@ else:
         }
     }
 
-# Hosts and CORS
+# Hosts and CORS/CSRF
 ALLOWED_HOSTS = [h.strip() for h in os.getenv("ALLOWED_HOSTS", "*").split(",") if h.strip()]
 
 # In prod explicitly disable allow all and read allowed origins from env
@@ -58,6 +59,11 @@ CORS_ALLOW_ALL_ORIGINS = False
 _cors = os.getenv("CORS_ALLOWED_ORIGINS", "").strip()
 if _cors:
     CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors.split(",") if o.strip()]
+
+# CSRF trusted origins (CSV: https://example.com,https://www.example.com)
+_csrf = os.getenv("CSRF_TRUSTED_ORIGINS", "").strip()
+if _csrf:
+    CSRF_TRUSTED_ORIGINS = [o.strip() for o in _csrf.split(",") if o.strip()]
 
 # Content Security Policy (baseline, adjust as needed)
 CSP_DEFAULT_SRC = ("'self'",)
