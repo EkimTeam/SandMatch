@@ -26,8 +26,9 @@ COPY . /app
 RUN mkdir -p /app/static/frontend \
  && cp -r /app/frontend/dist/* /app/static/frontend/ || true
 
-# Ensure entrypoint is executable
-RUN chmod +x /app/scripts/entrypoint.sh
+# Ensure entrypoint has LF endings and is executable (fix CRLF from Windows)
+RUN sed -i 's/\r$//' /app/scripts/entrypoint.sh \
+ && chmod +x /app/scripts/entrypoint.sh
 
 EXPOSE 8000
 ENTRYPOINT ["/app/scripts/entrypoint.sh"]
