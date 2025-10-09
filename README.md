@@ -15,9 +15,9 @@ docker compose up --build -d
 docker compose logs -f web
 ```
 
-Сервис будет доступен на http://localhost:8080
+Сервис будет доступен на http://localhost:8000
 
-Админка Django: http://localhost:8080/sm-admin
+Админка Django: http://localhost:8000/sm-admin
 
 Создать суперпользователя:
 
