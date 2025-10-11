@@ -44,5 +44,5 @@ Thumbs.db
 docs/
 
 # Static files will be populated by builder and collectstatic
-static/
+static/frontend/
 staticfiles/
