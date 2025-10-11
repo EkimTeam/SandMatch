@@ -1,6 +1,9 @@
 from django.contrib import admin
 from django.urls import path, include, re_path
 from django.views.generic import RedirectView, TemplateView
+from django.conf import settings
+from pathlib import Path
+from .vite import get_vite_assets
 from django.http import JsonResponse
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
@@ -29,6 +32,18 @@ from apps.players.views import PlayersListView
 # SPA View для React приложения
 class SPAView(TemplateView):
     template_name = "spa.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        # debug flag controls whether vite dev server is used in template
+        ctx["debug"] = settings.DEBUG
+        # Provide vite built assets (css/js) for production
+        try:
+            base_dir = Path(settings.BASE_DIR)
+            ctx["vite_assets"] = get_vite_assets(base_dir)
+        except Exception:
+            ctx["vite_assets"] = {"css": [], "js": []}
+        return ctx
 
 # Простое health-check представление
 def health(request):

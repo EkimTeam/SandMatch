@@ -138,3 +138,85 @@ docker compose exec web python manage.py recalc_stats <tournament_id>
 pip install pre-commit
 pre-commit install
 pre-commit run --all-files
+```
+
+## Локальный запуск
+
+### Вариант A: разработка с Vite dev server (рекомендуется)
+
+1) Поднимите backend (Docker):
+
+```bash
+docker compose up -d
+curl -i http://127.0.0.1:8000/api/health/
+```
+
+2) Запустите фронтенд:
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+3) Откройте SPA: http://localhost:3000
+
+Примечание: dev‑прокси в `frontend/vite.config.ts` направляет `/api`, `/static`, `/sm-admin` на `http://localhost:8000`.
+
+### Вариант B: без Vite dev, смотреть собранную версию
+
+1) Соберите фронтенд:
+
+```bash
+cd frontend && npm ci && npm run build && cd ..
+```
+
+2) Перезапустите backend (в образе уже есть копирование сборки в `static/frontend/`):
+
+```bash
+docker compose restart web
+```
+
+3) Откройте SPA: http://localhost:8000
+
+## Прод (VM): последовательность деплоя
+
+Эти шаги учитывают поддержку Vite manifest и загрузку ассетов через `vite_assets` в Django.
+
+1) Обновить код на VM:
+
+```bash
+cd /opt/sandmatch/app
+git pull --ff-only origin main
+```
+
+2) Полностью пересобрать и запустить контейнеры (обновится сборка фронтенда и появится `static/frontend/manifest.json`):
+
+```bash
+docker compose down
+docker compose build --no-cache
+docker compose up -d
+```
+
+3) Применить миграции и собрать статику (entrypoint делает это автоматически, но можно вручную):
+
+```bash
+docker compose exec web python manage.py migrate --noinput
+docker compose exec web python manage.py collectstatic --noinput
+```
+
+4) Проверки:
+
+```bash
+docker compose ps
+docker compose logs -n 100 web
+curl -i http://127.0.0.1:8000/api/health/
+```
+
+5) Если используется Nginx как reverse‑proxy:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+После этого публичная страница должна загружаться с подключёнными CSS/JS из `/static/frontend/`.
