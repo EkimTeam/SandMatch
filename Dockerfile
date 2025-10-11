@@ -19,10 +19,10 @@ WORKDIR /app
 COPY requirements.txt /app/
 RUN pip install -r requirements.txt
 
-# Copy project sources
+# Copy project sources FIRST
 COPY . /app
 
-# Copy built frontend assets from builder stage into Django static tree
+# Copy built frontend assets from builder stage AFTER (so they don't get overwritten)
 COPY --from=frontend-builder /app/frontend/dist /app/static/frontend
 
 # Ensure entrypoint has LF endings and is executable (fix CRLF from Windows)
