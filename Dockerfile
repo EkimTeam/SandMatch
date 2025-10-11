@@ -22,11 +22,8 @@ RUN pip install -r requirements.txt
 # Copy built frontend assets from builder stage FIRST
 COPY --from=frontend-builder /app/frontend/dist /app/static/frontend
 
-# Copy project sources (static/ is excluded via .dockerignore)
+# Copy project sources (static/frontend/ is excluded via .dockerignore, but static/img/ will be included)
 COPY . /app
-
-# Copy static assets separately (only img/, not frontend/)
-COPY static/img /app/static/img
 
 # Ensure entrypoint has LF endings and is executable (fix CRLF from Windows)
 RUN sed -i 's/\r$//' /app/scripts/entrypoint.sh \
