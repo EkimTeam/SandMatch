@@ -33,7 +33,7 @@ export default defineConfig({
     // Django will serve them under /static/frontend/
     // and read manifest.json to get hashed filenames
     rollupOptions: {
-      input: '/src/main.tsx',
+      input: 'src/main.tsx',
     },
   }
 })
