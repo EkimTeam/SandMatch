@@ -42,7 +42,3 @@ Thumbs.db
 # Docs
 *.md
 docs/
-
-# Static files will be populated by builder and collectstatic
-static/frontend/
-staticfiles/
