@@ -22,9 +22,8 @@ RUN pip install -r requirements.txt
 # Copy project sources
 COPY . /app
 
-# Copy built frontend assets into Django static tree
-RUN mkdir -p /app/static/frontend \
- && cp -r /app/frontend/dist/* /app/static/frontend/ || true
+# Copy built frontend assets from builder stage into Django static tree
+COPY --from=frontend-builder /app/frontend/dist /app/static/frontend
 
 # Ensure entrypoint has LF endings and is executable (fix CRLF from Windows)
 RUN sed -i 's/\r$//' /app/scripts/entrypoint.sh \
