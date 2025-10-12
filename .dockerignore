@@ -42,3 +42,7 @@ Thumbs.db
 # Docs
 *.md
 docs/
+
+# Static files (will be populated by COPY from builder and collectstatic)
+static/
+staticfiles/
