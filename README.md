@@ -2,6 +2,102 @@
 
 Веб‑сервис для организации и проведения турниров по пляжному теннису.
 
+## Runbook: прод‑деплой и обслуживание
+
+Ниже краткий чек‑лист, чтобы развернуть и поддерживать проект в проде.
+
+### 1) Предусловия
+
+- Установлены: Docker, Docker Compose, Nginx, Certbot (если нужен HTTPS).
+- Домен указывает на сервер (A‑запись), сертификаты выпущены.
+
+### 2) Обновление кода и сборка образов
+
+```bash
+cd /opt/sandmatch/app
+git pull --ff-only
+docker compose down
+docker compose build --no-cache
+docker compose up -d
+```
+
+### 3) Важные переменные окружения (.env)
+
+- `DJANGO_SETTINGS_MODULE=sandmatch.settings.prod`
+- `DJANGO_DEBUG=0`
+- `ALLOWED_HOSTS=beachplay.ru,127.0.0.1,localhost,<PUBLIC_IP>`
+- `CSRF_TRUSTED_ORIGINS=https://beachplay.ru`
+- `DATABASE_URL=postgres://user:pass@host:5432/db?sslmode=require` (или `POSTGRES_*`)
+- `DJANGO_SECRET_KEY=<случайная_строка>`
+
+### 4) Nginx
+
+В HTTPS‑сервере должен быть блок раздачи статики:
+
+```nginx
+location /static/ {
+    alias /opt/sandmatch/app/static/;
+    access_log off;
+}
+```
+
+API и страница приложения проксируются на `http://127.0.0.1:8000`.
+
+### 5) Синхронизация фронт‑ассетов
+
+Скрипт `scripts/entrypoint.sh` автоматически пополняет `/app/static/frontend` из
+`/app/frontend/dist` при старте контейнера, если каталог пуст. Это избавляет от
+ручного копирования после сборки образа.
+
+Если используется Nginx, он читает файлы с хоста:
+
+```
+/opt/sandmatch/app/static/frontend/
+```
+
+При первом запуске файлы появятся автоматически (за счёт entrypoint) в контейнере.
+Если `/opt/sandmatch/app/static` смонтирован как volume — файлы будут видны и на хосте.
+
+### 6) Миграции и статика
+
+`entrypoint.sh` выполняет:
+
+- `python manage.py migrate --noinput`
+- `python manage.py collectstatic --noinput` (не прерывает деплой при ошибках)
+
+### 7) Быстрые проверки после запуска
+
+```bash
+docker compose ps
+curl -i http://127.0.0.1:8000/api/health/
+curl -I https://beachplay.ru/static/frontend/manifest.json
+```
+
+### 8) Частые проблемы
+
+- Нет ассетов по домену → проверьте, что папка `/opt/sandmatch/app/static/frontend/` не пустая и
+  что в HTTPS‑блоке Nginx есть `location /static/ { alias /opt/sandmatch/app/static/; }`.
+- Пустая главная страница → проверьте, что `DJANGO_DEBUG=0` (иначе шаблон ждёт dev‑сервер Vite).
+- Админка/логин не работает → проверьте `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, время сервера,
+  наличие пользователей в БД; при необходимости создайте суперпользователя:
+  `docker compose exec -it web python manage.py createsuperuser`.
+
+### 9) Резервное копирование БД (пример)
+
+```bash
+docker compose exec -T db pg_dump \
+  -U ${POSTGRES_USER:-sandmatch} \
+  -d ${POSTGRES_DB:-sandmatch} \
+  -F c -f /tmp/backup_$(date +%F_%H%M).dump
+```
+
+### 10) Обновление данных из дампа (только предметные таблицы)
+
+Используйте `pg_restore --data-only` или отфильтрованный SQL для таблиц `players_*`,
+`teams_*`, `tournaments_*`, `matches_*` (служебные таблицы не трогаем). См. подробные шаги
+в истории развертывания или обратитесь к runbook деплоя данных.
+
+
 ## Быстрый старт (MVP0, локально в Docker)
 
 1) Скопируйте `.env.example` в `.env` и задайте переменные окружения (минимум `DJANGO_SECRET_KEY`).

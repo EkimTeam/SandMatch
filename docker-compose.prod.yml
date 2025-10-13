@@ -1,0 +1,14 @@
+services:
+  web:
+    image: ${WEB_IMAGE:-ghcr.io/EkimTeam/SandMatch/web}:${WEB_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    # Если нужен bind-монт для статики на хосте, раскомментируйте:
+    # volumes:
+    #   - ./static:/app/static
+
+# Пример использования:
+#   WEB_IMAGE=ghcr.io/EkimTeam/SandMatch/web WEB_IMAGE_TAG=main-<sha> docker compose -f docker-compose.prod.yml up -d
