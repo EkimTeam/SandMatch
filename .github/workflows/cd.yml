@@ -22,6 +22,7 @@ jobs:
       packages: write
     env:
       RESOLVED_IMAGE_TAG: ${{ github.event_name == 'push' && format('main-{0}', github.sha) || (inputs.image_tag != '' && inputs.image_tag || format('main-{0}', github.sha)) }}
+      RESOLVED_IMAGE_REPO: ${{ github.event_name == 'push' && 'ghcr.io/ekimteam/sandmatch/web' || inputs.image_repo }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -45,7 +46,7 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ inputs.image_repo }}:${{ env.RESOLVED_IMAGE_TAG }}
+            ${{ env.RESOLVED_IMAGE_REPO }}:${{ env.RESOLVED_IMAGE_TAG }}
           labels: |
             org.opencontainers.image.source=${{ github.repository }}
 
@@ -54,6 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RESOLVED_IMAGE_TAG: ${{ github.event_name == 'push' && format('main-{0}', github.sha) || (inputs.image_tag != '' && inputs.image_tag || format('main-{0}', github.sha)) }}
+      RESOLVED_IMAGE_REPO: ${{ github.event_name == 'push' && 'ghcr.io/ekimteam/sandmatch/web' || inputs.image_repo }}
     steps:
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.0.3
@@ -66,7 +68,7 @@ jobs:
           envs: IMAGE_REPO,IMAGE_TAG,GHCR_USERNAME,GHCR_TOKEN
           script: |
             set -euo pipefail
-            IMAGE_REPO='${{ github.event_name == 'push' && 'ghcr.io/EkimTeam/SandMatch/web' || inputs.image_repo }}'
+            IMAGE_REPO='${{ env.RESOLVED_IMAGE_REPO }}'
             IMAGE_TAG='${{ env.RESOLVED_IMAGE_TAG }}'
             GHCR_USERNAME='${{ secrets.GHCR_USERNAME || github.actor }}'
             GHCR_TOKEN='${{ secrets.GHCR_TOKEN || '' }}'
