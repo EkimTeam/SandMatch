@@ -162,7 +162,7 @@ sudo systemctl enable sandmatch
 sudo systemctl start sandmatch
 ```
 
-### 2.3 CI/CD
+### 2.3 CI/CD 
 
 - [ ] GitHub Actions: линт/тесты + сборка фронтенда + docker build/push в Yandex Container Registry
 - [ ] Автодеплой на VM (ssh + docker compose pull/up)
