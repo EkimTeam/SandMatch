@@ -1,16 +1,18 @@
 name: CD
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
     inputs:
       image_repo:
-        description: "Полное имя образа (например, ghcr.io/OWNER/REPO/web)"
+        description: "Полное имя образа (например, ghcr.io/EkimTeam/SandMatch/web)"
         required: true
         default: ghcr.io/EkimTeam/SandMatch/web
       image_tag:
-        description: "Тег образа (например, main-<sha> или vX.Y.Z)"
-        required: true
-        default: main-${{ github.sha }}
+        description: "Тег образа (например, main-<sha> или vX.Y.Z). Оставьте пустым, чтобы использовать текущий SHA."
+        required: false
+        default: ""
 
 jobs:
   build-and-push:
@@ -18,6 +20,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      RESOLVED_IMAGE_TAG: ${{ github.event_name == 'push' && format('main-{0}', github.sha) || (inputs.image_tag != '' && inputs.image_tag || format('main-{0}', github.sha)) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,13 +45,15 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ inputs.image_repo }}:${{ inputs.image_tag }}
+            ${{ inputs.image_repo }}:${{ env.RESOLVED_IMAGE_TAG }}
           labels: |
             org.opencontainers.image.source=${{ github.repository }}
 
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
+    env:
+      RESOLVED_IMAGE_TAG: ${{ github.event_name == 'push' && format('main-{0}', github.sha) || (inputs.image_tag != '' && inputs.image_tag || format('main-{0}', github.sha)) }}
     steps:
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.0.3
@@ -60,8 +66,8 @@ jobs:
           envs: IMAGE_REPO,IMAGE_TAG,GHCR_USERNAME,GHCR_TOKEN
           script: |
             set -euo pipefail
-            IMAGE_REPO='${{ inputs.image_repo }}'
-            IMAGE_TAG='${{ inputs.image_tag }}'
+            IMAGE_REPO='${{ github.event_name == 'push' && 'ghcr.io/EkimTeam/SandMatch/web' || inputs.image_repo }}'
+            IMAGE_TAG='${{ env.RESOLVED_IMAGE_TAG }}'
             GHCR_USERNAME='${{ secrets.GHCR_USERNAME || github.actor }}'
             GHCR_TOKEN='${{ secrets.GHCR_TOKEN || '' }}'
 
