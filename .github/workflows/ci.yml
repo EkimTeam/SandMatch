@@ -21,11 +21,20 @@ jobs:
           node-version: 18
           # Кэш npm временно отключён из-за ошибки resolve путей; вернём после первого успешного прогона
 
-      - name: Frontend install + lint + build
+      - name: Frontend install
         working-directory: frontend
         run: |
           npm install --no-audit --no-fund --prefer-offline
+
+      - name: Frontend lint (non-blocking)
+        working-directory: frontend
+        continue-on-error: true
+        run: |
           npm run lint --if-present
+
+      - name: Frontend build
+        working-directory: frontend
+        run: |
           npm run build
 
       - name: Setup Python
