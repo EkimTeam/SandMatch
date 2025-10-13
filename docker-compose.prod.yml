@@ -1,6 +1,6 @@
 services:
   web:
-    image: ${WEB_IMAGE:-ghcr.io/EkimTeam/SandMatch/web}:${WEB_IMAGE_TAG:-latest}
+    image: ${WEB_IMAGE:-ghcr.io/ekimteam/sandmatch/web}:${WEB_IMAGE_TAG:-latest}
     restart: unless-stopped
     env_file:
       - .env
@@ -11,4 +11,4 @@ services:
     #   - ./static:/app/static
 
 # Пример использования:
-#   WEB_IMAGE=ghcr.io/EkimTeam/SandMatch/web WEB_IMAGE_TAG=main-<sha> docker compose -f docker-compose.prod.yml up -d
+#   WEB_IMAGE=ghcr.io/ekimteam/sandmatch/web WEB_IMAGE_TAG=main-<sha> docker compose -f docker-compose.prod.yml up -d

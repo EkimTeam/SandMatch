@@ -51,7 +51,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            ghcr.io/EkimTeam/SandMatch/web
+            ghcr.io/ekimteam/sandmatch/web
           tags: |
             type=raw,value=ci-${{ github.sha }}
 
