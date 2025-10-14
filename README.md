@@ -223,7 +223,7 @@ docker compose exec web python manage.py reset_presets        # пересозд
 - Docker + docker-compose
 - Frontend: Vite + React 18 + TypeScript (Tailwind CSS настроен), html2canvas для экспорта PNG
 
-## Структура проекта
+## Структура проекта 
 
 ```
 SandMatch/
