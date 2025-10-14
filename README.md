@@ -98,6 +98,73 @@ docker compose exec -T db pg_dump \
 в истории развертывания или обратитесь к runbook деплоя данных.
 
 
+## Frontend: как работать локально и на проде
+
+### Локальная разработка (Vite dev server)
+
+Команды (в каталоге `frontend/`):
+
+```bash
+npm install
+npm run dev   # старт Vite на http://localhost:3000
+```
+
+Особенности:
+
+- При `DJANGO_DEBUG=1` (локально) шаблон `templates/spa.html` подключает Vite dev‑сервер:
+  - `http://localhost:3000/@vite/client`
+  - `http://localhost:3000/src/main.tsx`
+- Бэкенд (Django) продолжает обслуживать API на `http://127.0.0.1:8000`.
+- Рекомендуется настроить прокси в `frontend/vite.config.ts`, если нужно пробрасывать `/api/*` на 8000.
+
+Типовой запуск локально:
+
+```bash
+# Терминал 1 (бэкенд)
+docker compose up -d db
+DJANGO_DEBUG=1 python manage.py runserver 0.0.0.0:8000
+
+# Терминал 2 (фронтенд)
+cd frontend && npm run dev
+```
+
+### Продакшен (сборка и раздача ассетов)
+
+- Сборка фронта происходит в CI/CD: `vite build` на этапе сборки Docker‑образа.
+- Собранные файлы оказываются в контейнере в `/app/frontend/dist` и на старте
+  `scripts/entrypoint.sh` автоматически копируются в `/app/static/frontend`, если папка пуста.
+- Nginx на VM раздаёт статику из `alias /opt/sandmatch/app/static/;`,
+  поэтому файлы доступны по `https://<домен>/static/frontend/...`.
+- В проде `DJANGO_DEBUG=0`, и `templates/spa.html` подключает ассеты из манифеста (`manifest.json`).
+
+Ничего руками делать на VM не требуется: авто‑деплой сам собирает образ и
+устанавливает ассеты. Не используйте `docker-compose.override.yml` в проде.
+
+### Полезные команды и проверки
+
+```bash
+# Проверить манифест через Nginx
+curl -I https://beachplay.ru/static/frontend/manifest.json
+
+# Проверить наличие ассетов в контейнере
+docker compose exec web ls -la /app/static/frontend/
+
+# Здоровье бэкенда
+curl -i https://beachplay.ru/api/health/
+```
+
+### Troubleshooting фронтенда
+
+- Пустая страница после деплоя:
+  - Проверьте, что `DJANGO_DEBUG=0` в `.env` на VM.
+  - Убедитесь, что `manifest.json` отдаётся по `/static/frontend/manifest.json`.
+- 404 на `/static/frontend/*` по HTTPS:
+  - Убедитесь, что в HTTPS‑сервере Nginx есть `location /static/ { alias /opt/sandmatch/app/static/; }`.
+  - Проверьте, что на хосте `/opt/sandmatch/app/static/frontend/` не пустой (если смонтирован volume).
+- Локально ассеты не обновляются в браузере:
+  - «Жёсткая» перезагрузка (Ctrl+F5) или очистка кэша.
+
+
 ## Быстрый старт (MVP0, локально в Docker)
 
 1) Скопируйте `.env.example` в `.env` и задайте переменные окружения (минимум `DJANGO_SECRET_KEY`).

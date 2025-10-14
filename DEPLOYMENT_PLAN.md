@@ -1,3 +1,11 @@
+### 3.0 Frontend: локально и прод
+**Статус:** настроено
+
+- Локально: `frontend/npm run dev` (Vite) + `DJANGO_DEBUG=1` — шаблон подключает dev‑сервер.
+- Прод: `DJANGO_DEBUG=0` — шаблон подключает ассеты из `/static/frontend` по `manifest.json`.
+- Автосинхронизация ассетов: на старте `scripts/entrypoint.sh` копирует `/app/frontend/dist` → `/app/static/frontend` (если пусто).
+- Nginx: `location /static/ { alias /opt/sandmatch/app/static/; }` — раздаёт ассеты по HTTPS.
+
 # План публикации BeachPlay в Yandex Cloud
 
 ## Текущее состояние
@@ -164,8 +172,10 @@ sudo systemctl start sandmatch
 
 ### 2.3 CI/CD 
 
-- [ ] GitHub Actions: линт/тесты + сборка фронтенда + docker build/push в Yandex Container Registry
-- [ ] Автодеплой на VM (ssh + docker compose pull/up)
+- [x] GitHub Actions: CI (сборка фронтенда, линт неблокирующий, docker build)
+- [x] GitHub Actions: CD (push образа в GHCR и автодеплой на VM по SSH)
+- [x] Автодеплой на каждый push в `main` (PR в другие ветки запускают только CI)
+- [x] Rollback через запуск CD с предыдущим тегом `main-<sha>`
 - [ ] Staging окружение (отдельная VM / namespace)
 - [ ] Обязательные тесты перед деплоем
 

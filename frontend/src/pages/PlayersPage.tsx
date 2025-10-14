@@ -28,9 +28,14 @@ export const PlayersPage: React.FC = () => {
     <div>
       <div className="flex justify-between items-center gap-3 flex-wrap mb-6">
         <h1 className="text-2xl font-bold m-0">Игроки</h1>
-        <a href="/sm-admin/apps/players/player/add/" className="btn">
+        <button
+          type="button"
+          className="btn opacity-50 cursor-not-allowed pointer-events-none"
+          disabled
+          title="Доступ ограничен"
+        >
           Добавить игрока
-        </a>
+        </button>
       </div>
 
       {players.length > 0 ? (
