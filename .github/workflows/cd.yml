@@ -8,7 +8,7 @@ on:
       image_repo:
         description: "Полное имя образа (например, ghcr.io/EkimTeam/SandMatch/web)"
         required: true
-        default: ghcr.io/EkimTeam/SandMatch/web
+        default: ghcr.io/ekimteam/sandmatch/web
       image_tag:
         description: "Тег образа (например, main-<sha> или vX.Y.Z). Оставьте пустым, чтобы использовать текущий SHA."
         required: false
