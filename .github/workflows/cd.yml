@@ -65,6 +65,7 @@ jobs:
           username: ${{ secrets.PROD_SSH_USER }}
           port: ${{ secrets.PROD_SSH_PORT || '22' }}
           key: ${{ secrets.PROD_SSH_KEY }}
+          passphrase: ${{ secrets.PROD_SSH_PASSPHRASE || '' }}
           script_stop: true
           envs: IMAGE_REPO,IMAGE_TAG,GHCR_USERNAME,GHCR_TOKEN
           script: |
