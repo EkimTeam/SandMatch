@@ -47,6 +47,7 @@ jobs:
           push: true
           tags: |
             ${{ env.RESOLVED_IMAGE_REPO }}:${{ env.RESOLVED_IMAGE_TAG }}
+            ${{ env.RESOLVED_IMAGE_REPO }}:latest
           labels: |
             org.opencontainers.image.source=${{ github.repository }}
 
@@ -54,7 +55,7 @@ jobs:
     needs: build-and-push
     runs-on: ubuntu-latest
     env:
-      RESOLVED_IMAGE_TAG: ${{ github.event_name == 'push' && format('main-{0}', github.sha) || (inputs.image_tag != '' && inputs.image_tag || format('main-{0}', github.sha)) }}
+      RESOLVED_IMAGE_TAG: latest
       RESOLVED_IMAGE_REPO: ${{ github.event_name == 'push' && 'ghcr.io/ekimteam/sandmatch/web' || inputs.image_repo }}
     steps:
       - name: Deploy over SSH
