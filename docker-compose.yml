@@ -1,16 +1,15 @@
 services:
-  db:
-    image: postgres:14
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-sandmatch}
-      POSTGRES_USER: ${POSTGRES_USER:-sandmatch}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sandmatch}
-    ports:
-      - "5432:5432"
-    volumes:
-      - db_data:/var/lib/postgresql/data
-  
+  # db:  # Локальная БД (не используется с Managed PostgreSQL; оставить как пример)
+  #   image: postgres:14
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_DB: ${POSTGRES_DB:-sandmatch}
+  #     POSTGRES_USER: ${POSTGRES_USER:-sandmatch}
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sandmatch}
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - db_data:/var/lib/postgresql/data
   web:
     build: .
     restart: unless-stopped
@@ -18,8 +17,6 @@ services:
       - .env
     ports:
       - "8000:8000"
-    depends_on:
-      - db
     # volumes:
     #   - .:/app  # Включить после настройки File Sharing (Docker Desktop → Settings → Resources → File Sharing)
 
