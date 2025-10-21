@@ -24,7 +24,7 @@ export const KnockoutPage: React.FC = () => {
   const [data, setData] = useState<BracketData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [highlight, setHighlight] = useState<Set<number>>(new Set());
+  const [, setHighlight] = useState<Set<number>>(new Set());
   const [tMeta, setTMeta] = useState<any | null>(null);
   const [saving, setSaving] = useState(false);
   const exportRef = useRef<HTMLDivElement | null>(null);
@@ -545,6 +545,9 @@ export const KnockoutPage: React.FC = () => {
   const handleAddParticipant = useCallback(() => {
     setPickerOpen(true);
   }, []);
+  
+  // navigate используется для редиректов (не удалять)
+  void navigate;
 
   const handleParticipantSaved = useCallback(async () => {
     // Перезагрузить участников после добавления
