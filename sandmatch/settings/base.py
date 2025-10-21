@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "corsheaders",
     # Project apps
+    "apps.core",  # Общие утилиты и template tags
     "apps.accounts",
     "apps.players",
     "apps.teams",

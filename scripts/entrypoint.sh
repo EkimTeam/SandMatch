@@ -4,25 +4,25 @@ set -e
 # Миграции и сбор статики
 python manage.py migrate --noinput
 
-# Синхронизация Vite-ассетов в проде: если /app/static/frontend пусто или отсутствует,
-# копируем из собранного каталога /app/frontend/dist (скопированного в образ на этапе сборки)
+# Синхронизация Vite-ассетов в проде: копируем из /app/frontend/dist в staticfiles/frontend
+# Это должно происходить ДО collectstatic, чтобы Django мог их подхватить
 ASSETS_SRC="/app/frontend/dist"
-ASSETS_DST="/app/static/frontend"
+ASSETS_DST="/app/staticfiles/frontend"
 
-# Если назначения уже есть и не пусто — ничего не делаем и не предупреждаем
-if [ -d "$ASSETS_DST" ] && [ -n "$(ls -A "$ASSETS_DST" 2>/dev/null)" ]; then
-  echo "[entrypoint] Vite-ассеты уже присутствуют в $ASSETS_DST — пропускаю копирование"
+# Всегда копируем свежие ассеты при старте контейнера
+if [ -d "$ASSETS_SRC" ]; then
+  echo "[entrypoint] Копирую Vite-ассеты: $ASSETS_SRC → $ASSETS_DST"
+  mkdir -p "$ASSETS_DST"
+  # Очищаем старые ассеты и копируем новые
+  rm -rf "$ASSETS_DST"/*
+  cp -r "$ASSETS_SRC"/. "$ASSETS_DST"/
+  echo "[entrypoint] Vite-ассеты успешно скопированы"
 else
-  if [ -d "$ASSETS_SRC" ]; then
-    echo "[entrypoint] Пополняю статические файлы фронтенда: $ASSETS_SRC → $ASSETS_DST"
-    mkdir -p "$ASSETS_DST"
-    cp -r "$ASSETS_SRC"/. "$ASSETS_DST"/
-  else
-    # Источник отсутствует и назначение пустое — это потенциальная проблема
-    echo "[entrypoint] Внимание: не найден каталог собранных ассетов $ASSETS_SRC и папка назначения пуста ($ASSETS_DST)"
-  fi
+  echo "[entrypoint] ОШИБКА: не найден каталог собранных ассетов $ASSETS_SRC"
+  exit 1
 fi
 
+# Собираем остальную статику (admin, etc)
 python manage.py collectstatic --noinput || true
 
 # PROD: gunicorn (WSGI)

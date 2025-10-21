@@ -1,7 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { LoginPage } from './pages/LoginPage';
-import { HomePage } from './pages/HomePage';
 import { TournamentListPage } from './pages/TournamentListPage';
 import { TournamentDetailPage } from './pages/TournamentDetailPage';
 import { PlayersPage } from './pages/PlayersPage';
@@ -24,14 +23,14 @@ function App() {
       <Layout>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/" element={<RequireAuth><HomePage /></RequireAuth>} />
+          <Route path="/" element={<Navigate to="/tournaments" replace />} />
           <Route path="/tournaments" element={<RequireAuth><TournamentListPage /></RequireAuth>} />
           <Route path="/tournaments/:id/round_robin" element={<RequireAuth><TournamentDetailPage /></RequireAuth>} />
           <Route path="/tournaments/:id" element={<RequireAuth><TournamentDetailPage /></RequireAuth>} />
           <Route path="/tournaments/:id/knockout" element={<RequireAuth><KnockoutPage /></RequireAuth>} />
           <Route path="/players" element={<RequireAuth><PlayersPage /></RequireAuth>} />
           <Route path="/stats" element={<RequireAuth><StatsPage /></RequireAuth>} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<Navigate to="/tournaments" replace />} />
         </Routes>
       </Layout>
     </Router>

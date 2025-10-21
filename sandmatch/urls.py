@@ -2,8 +2,6 @@ from django.contrib import admin
 from django.urls import path, include, re_path
 from django.views.generic import RedirectView, TemplateView
 from django.conf import settings
-from pathlib import Path
-from .vite import get_vite_assets
 from django.http import JsonResponse
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
@@ -37,17 +35,48 @@ class SPAView(TemplateView):
         ctx = super().get_context_data(**kwargs)
         # debug flag controls whether vite dev server is used in template
         ctx["debug"] = settings.DEBUG
-        # Provide vite built assets (css/js) for production
-        try:
-            base_dir = Path(settings.BASE_DIR)
-            ctx["vite_assets"] = get_vite_assets(base_dir)
-        except Exception:
-            ctx["vite_assets"] = {"css": [], "js": []}
         return ctx
 
-# Простое health-check представление
+# Health-check с проверкой готовности
 def health(request):
-    return JsonResponse({"ok": True, "status": "healthy"})
+    """
+    Health check endpoint с проверкой:
+    - Django работает
+    - БД доступна
+    - Frontend ассеты на месте (опционально)
+    """
+    from pathlib import Path
+    from django.db import connection
+    
+    checks = {
+        "django": True,
+        "database": False,
+        "frontend_assets": False,
+    }
+    
+    # Проверка БД
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+        checks["database"] = True
+    except Exception:
+        pass
+    
+    # Проверка frontend ассетов (не критично)
+    try:
+        manifest_path = Path(settings.STATIC_ROOT) / "frontend" / "manifest.json"
+        checks["frontend_assets"] = manifest_path.exists()
+    except Exception:
+        pass
+    
+    # Сервис считается здоровым если Django и БД работают
+    is_healthy = checks["django"] and checks["database"]
+    
+    return JsonResponse({
+        "ok": is_healthy,
+        "status": "healthy" if is_healthy else "unhealthy",
+        "checks": checks
+    }, status=200 if is_healthy else 503)
 
 urlpatterns = [
     # Django Admin

@@ -84,7 +84,7 @@ frontend/npm-debug.log*
 frontend/yarn-debug.log*
 frontend/yarn-error.log*
 frontend/pnpm-lock.yaml
-frontend/package-lock.json
+# frontend/package-lock.json  # ВАЖНО: НЕ игнорировать для детерминированных сборок!
 
 # Generated exports/previews (if any)
 exports/

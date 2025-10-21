@@ -4,17 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BeachPlay - Турниры по теннису</title>
-    {% load static %}
+    {% load static vite_assets %}
     <link rel="icon" type="image/png" href="{% static 'img/logo.png' %}">
     
-    <!-- Vite development server assets -->
     {% if debug %}
-        <script type="module" src="http://localhost:3000/@vite/client"></script>
+        <!-- Vite development server -->
+        {% vite_hmr_client %}
         <script type="module" src="http://localhost:3000/src/main.tsx"></script>
     {% else %}
-        <!-- Production assets will be loaded here -->
-        {% for css in vite_assets.css %}
-            <link rel="stylesheet" href="{% static css %}">
+        <!-- Production CSS assets from Vite manifest -->
+        {% for css_url in vite_css_assets %}
+            <link rel="stylesheet" href="{{ css_url }}">
         {% endfor %}
     {% endif %}
 </head>
@@ -22,10 +22,8 @@
     <div id="root"></div>
     
     {% if not debug %}
-        <!-- Production JS assets -->
-        {% for js in vite_assets.js %}
-            <script type="module" src="{% static js %}"></script>
-        {% endfor %}
+        <!-- Production JS assets from Vite manifest -->
+        <script type="module" src="{% vite_asset 'src/main.tsx' %}"></script>
     {% endif %}
 </body>
 </html>
