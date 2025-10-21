@@ -14,7 +14,7 @@ if [ -d "$ASSETS_SRC" ]; then
   echo "[entrypoint] Копирую Vite-ассеты: $ASSETS_SRC → $ASSETS_DST"
   mkdir -p "$ASSETS_DST"
   # Очищаем старые ассеты и копируем новые
-  rm -rf "$ASSETS_DST"/*
+  rm -rf "$ASSETS_DST"/* 2>/dev/null || true
   cp -r "$ASSETS_SRC"/. "$ASSETS_DST"/
   echo "[entrypoint] Vite-ассеты успешно скопированы"
 else

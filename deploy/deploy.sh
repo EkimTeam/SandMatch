@@ -40,7 +40,9 @@ docker compose -f docker-compose.prod.yml build nginx
 # they may be stale. Clear frontend subdir to let entrypoint repopulate it.
 log "Clearing old frontend assets on host (./staticfiles/frontend)..."
 mkdir -p staticfiles/frontend || true
-rm -rf staticfiles/frontend/* || true
+# Используем sudo для удаления файлов, созданных контейнером
+sudo rm -rf staticfiles/frontend/* || true
+sudo chown -R $USER:$USER staticfiles/ || true
 
 log "Starting containers..."
 docker compose -f docker-compose.prod.yml up -d
