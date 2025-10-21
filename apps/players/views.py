@@ -3,6 +3,7 @@ from django.shortcuts import render
 from django.views.generic import ListView
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.csrf import csrf_exempt
 from django.db import IntegrityError, connection, transaction
 from django.db.models import Q
 import json
@@ -35,6 +36,7 @@ def search_players(request):
     })
 
 
+@csrf_exempt
 @require_POST
 def create_player(request):
     try:
