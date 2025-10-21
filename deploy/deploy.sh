@@ -17,20 +17,35 @@ log() { echo "[deploy] $*"; }
 # Rollback function
 rollback() {
   log "ROLLBACK: Starting rollback to previous version..."
-  
+
   if [ ! -f "$PREVIOUS_TAG_FILE" ]; then
     log "ERROR: No previous version found. Cannot rollback."
     exit 1
   fi
-  
-  PREVIOUS_TAG=$(cat "$PREVIOUS_TAG_FILE")
-  log "Rolling back to: ${WEB_IMAGE}:${PREVIOUS_TAG}"
-  
-  export WEB_IMAGE_TAG="$PREVIOUS_TAG"
-  
-  docker compose -f docker-compose.prod.yml pull web
+
+  PREV_REF=$(cat "$PREVIOUS_TAG_FILE" | tr -d '\n' | tr -d '\r')
+  if [ -z "$PREV_REF" ]; then
+    log "ERROR: Previous image reference is empty. Cannot rollback."
+    exit 1
+  fi
+
+  # PREV_REF format: registry/repo/web:tag (or without tag -> latest)
+  if [[ "$PREV_REF" == *":"* ]]; then
+    PREV_IMAGE="${PREV_REF%:*}"
+    PREV_TAG="${PREV_REF##*:}"
+  else
+    PREV_IMAGE="$PREV_REF"
+    PREV_TAG="latest"
+  fi
+
+  log "Rolling back to: ${PREV_IMAGE}:${PREV_TAG}"
+
+  export WEB_IMAGE="$PREV_IMAGE"
+  export WEB_IMAGE_TAG="$PREV_TAG"
+
+  docker compose -f docker-compose.prod.yml pull web || true
   docker compose -f docker-compose.prod.yml up -d
-  
+
   log "Rollback completed successfully"
   exit 0
 }
@@ -44,12 +59,17 @@ log "Using image: ${WEB_IMAGE}:${WEB_IMAGE_TAG}"
 
 cd "$APP_DIR"
 
-# Save current tag as previous (for future rollback)
+# Save current image reference as previous (for future rollback)
 if docker compose -f docker-compose.prod.yml ps web | grep -q "Up"; then
-  CURRENT_TAG=$(docker compose -f docker-compose.prod.yml images web | tail -n 1 | awk '{print $2}')
-  if [ -n "$CURRENT_TAG" ] && [ "$CURRENT_TAG" != "TAG" ]; then
-    echo "$CURRENT_TAG" > "$PREVIOUS_TAG_FILE"
-    log "Saved current version for rollback: $CURRENT_TAG"
+  CID=$(docker compose -f docker-compose.prod.yml ps -q web || true)
+  if [ -n "$CID" ]; then
+    CURRENT_REF=$(docker inspect -f '{{.Config.Image}}' "$CID" 2>/dev/null || true)
+    if [ -n "$CURRENT_REF" ]; then
+      echo "$CURRENT_REF" > "$PREVIOUS_TAG_FILE"
+      log "Saved current version for rollback: $CURRENT_REF"
+    else
+      log "WARNING: Could not determine current image for web"
+    fi
   fi
 fi
 
