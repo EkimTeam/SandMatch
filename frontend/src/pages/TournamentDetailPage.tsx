@@ -267,9 +267,6 @@ export const TournamentDetailPage: React.FC = () => {
     let setsLost = 0;
     let gamesWon = 0;
     let gamesLost = 0;
-    // Признак формата "только тай-брейк" (эвристика: один сет и он TB-only). При нём оставляем поведение игр как есть.
-    const sf: any = (t as any)?.set_format || {};
-    const onlyTiebreakMode = (sf?.max_sets === 1) && !!sf?.allow_tiebreak_only_set;
     for (const cIdx of g.cols) {
       if (cIdx === rIdx) continue;
       const pairs = getCellPairs(g, rIdx, cIdx, rI);

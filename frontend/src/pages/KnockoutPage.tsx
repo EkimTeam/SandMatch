@@ -17,6 +17,9 @@ export const KnockoutPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const tournamentId = useMemo(() => Number(id), [id]);
 
+  // navigate используется в обработчиках (не удалять)
+  void navigate;
+
   const [bracketId, setBracketId] = useState<number | null>(() => {
     const p = Number(searchParams.get('bracket'));
     return Number.isFinite(p) && p > 0 ? p : null;
@@ -545,9 +548,6 @@ export const KnockoutPage: React.FC = () => {
   const handleAddParticipant = useCallback(() => {
     setPickerOpen(true);
   }, []);
-  
-  // navigate используется для редиректов (не удалять)
-  void navigate;
 
   const handleParticipantSaved = useCallback(async () => {
     // Перезагрузить участников после добавления
