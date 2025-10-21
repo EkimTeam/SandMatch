@@ -63,7 +63,7 @@ const toRoman = (num: number) => {
 export const TournamentDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [t, setT] = useState<TournamentDetail | null>(null);
   const [lockParticipants, setLockParticipants] = useState(false);

@@ -22,8 +22,8 @@ interface Props {
 export const ParticipantPickerModal: React.FC<Props> = ({ open, onClose, tournamentId, groupIndex, rowIndex, isDoubles, usedPlayerIds, onSaved }) => {
   const [queryA, setQueryA] = useState('');
   const [queryB, setQueryB] = useState('');
-  const [loadingA, setLoadingA] = useState(false);
-  const [loadingB, setLoadingB] = useState(false);
+  const [, setLoadingA] = useState(false);
+  const [, setLoadingB] = useState(false);
   const [playersA, setPlayersA] = useState<Player[]>([]);
   const [playersB, setPlayersB] = useState<Player[]>([]);
   const [selectedA, setSelectedA] = useState<Player | null>(null);
