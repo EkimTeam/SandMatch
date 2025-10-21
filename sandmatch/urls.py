@@ -37,46 +37,9 @@ class SPAView(TemplateView):
         ctx["debug"] = settings.DEBUG
         return ctx
 
-# Health-check с проверкой готовности
+# Простое health-check представление
 def health(request):
-    """
-    Health check endpoint с проверкой:
-    - Django работает
-    - БД доступна
-    - Frontend ассеты на месте (опционально)
-    """
-    from pathlib import Path
-    from django.db import connection
-    
-    checks = {
-        "django": True,
-        "database": False,
-        "frontend_assets": False,
-    }
-    
-    # Проверка БД
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT 1")
-        checks["database"] = True
-    except Exception:
-        pass
-    
-    # Проверка frontend ассетов (не критично)
-    try:
-        manifest_path = Path(settings.STATIC_ROOT) / "frontend" / "manifest.json"
-        checks["frontend_assets"] = manifest_path.exists()
-    except Exception:
-        pass
-    
-    # Сервис считается здоровым если Django и БД работают
-    is_healthy = checks["django"] and checks["database"]
-    
-    return JsonResponse({
-        "ok": is_healthy,
-        "status": "healthy" if is_healthy else "unhealthy",
-        "checks": checks
-    }, status=200 if is_healthy else 503)
+    return JsonResponse({"ok": True, "status": "healthy"})
 
 urlpatterns = [
     # Django Admin

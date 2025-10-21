@@ -63,7 +63,7 @@ const toRoman = (num: number) => {
 export const TournamentDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [t, setT] = useState<TournamentDetail | null>(null);
   const [lockParticipants, setLockParticipants] = useState(false);
@@ -116,14 +116,13 @@ export const TournamentDetailPage: React.FC = () => {
     }
   };
 
-  // Функция загрузки изображения (не используется в текущей версии)
-  // const loadImage = (src: string): Promise<HTMLImageElement> => new Promise((resolve, reject) => {
-  //   const img = new Image();
-  //   img.crossOrigin = 'anonymous';
-  //   img.onload = () => resolve(img);
-  //   img.onerror = () => reject(new Error('Не удалось загрузить изображение'));
-  //   img.src = src;
-  // });
+  const loadImage = (src: string): Promise<HTMLImageElement> => new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Не удалось загрузить изображение'));
+    img.src = src;
+  });
 
   const handleShare = async () => {
     try {
@@ -267,6 +266,9 @@ export const TournamentDetailPage: React.FC = () => {
     let setsLost = 0;
     let gamesWon = 0;
     let gamesLost = 0;
+    // Признак формата "только тай-брейк" (эвристика: один сет и он TB-only). При нём оставляем поведение игр как есть.
+    const sf: any = (t as any)?.set_format || {};
+    const onlyTiebreakMode = (sf?.max_sets === 1) && !!sf?.allow_tiebreak_only_set;
     for (const cIdx of g.cols) {
       if (cIdx === rIdx) continue;
       const pairs = getCellPairs(g, rIdx, cIdx, rI);
