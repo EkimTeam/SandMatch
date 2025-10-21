@@ -33,6 +33,12 @@ export WEB_IMAGE_TAG
 log "Pulling image..."
 docker compose -f docker-compose.prod.yml pull web
 
+# IMPORTANT: we bind-mount ./static into the container. If old assets remain on host,
+# Nginx may serve stale JS/CSS. Wipe only the frontend subdir to let entrypoint repopulate it.
+log "Clearing old frontend assets on host (./static/frontend)..."
+mkdir -p static/frontend || true
+rm -rf static/frontend/* || true
+
 log "Starting containers..."
 docker compose -f docker-compose.prod.yml up -d web
 
