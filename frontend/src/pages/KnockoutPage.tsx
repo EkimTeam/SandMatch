@@ -27,7 +27,6 @@ export const KnockoutPage: React.FC = () => {
   const [data, setData] = useState<BracketData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [, setHighlight] = useState<Set<number>>(new Set());
   const [tMeta, setTMeta] = useState<any | null>(null);
   const [saving, setSaving] = useState(false);
   const exportRef = useRef<HTMLDivElement | null>(null);
@@ -545,10 +544,6 @@ export const KnockoutPage: React.FC = () => {
     }
   }, [tournamentId]);
 
-  const handleAddParticipant = useCallback(() => {
-    setPickerOpen(true);
-  }, []);
-
   const handleParticipantSaved = useCallback(async () => {
     // Перезагрузить участников после добавления
     await loadParticipants();
@@ -600,26 +595,6 @@ export const KnockoutPage: React.FC = () => {
     return dragDropState.participants.length < (tMeta?.planned_participants || 32);
   }, [dragDropState.participants.length, tMeta?.planned_participants]);
 
-  // Проверка: все ли участники размещены в сетке
-  const allParticipantsInBracket = useMemo(() => {
-    if (dragDropState.participants.length === 0) return false;
-    
-    // Подсчитать сколько участников в слотах (исключая BYE)
-    const participantsInSlots = dragDropState.dropSlots.filter(
-      slot => slot.currentParticipant !== null && slot.currentParticipant.name !== 'BYE'
-    ).length;
-    
-    // Подсчитать сколько BYE слотов
-    const byeSlots = dragDropState.dropSlots.filter(
-      slot => slot.currentParticipant?.name === 'BYE'
-    ).length;
-    
-    // Для олимпийской системы нужно заполнить все слоты первого раунда (кроме BYE)
-    const firstRoundSlots = dragDropState.dropSlots.length;
-    const requiredSlots = firstRoundSlots - byeSlots;
-    
-    return participantsInSlots === requiredSlots && requiredSlots > 0;
-  }, [dragDropState.participants, dragDropState.dropSlots]);
 
   // Обработчик фиксации участников
   const handleLockParticipants = useCallback(async (locked: boolean) => {
