@@ -40,15 +40,28 @@ docker compose -f docker-compose.prod.yml build nginx
 # they may be stale. Clear frontend subdir to let entrypoint repopulate it.
 log "Clearing old frontend assets on host (./staticfiles/frontend)..."
 mkdir -p staticfiles/frontend || true
-# Используем sudo для удаления файлов, созданных контейнером
-sudo rm -rf staticfiles/frontend/* || true
-sudo chown -R $USER:$USER staticfiles/ || true
+# Удаляем через временный root-контейнер, чтобы обойти проблемы прав
+docker run --rm \
+  -v "$(pwd)/staticfiles:/host" \
+  alpine:3 sh -c 'rm -rf /host/frontend/* 2>/dev/null || true'
+
+# На всякий случай возвращаем владение текущему пользователю (если возможно)
+chown -R "$USER":"$USER" staticfiles/ 2>/dev/null || true
 
 log "Starting containers..."
 docker compose -f docker-compose.prod.yml up -d
 
 log "Waiting for web service to be healthy..."
-sleep 5
+# Ждём здоровье web до 60 секунд
+for i in $(seq 1 12); do
+  state=$(docker inspect --format='{{json .State.Health.Status}}' $(docker compose -f docker-compose.prod.yml ps -q web) 2>/dev/null | tr -d '"')
+  if [ "$state" = "healthy" ]; then
+    echo "[deploy] web is healthy"
+    break
+  fi
+  echo "[deploy] waiting web health ($i/12)..."
+  sleep 5
+done
 
 log "Running migrations..."
 docker compose -f docker-compose.prod.yml exec -T web python manage.py migrate --noinput
