@@ -87,15 +87,15 @@ sleep 5
 log "Running migrations..."
 docker compose -f docker-compose.prod.yml exec -T web python manage.py migrate --noinput
 
-log "Smoke check..."
+log "Smoke check (inside web container)..."
 
-HEALTH_URL="http://127.0.0.1:8000/api/health/"
-MAX_ATTEMPTS=30
-SLEEP_SECS=2
+MAX_ATTEMPTS=40
+SLEEP_SECS=3
 attempt=1
-until curl -fsS --max-time 2 "$HEALTH_URL" >/dev/null; do
+until docker compose -f docker-compose.prod.yml exec -T web sh -c \
+  "curl -fsS --max-time 2 http://localhost:8000/api/health/ >/dev/null && test -f /app/staticfiles/frontend/manifest.json"; do
   if [ $attempt -ge $MAX_ATTEMPTS ]; then
-    log "ERROR: Health check failed after $((MAX_ATTEMPTS*SLEEP_SECS))s: $HEALTH_URL"
+    log "ERROR: Health check failed after $((MAX_ATTEMPTS*SLEEP_SECS))s inside web: http://localhost:8000/api/health/ or missing manifest.json"
     log "docker compose ps:" && docker compose -f docker-compose.prod.yml ps || true
     log "Last 200 lines of web logs:" && docker compose -f docker-compose.prod.yml logs --no-color --tail=200 web || true
     
@@ -113,13 +113,4 @@ until curl -fsS --max-time 2 "$HEALTH_URL" >/dev/null; do
   sleep $SLEEP_SECS
 done
 
-log "OK: health check passed"
-
-# Additional check: verify frontend assets are accessible
-log "Checking frontend assets..."
-MANIFEST_CHECK=$(docker compose -f docker-compose.prod.yml exec -T web test -f /app/staticfiles/frontend/manifest.json && echo "OK" || echo "FAIL")
-if [ "$MANIFEST_CHECK" = "FAIL" ]; then
-  log "WARNING: Frontend manifest.json not found, but continuing (may be expected in some setups)"
-else
-  log "OK: Frontend assets verified"
-fi
+log "OK: health check passed inside web"
