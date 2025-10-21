@@ -18,14 +18,14 @@ if [ -d "$ASSETS_SRC" ]; then
   cp -r "$ASSETS_SRC"/. "$ASSETS_DST"/
   echo "[entrypoint] Vite-ассеты успешно скопированы"
 else
-  echo "[entrypoint] ОШИБКА: не найден каталог собранных ассетов $ASSETS_SRC"
-  exit 1
+  echo "[entrypoint] ВНИМАНИЕ: не найден каталог собранных ассетов $ASSETS_SRC. Продолжаю запуск без копирования."
 fi
 
 # Собираем остальную статику (admin, etc)
 python manage.py collectstatic --noinput || true
 
 # PROD: gunicorn (WSGI)
+echo "[entrypoint] Запуск gunicorn..."
 exec gunicorn sandmatch.wsgi:application \
   --bind 0.0.0.0:8000 \
   --workers "${GUNICORN_WORKERS:-3}" \
