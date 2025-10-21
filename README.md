@@ -45,14 +45,14 @@ API и страница приложения проксируются на `http
 
 ### 5) Синхронизация фронт‑ассетов
 
-Скрипт `scripts/entrypoint.sh` автоматически пополняет `/app/static/frontend` из
+Скрипт `scripts/entrypoint.sh` автоматически пополняет `/app/staticfiles/frontend` из
 `/app/frontend/dist` при старте контейнера, если каталог пуст. Это избавляет от
 ручного копирования после сборки образа.
 
 Если используется Nginx, он читает файлы с хоста:
 
 ```
-/opt/sandmatch/app/static/frontend/
+/opt/sandmatch/app/staticfiles/frontend/
 ```
 
 При первом запуске файлы появятся автоматически (за счёт entrypoint) в контейнере.
@@ -75,8 +75,8 @@ curl -I https://beachplay.ru/static/frontend/manifest.json
 
 ### 8) Частые проблемы
 
-- Нет ассетов по домену → проверьте, что папка `/opt/sandmatch/app/static/frontend/` не пустая и
-  что в HTTPS‑блоке Nginx есть `location /static/ { alias /opt/sandmatch/app/static/; }`.
+- Нет ассетов по домену → проверьте, что папка `/opt/sandmatch/app/staticfiles/frontend/` не пустая и
+  что в HTTPS‑блоке Nginx есть `location /static/ { alias /opt/sandmatch/app/staticfiles/; }`.
 - Пустая главная страница → проверьте, что `DJANGO_DEBUG=0` (иначе шаблон ждёт dev‑сервер Vite).
 - Админка/логин не работает → проверьте `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, время сервера,
   наличие пользователей в БД; при необходимости создайте суперпользователя:
@@ -132,8 +132,8 @@ cd frontend && npm run dev
 
 - Сборка фронта происходит в CI/CD: `vite build` на этапе сборки Docker‑образа.
 - Собранные файлы оказываются в контейнере в `/app/frontend/dist` и на старте
-  `scripts/entrypoint.sh` автоматически копируются в `/app/static/frontend`, если папка пуста.
-- Nginx на VM раздаёт статику из `alias /opt/sandmatch/app/static/;`,
+  `scripts/entrypoint.sh` автоматически копируются в `/app/staticfiles/frontend`, если папка пуста.
+- Nginx на VM раздаёт статику из `alias /opt/sandmatch/app/staticfiles/;`,
   поэтому файлы доступны по `https://<домен>/static/frontend/...`.
 - В проде `DJANGO_DEBUG=0`, и `templates/spa.html` подключает ассеты из манифеста (`manifest.json`).
 
@@ -147,7 +147,7 @@ cd frontend && npm run dev
 curl -I https://beachplay.ru/static/frontend/manifest.json
 
 # Проверить наличие ассетов в контейнере
-docker compose exec web ls -la /app/static/frontend/
+docker compose exec web ls -la /app/staticfiles/frontend/
 
 # Здоровье бэкенда
 curl -i https://beachplay.ru/api/health/
@@ -159,8 +159,8 @@ curl -i https://beachplay.ru/api/health/
   - Проверьте, что `DJANGO_DEBUG=0` в `.env` на VM.
   - Убедитесь, что `manifest.json` отдаётся по `/static/frontend/manifest.json`.
 - 404 на `/static/frontend/*` по HTTPS:
-  - Убедитесь, что в HTTPS‑сервере Nginx есть `location /static/ { alias /opt/sandmatch/app/static/; }`.
-  - Проверьте, что на хосте `/opt/sandmatch/app/static/frontend/` не пустой (если смонтирован volume).
+  - Убедитесь, что в HTTPS‑сервере Nginx есть `location /static/ { alias /opt/sandmatch/app/staticfiles/; }`.
+  - Проверьте, что на хосте `/opt/sandmatch/app/staticfiles/frontend/` не пустой (если смонтирован volume).
 - Локально ассеты не обновляются в браузере:
   - «Жёсткая» перезагрузка (Ctrl+F5) или очистка кэша.
 
@@ -334,7 +334,7 @@ npm run dev
 cd frontend && npm ci && npm run build && cd ..
 ```
 
-2) Перезапустите backend (в образе уже есть копирование сборки в `static/frontend/`):
+2) Перезапустите backend (в образе уже есть копирование сборки в `staticfiles/frontend/`):
 
 ```bash
 docker compose restart web
@@ -353,7 +353,7 @@ cd /opt/sandmatch/app
 git pull --ff-only origin main
 ```
 
-2) Полностью пересобрать и запустить контейнеры (обновится сборка фронтенда и появится `static/frontend/manifest.json`):
+2) Полностью пересобрать и запустить контейнеры (обновится сборка фронтенда и появится `staticfiles/frontend/manifest.json`):
 
 ```bash
 docker compose down

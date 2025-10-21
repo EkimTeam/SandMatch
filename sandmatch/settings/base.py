@@ -78,7 +78,7 @@ DATABASES = {}
 # Static & Media
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
-STATICFILES_DIRS = [BASE_DIR / "static"]
+STATICFILES_DIRS = [BASE_DIR / "static"]  # Нужно для collectstatic (logo.png и др.)
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 

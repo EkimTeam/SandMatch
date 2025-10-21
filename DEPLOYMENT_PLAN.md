@@ -3,8 +3,8 @@
 
 - Локально: `frontend/npm run dev` (Vite) + `DJANGO_DEBUG=1` — шаблон подключает dev‑сервер.
 - Прод: `DJANGO_DEBUG=0` — шаблон подключает ассеты из `/static/frontend` по `manifest.json`.
-- Автосинхронизация ассетов: на старте `scripts/entrypoint.sh` копирует `/app/frontend/dist` → `/app/static/frontend` (если пусто).
-- Nginx: `location /static/ { alias /opt/sandmatch/app/static/; }` — раздаёт ассеты по HTTPS.
+- Автосинхронизация ассетов: на старте `scripts/entrypoint.sh` копирует `/app/frontend/dist` → `/app/staticfiles/frontend` (если пусто).
+- Nginx: `location /static/ { alias /opt/sandmatch/app/staticfiles/; }` — раздаёт ассеты по HTTPS.
 
 # План публикации BeachPlay в Yandex Cloud
 
