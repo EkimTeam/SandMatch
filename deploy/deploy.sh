@@ -6,6 +6,7 @@ set -euo pipefail
 # - repo cloned at /opt/sandmatch/app
 # - docker and docker compose plugin installed
 # - if GHCR images are private: docker login ghcr.io must be done before pulling
+
 # Auto-detect environment
 if [ -f "docker-compose.prod.yml" ]; then
     COMPOSE_FILE="docker-compose.prod.yml"
@@ -17,7 +18,6 @@ export COMPOSE_FILE
 log() { echo "[deploy] $*"; }
 log "Using compose file: $COMPOSE_FILE"
 
-# Остальной код БЕЗ -f flags
 WEB_IMAGE="${WEB_IMAGE:-ghcr.io/ekimteam/sandmatch/web}"
 WEB_IMAGE_TAG="${WEB_IMAGE_TAG:-latest}"
 APP_DIR="/opt/sandmatch/app"
@@ -42,8 +42,12 @@ export WEB_IMAGE_TAG
 log "Pulling image..."
 docker compose pull web
 
-# IMPORTANT: we bind-mount ./static into the container. If old assets remain on host,
-# Nginx may serve stale JS/CSS. Wipe only the frontend subdir to let entrypoint repopulate it.
+# Очистка старой структуры статики и подготовка новой
+log "Cleaning old static structure..."
+rm -rf staticfiles/ || true  # удалить старую папку staticfiles
+mkdir -p static/ || true     # убедиться что static существует
+
+# Очистка фронтенд ассетов (Vite build)
 log "Clearing old frontend assets on host (./static/frontend)..."
 mkdir -p static/frontend || true
 rm -rf static/frontend/* || true
@@ -53,6 +57,10 @@ docker compose up -d web
 
 log "Running migrations..."
 docker compose exec -T web python manage.py migrate --noinput
+
+# Сборка статики Django + фронтенда
+log "Collecting static files..."
+docker compose exec -T web python manage.py collectstatic --noinput --clear
 
 log "Smoke check..."
 
