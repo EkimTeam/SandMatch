@@ -1,0 +1,48 @@
+# Exclude files from Docker build context
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.env
+.venv
+venv/
+ENV/
+env/
+
+# Frontend build artifacts (will be copied from builder stage)
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docs
+*.md
+docs/
+
+# Static files (will be populated by COPY from builder and collectstatic)
+static/
+staticfiles/

@@ -1,4 +1,13 @@
-FROM python:3.11-slim
+## Stage 1: build frontend with Node (Vite)
+FROM node:18-alpine AS frontend-builder
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm install --no-audit --no-fund
+COPY frontend/ ./
+RUN npm run build
+
+## Stage 2: Python runtime
+FROM python:3.11-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -10,7 +19,16 @@ WORKDIR /app
 COPY requirements.txt /app/
 RUN pip install -r requirements.txt
 
+# Copy project sources
 COPY . /app
 
-EXPOSE 8080
-CMD ["/bin/sh", "-c", "python manage.py migrate --noinput && python manage.py collectstatic --noinput || true && python manage.py runserver 0.0.0.0:8080"]
+# Copy built frontend assets from builder stage into /app/frontend/dist
+# (entrypoint.sh will copy them to /app/static/frontend at container start)
+COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
+
+# Ensure entrypoint has LF endings and is executable (fix CRLF from Windows)
+RUN sed -i 's/\r$//' /app/scripts/entrypoint.sh \
+ && chmod +x /app/scripts/entrypoint.sh
+
+EXPOSE 8000
+ENTRYPOINT ["/app/scripts/entrypoint.sh"]

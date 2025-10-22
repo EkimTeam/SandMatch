@@ -4,7 +4,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>SandMatch</title>
+    <title>BeachPlay</title>
     <link rel="icon" type="image/png" sizes="32x32" href="{% static 'img/logo.png' %}">
     <link rel="icon" type="image/png" sizes="16x16" href="{% static 'img/logo.png' %}">
     <style>
@@ -34,8 +34,8 @@
   <body>
     <header>
       <div class="container" style="display:flex; gap:12px; align-items:center;">
-        <img src="{% static 'img/logo.png' %}?v={{ request.build_absolute_uri|slice:'-10:' }}" alt="SandMatch" class="logo" />
-        <div class="brand">SandMatch</div>
+        <img src="{% static 'img/logo.png' %}?v={{ request.build_absolute_uri|slice:'-10:' }}" alt="BeachPlay" class="logo" />
+        <div class="brand">BeachPlay</div>
         <nav>
           <a class="nav {% if request.path|slice:":12" == "/tournaments" or request.path == "/" %}active{% endif %}" href="/tournaments/">Турниры</a>
           <a class="nav {% if request.path|slice:":8" == "/players" %}active{% endif %}" href="/players/">Игроки</a>

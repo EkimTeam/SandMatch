@@ -1,0 +1,113 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --blue: #0d6efd;
+  --blue-hover: #0b5ed7;
+  --bg: #f7f7f9;
+  --text: #222;
+  --muted: #666;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  background: var(--bg);
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 
+               'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 
+               'Segoe UI Emoji', 'Segoe UI Symbol';
+}
+
+/* Базовые стили для совместимости с существующим дизайном */
+.btn {
+  @apply inline-block px-4 py-2 bg-primary-500 text-white no-underline rounded-lg border-0 cursor-pointer text-sm transition-colors duration-200;
+}
+
+.btn:hover {
+  @apply bg-primary-600;
+}
+
+.btn:disabled {
+  @apply bg-gray-500 cursor-not-allowed;
+}
+
+.card {
+  @apply bg-white border border-gray-200 rounded-lg p-4;
+}
+
+.meta {
+  @apply text-gray-600 text-sm;
+}
+
+.container {
+  @apply max-w-6xl mx-auto px-4;
+}
+
+/* Сетка карточек для десктопа, с адаптивом под планшеты и мобильные */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Кликабельные ячейки таблиц */
+.cell-click { cursor: pointer; transition: background-color .15s ease-in-out; }
+.cell-click:hover { background: #f2f6ff; }
+.cell-click.locked { cursor: not-allowed; }
+
+/* Кнопка-переключатель техстолбцов/ФИО */
+.toggle {
+  padding: 6px 10px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  transition: background-color .15s ease-in-out, border-color .15s ease-in-out;
+}
+.toggle:hover { background: #f5f5f5; border-color: #bdbdbd; }
+.toggle.active { background: #eef6ff; border-color: #93c5fd; }
+
+/* Скрытые столбцы */
+.hidden-col { display: none; }
+
+/* Стили для модальных окон */
+.modal-backdrop {
+  @apply fixed inset-0 bg-black bg-opacity-35 flex items-center justify-center p-4 z-50;
+}
+
+.modal {
+  @apply bg-white rounded-xl max-w-3xl w-full shadow-2xl max-h-screen overflow-y-auto;
+}
+
+.modal header {
+  @apply px-4 py-3 border-b border-gray-200 flex justify-between items-center;
+}
+
+.modal-body {
+  @apply p-4;
+}
+
+.modal footer {
+  @apply px-4 py-3 border-t border-gray-200 flex gap-3 justify-end;
+}
+
+.close-btn {
+  @apply bg-transparent border-0 text-lg cursor-pointer p-1 text-gray-600 hover:text-black;
+}
