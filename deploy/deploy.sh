@@ -6,12 +6,21 @@ set -euo pipefail
 # - repo cloned at /opt/sandmatch/app
 # - docker and docker compose plugin installed
 # - if GHCR images are private: docker login ghcr.io must be done before pulling
-
-WEB_IMAGE="${WEB_IMAGE:-ghcr.io/OWNER/REPO/web}"
-WEB_IMAGE_TAG="${WEB_IMAGE_TAG:-latest}"
-APP_DIR="/opt/sandmatch/app"
+# Auto-detect environment
+if [ -f "docker-compose.prod.yml" ]; then
+    COMPOSE_FILE="docker-compose.prod.yml"
+else
+    COMPOSE_FILE="docker-compose.yml" 
+fi
+export COMPOSE_FILE
 
 log() { echo "[deploy] $*"; }
+log "Using compose file: $COMPOSE_FILE"
+
+# Остальной код БЕЗ -f flags
+WEB_IMAGE="${WEB_IMAGE:-ghcr.io/ekimteam/sandmatch/web}"
+WEB_IMAGE_TAG="${WEB_IMAGE_TAG:-latest}"
+APP_DIR="/opt/sandmatch/app"
 
 log "Using image: ${WEB_IMAGE}:${WEB_IMAGE_TAG}"
 
@@ -31,7 +40,7 @@ export WEB_IMAGE
 export WEB_IMAGE_TAG
 
 log "Pulling image..."
-docker compose -f docker-compose.prod.yml pull web
+docker compose pull web
 
 # IMPORTANT: we bind-mount ./static into the container. If old assets remain on host,
 # Nginx may serve stale JS/CSS. Wipe only the frontend subdir to let entrypoint repopulate it.
@@ -40,10 +49,10 @@ mkdir -p static/frontend || true
 rm -rf static/frontend/* || true
 
 log "Starting containers..."
-docker compose -f docker-compose.prod.yml up -d web
+docker compose up -d web
 
 log "Running migrations..."
-docker compose -f docker-compose.prod.yml exec -T web python manage.py migrate --noinput
+docker compose exec -T web python manage.py migrate --noinput
 
 log "Smoke check..."
 
@@ -54,8 +63,8 @@ attempt=1
 until curl -fsS --max-time 2 "$HEALTH_URL" >/dev/null; do
   if [ $attempt -ge $MAX_ATTEMPTS ]; then
     log "Health check failed after $((MAX_ATTEMPTS*SLEEP_SECS))s: $HEALTH_URL"
-    log "docker compose ps:" && docker compose -f docker-compose.prod.yml ps || true
-    log "Last 200 lines of web logs:" && docker compose -f docker-compose.prod.yml logs --no-color --tail=200 web || true
+    log "docker compose ps:" && docker compose ps || true
+    log "Last 200 lines of web logs:" && docker compose logs --no-color --tail=200 web || true
     exit 1
   fi
   log "Waiting for web to become healthy... (attempt $attempt/$MAX_ATTEMPTS)"
