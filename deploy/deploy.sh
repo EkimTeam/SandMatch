@@ -86,7 +86,7 @@ if docker compose exec -T web python manage.py migrate --noinput; then
     log "Migrations completed successfully"
     
     # Удалить старые бэкапы (оставить последние 5)
-    find /tmp -name "sandmatch_backup_*.json" -type f | sort -r | tail -n +6 | xargs rm -f --
+    find /tmp -maxdepth 1 -name "sandmatch_backup_*.json" -type f | sort -r | tail -n +6 | xargs rm -f -- 2>/dev/null || true
 else
     log "ERROR: Migrations failed! Restoring from backup..."
     
