@@ -1,14 +1,14 @@
 services:
-  db:
-    image: postgres:14
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-sandmatch}
-      POSTGRES_USER: ${POSTGRES_USER:-sandmatch}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sandmatch}
-    volumes:
-      - db_data:/var/lib/postgresql/data
-    # ports не нужны - контейнеры общаются внутри сети
+#   db:
+#     image: postgres:14
+#     restart: unless-stopped
+#     environment:
+#       POSTGRES_DB: ${POSTGRES_DB:-sandmatch}
+#       POSTGRES_USER: ${POSTGRES_USER:-sandmatch}
+#       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sandmatch}
+#     volumes:
+#       - db_data:/var/lib/postgresql/data
+#     # ports не нужны - контейнеры общаются внутри сети
 
   web:
     image: ${WEB_IMAGE:-ghcr.io/ekimteam/sandmatch/web}:${WEB_IMAGE_TAG:-latest}
@@ -19,8 +19,8 @@ services:
       - "8000:8000"
     volumes:
       - ./static:/app/static
-    depends_on:
-      - db
-
-volumes:
-  db_data:
+#     depends_on:
+#       - db
+#
+# volumes:
+#   db_data:
