@@ -25,6 +25,8 @@ APP_DIR="/opt/sandmatch/app"
 log "Using image: ${WEB_IMAGE}:${WEB_IMAGE_TAG}"
 
 cd "$APP_DIR"
+sudo chown -R ubuntu:ubuntu static/ 2>/dev/null || true
+sudo chmod -R 775 static/ 2>/dev/null || true
 
 # Fetch latest repo state (idempotent)
 if git rev-parse --git-dir >/dev/null 2>&1; then
