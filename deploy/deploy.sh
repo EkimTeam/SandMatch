@@ -106,9 +106,34 @@ else
     exit 1
 fi
 
-# Сборка статики Django + фронтенда
-log "Collecting static files..."
-docker compose exec -T web python manage.py collectstatic --noinput --clear
+# Сборка статики Django (без удаления уже существующих Vite-ассетов)
+log "Collecting Django static files (no --clear)..."
+docker compose exec -T web python manage.py collectstatic --noinput
+
+# Страховка: убедиться, что Vite-ассеты присутствуют после collectstatic
+# Бывали случаи, когда при использовании --clear стирались файлы frontend/*.
+# Здесь мы явно докопируем их из образа в STATIC_ROOT внутри контейнера.
+log "Ensuring Vite assets exist in STATIC_ROOT after collectstatic..."
+docker compose exec -T web /bin/sh -lc '
+  set -e
+  SRC="/app/frontend/dist"
+  DST="/app/static/frontend"
+  if [ -d "$SRC" ]; then
+    mkdir -p "$DST"
+    cp -r "$SRC"/. "$DST"/
+    echo "[deploy] Vite assets synced: $SRC -> $DST"
+  else
+    echo "[deploy] WARNING: Vite build folder not found at $SRC"
+  fi
+'
+
+# Синхронизировать всю статику из контейнера на хост для Nginx (включая frontend/, admin/, rest_framework/, img/)
+log "Syncing STATIC_ROOT from container -> host (./static)..."
+mkdir -p static || true
+docker compose cp web:/app/static/. ./static/ || true
+sudo chown -R ubuntu:ubuntu static/ 2>/dev/null || true
+sudo chmod -R 775 static/ 2>/dev/null || true
+log "Static files are available on host at $(pwd)/static"
 
 # ============================================================================
 # 2. БАЗОВЫЙ HEALTH CHECK
