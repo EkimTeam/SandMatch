@@ -1,0 +1,36 @@
+services:
+  db:
+    image: postgres:14
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sandmatch}
+      POSTGRES_USER: ${POSTGRES_USER:-sandmatch}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sandmatch}
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sandmatch} -d ${POSTGRES_DB:-sandmatch}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    # Переопределяем поведение для локальной разработки
+    # 1) монтируем исходники для hot-reload
+    # 2) заменяем entrypoint на runserver (без gunicorn/entrypoint.sh)
+    volumes:
+      - .:/app
+      - /app/frontend/node_modules
+    environment:
+      DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-sandmatch.settings.local}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-1}
+      POSTGRES_HOST: ${POSTGRES_HOST:-db}
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+
+volumes:
+  db_data:
