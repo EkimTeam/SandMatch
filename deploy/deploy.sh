@@ -131,8 +131,10 @@ docker compose exec -T web /bin/sh -lc '
 log "Syncing STATIC_ROOT from container -> host (./static)..."
 mkdir -p static || true
 docker compose cp web:/app/static/. ./static/ || true
-sudo chown -R ubuntu:ubuntu static/ 2>/dev/null || true
-sudo chmod -R 775 static/ 2>/dev/null || true
+# Проставим максимально совместимые права (r-x для мира)
+sudo chown -R root:root static/ 2>/dev/null || true
+sudo find static -type d -exec chmod 755 {} + 2>/dev/null || true
+sudo find static -type f -exec chmod 644 {} + 2>/dev/null || true
 log "Static files are available on host at $(pwd)/static"
 
 # ============================================================================
@@ -175,52 +177,60 @@ SMOKE_TESTS=(
 for endpoint in "${SMOKE_TESTS[@]}"; do
     SMOKE_URL="https://beachplay.ru${endpoint}"
     log "Testing API: $SMOKE_URL"
-    
     RESPONSE_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$SMOKE_URL")
     if [ "$RESPONSE_CODE" -ne 200 ] && [ "$RESPONSE_CODE" -ne 401 ] && [ "$RESPONSE_CODE" -ne 403 ]; then
         log "ERROR: Smoke test failed for $SMOKE_URL (HTTP $RESPONSE_CODE)"
-        
-        # Детальная диагностика
         log "Detailed response:"
         curl -v "$SMOKE_URL" --max-time 5 2>&1 | head -20 || true
-        
         exit 1
     fi
     log "✅ API $endpoint: HTTP $RESPONSE_CODE"
 done
 
-# Проверка статики
-log "Testing static files..."
-STATIC_PATTERNS=(
-    "/static/frontend/assets/main-*.js"
-    "/static/frontend/assets/main-*.css"
-    "/static/img/logo.png"
-)
+# Проверка статики на основе manifest.json
+log "Testing static files from manifest.json..."
+HOST_STATIC_DIR="/opt/sandmatch/app/static/frontend"
+MANIFEST_PATH="$HOST_STATIC_DIR/manifest.json"
 
-for pattern in "${STATIC_PATTERNS[@]}"; do
-    # Найти реальное имя файла
-    if [ "$pattern" = "/static/img/logo.png" ]; then
-        STATIC_URL="https://beachplay.ru/static/img/logo.png"
-    else
-        # Для JS/CSS файлов найти актуальное имя с хешем
-        ACTUAL_FILE=$(find /opt/sandmatch/app/static/ -path "*${pattern/\*/}" -name "*.${pattern##*.}" | head -1)
-        if [ -n "$ACTUAL_FILE" ]; then
-            FILENAME=$(basename "$ACTUAL_FILE")
-            DIRNAME=$(basename "$(dirname "$ACTUAL_FILE")")
-            STATIC_URL="https://beachplay.ru/static/frontend/${DIRNAME}/${FILENAME}"
-        else
-            log "WARNING: Static file not found for pattern: $pattern"
-            continue
-        fi
-    fi
-    
-    if curl -fsS --max-time 5 "$STATIC_URL" > /dev/null; then
-        log "✅ Static file: $STATIC_URL"
-    else
-        log "ERROR: Static file not accessible: $STATIC_URL"
-        exit 1
-    fi
+if [ ! -f "$MANIFEST_PATH" ]; then
+  log "ERROR: manifest.json not found at $MANIFEST_PATH"
+  ls -la "$HOST_STATIC_DIR" || true
+  exit 1
+fi
+
+# Извлечём из manifest список основных CSS/JS файлов для src/main.tsx
+MAIN_JS=$(jq -r '."src/main.tsx".file // empty' "$MANIFEST_PATH" 2>/dev/null || true)
+MAIN_CSS=$(jq -r '."src/main.tsx".css[]? // empty' "$MANIFEST_PATH" 2>/dev/null || true)
+
+FILES_TO_CHECK=()
+[ -n "$MAIN_JS" ] && FILES_TO_CHECK+=("$MAIN_JS")
+for css in $MAIN_CSS; do FILES_TO_CHECK+=("$css"); done
+
+if [ ${#FILES_TO_CHECK[@]} -eq 0 ]; then
+  log "ERROR: No files found in manifest entry src/main.tsx"
+  jq -r 'keys[]' "$MANIFEST_PATH" | head -20 || true
+  exit 1
+fi
+
+for relpath in "${FILES_TO_CHECK[@]}"; do
+  URL="https://beachplay.ru/static/frontend/${relpath}"
+  if curl -fsS --max-time 10 "$URL" > /dev/null; then
+    log "✅ Static file accessible: $URL"
+  else
+    log "ERROR: Static file not accessible: $URL"
+    exit 1
+  fi
 done
+
+# Проверка логотипа
+LOGO_URL="https://beachplay.ru/static/img/logo.png"
+if curl -fsS --max-time 10 "$LOGO_URL" > /dev/null; then
+  log "✅ Logo accessible: $LOGO_URL"
+else
+  log "ERROR: Logo not accessible: $LOGO_URL"
+  ls -la /opt/sandmatch/app/static/img/ || true
+  exit 1
+fi
 
 # ============================================================================
 # 4. ГЛУБОКАЯ ПРОВЕРКА (DEEP HEALTH CHECK)
