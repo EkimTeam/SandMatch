@@ -47,6 +47,10 @@ local_settings.py
 staticfiles/
 media/
 
+static/frontend/
+static/admin/
+static/rest_framework/
+
 # Environments
 .env
 .env.*
@@ -73,6 +77,10 @@ Thumbs.db
 
 # Misc
 *.sqlite3
+*.sql
+*.dump
+*.bak
+*.backup
 
 # Frontend (Vite + React)
 frontend/node_modules/
@@ -84,7 +92,6 @@ frontend/npm-debug.log*
 frontend/yarn-debug.log*
 frontend/yarn-error.log*
 frontend/pnpm-lock.yaml
-frontend/package-lock.json
 
 # Generated exports/previews (if any)
 exports/
