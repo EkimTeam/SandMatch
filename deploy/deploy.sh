@@ -198,21 +198,50 @@ if [ ! -f "$MANIFEST_PATH" ]; then
   exit 1
 fi
 
-# Извлечём из manifest список основных CSS/JS файлов для src/main.tsx
-MAIN_JS=$(jq -r '."src/main.tsx".file // empty' "$MANIFEST_PATH" 2>/dev/null || true)
-MAIN_CSS=$(jq -r '."src/main.tsx".css[]? // empty' "$MANIFEST_PATH" 2>/dev/null || true)
+# Парсим manifest.json через Python (без зависимости от jq)
+log "Extracting asset paths from manifest..."
+ASSETS_CHECK=$(python3 <<EOF
+import json
+import sys
 
-FILES_TO_CHECK=()
-[ -n "$MAIN_JS" ] && FILES_TO_CHECK+=("$MAIN_JS")
-for css in $MAIN_CSS; do FILES_TO_CHECK+=("$css"); done
+try:
+    with open("$MANIFEST_PATH", "r") as f:
+        manifest = json.load(f)
+    
+    # Ищем entry для src/main.tsx
+    entry = manifest.get("src/main.tsx", {})
+    files = []
+    
+    # Добавляем основной JS файл
+    if "file" in entry:
+        files.append(entry["file"])
+    
+    # Добавляем CSS файлы
+    if "css" in entry:
+        files.extend(entry["css"])
+    
+    if not files:
+        print("ERROR: No files found in manifest entry src/main.tsx", file=sys.stderr)
+        sys.exit(1)
+    
+    # Выводим список файлов для проверки
+    for f in files:
+        print(f)
+    
+except Exception as e:
+    print(f"ERROR: Failed to parse manifest: {e}", file=sys.stderr)
+    sys.exit(1)
+EOF
+)
 
-if [ ${#FILES_TO_CHECK[@]} -eq 0 ]; then
-  log "ERROR: No files found in manifest entry src/main.tsx"
-  jq -r 'keys[]' "$MANIFEST_PATH" | head -20 || true
+if [ $? -ne 0 ]; then
+  log "$ASSETS_CHECK"
   exit 1
 fi
 
-for relpath in "${FILES_TO_CHECK[@]}"; do
+# Проверяем доступность каждого файла
+while IFS= read -r relpath; do
+  [ -z "$relpath" ] && continue
   URL="https://beachplay.ru/static/frontend/${relpath}"
   if curl -fsS --max-time 10 "$URL" > /dev/null; then
     log "✅ Static file accessible: $URL"
@@ -220,7 +249,7 @@ for relpath in "${FILES_TO_CHECK[@]}"; do
     log "ERROR: Static file not accessible: $URL"
     exit 1
   fi
-done
+done <<< "$ASSETS_CHECK"
 
 # Проверка логотипа
 LOGO_URL="https://beachplay.ru/static/img/logo.png"
