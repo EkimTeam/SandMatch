@@ -127,15 +127,19 @@ docker compose exec -T web /bin/sh -lc '
   fi
 '
 
-# Синхронизировать всю статику из контейнера на хост для Nginx (включая frontend/, admin/, rest_framework/, img/)
+# Синхронизируем STATIC_ROOT из контейнера на хост
 log "Syncing STATIC_ROOT from container -> host (./static)..."
-mkdir -p static || true
-docker compose cp web:/app/static/. ./static/ || true
-# Проставим максимально совместимые права (r-x для мира)
-sudo chown -R root:root static/ 2>/dev/null || true
-sudo find static -type d -exec chmod 755 {} + 2>/dev/null || true
-sudo find static -type f -exec chmod 644 {} + 2>/dev/null || true
-log "Static files are available on host at $(pwd)/static"
+docker cp app-web-1:/app/static/. ./static/ 2>/dev/null || {
+  log "WARNING: docker cp failed, trying with sudo..."
+  sudo docker cp app-web-1:/app/static/. ./static/ 2>/dev/null || true
+}
+
+# Исправляем права доступа после копирования
+log "Setting permissions on static files..."
+sudo chown -R ubuntu:ubuntu ./static/ 2>/dev/null || true
+sudo find ./static -type d -exec chmod 755 {} + 2>/dev/null || true
+sudo find ./static -type f -exec chmod 644 {} + 2>/dev/null || true
+log "Static files are available on host at /opt/sandmatch/app/static"
 
 # ============================================================================
 # 2. БАЗОВЫЙ HEALTH CHECK
