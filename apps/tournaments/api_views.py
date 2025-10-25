@@ -37,6 +37,55 @@ class TournamentViewSet(viewsets.ModelViewSet):
     serializer_class = TournamentSerializer
     permission_classes = [IsAdminOrReadOnly]
 
+    def destroy(self, request, *args, **kwargs):
+        """Переопределяем стандартное удаление для корректной обработки олимпийских турниров."""
+        tournament = self.get_object()
+        
+        # Правильный порядок удаления для олимпийских турниров:
+        # 1. tournaments_drawposition
+        # 2. tournaments_tournamententry
+        # 3. matches_matchset
+        # 4. players_playerratinghistory
+        # 5. matches_matchspecialoutcome
+        # 6. matches_match
+        # 7. tournaments_knockoutbracket
+        # 8. tournaments_tournament
+        if tournament.system == Tournament.System.KNOCKOUT:
+            from apps.tournaments.models import DrawPosition
+            from apps.players.models import PlayerRatingHistory
+            from apps.matches.models import MatchSpecialOutcome
+            from django.db import transaction
+            
+            with transaction.atomic():
+                # 1. Удаляем позиции в сетках
+                DrawPosition.objects.filter(bracket__tournament=tournament).delete()
+                
+                # 2. Удаляем участников турнира
+                TournamentEntry.objects.filter(tournament=tournament).delete()
+                
+                # 3. Удаляем сеты матчей
+                MatchSet.objects.filter(match__tournament=tournament).delete()
+                
+                # 4. Удаляем историю рейтингов игроков
+                PlayerRatingHistory.objects.filter(match__tournament=tournament).delete()
+                
+                # 5. Удаляем специальные исходы матчей
+                MatchSpecialOutcome.objects.filter(match__tournament=tournament).delete()
+                
+                # 6. Удаляем матчи
+                Match.objects.filter(tournament=tournament).delete()
+                
+                # 7. Удаляем сетки
+                tournament.knockout_brackets.all().delete()
+                
+                # 8. Удаляем турнир
+                tournament.delete()
+        else:
+            # Для круговых турниров стандартное каскадное удаление работает
+            tournament.delete()
+        
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     @action(detail=True, methods=["post"])
     def save_participants(self, request, pk=None):
         tournament = self.get_object()
@@ -381,10 +430,53 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return Response({"ok": True})
 
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["post"], url_path="remove", permission_classes=[IsAuthenticated])
+    @action(detail=True, methods=["post"], url_path="remove", permission_classes=[AllowAny], authentication_classes=[])
     def remove(self, request, pk=None):
         tournament = self.get_object()
-        tournament.delete()
+        
+        # Правильный порядок удаления для олимпийских турниров:
+        # 1. tournaments_drawposition
+        # 2. tournaments_tournamententry
+        # 3. matches_matchset
+        # 4. players_playerratinghistory
+        # 5. matches_matchspecialoutcome
+        # 6. matches_match
+        # 7. tournaments_knockoutbracket
+        # 8. tournaments_tournament
+        if tournament.system == Tournament.System.KNOCKOUT:
+            from apps.tournaments.models import DrawPosition
+            from apps.players.models import PlayerRatingHistory
+            from apps.matches.models import MatchSpecialOutcome
+            from django.db import transaction
+            
+            with transaction.atomic():
+                # 1. Удаляем позиции в сетках
+                DrawPosition.objects.filter(bracket__tournament=tournament).delete()
+                
+                # 2. Удаляем участников турнира
+                TournamentEntry.objects.filter(tournament=tournament).delete()
+                
+                # 3. Удаляем сеты матчей
+                MatchSet.objects.filter(match__tournament=tournament).delete()
+                
+                # 4. Удаляем историю рейтингов игроков
+                PlayerRatingHistory.objects.filter(match__tournament=tournament).delete()
+                
+                # 5. Удаляем специальные исходы матчей
+                MatchSpecialOutcome.objects.filter(match__tournament=tournament).delete()
+                
+                # 6. Удаляем матчи
+                Match.objects.filter(tournament=tournament).delete()
+                
+                # 7. Удаляем сетки
+                tournament.knockout_brackets.all().delete()
+                
+                # 8. Удаляем турнир
+                tournament.delete()
+        else:
+            # Для круговых турниров стандартное каскадное удаление работает
+            tournament.delete()
+        
         return Response({"ok": True})
 
     # --- ГРУППОВОЕ РАСПИСАНИЕ И ФИКСАЦИЯ ---

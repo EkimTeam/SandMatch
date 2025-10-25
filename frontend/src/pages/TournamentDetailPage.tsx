@@ -646,10 +646,8 @@ export const TournamentDetailPage: React.FC = () => {
     if (!confirm('Удалить турнир без возможности восстановления?')) return;
     setSaving(true);
     try {
-      await api.post(`/tournaments/${t.id}/remove/`);
-      {
-        nav('/tournaments');
-      }
+      await api.delete(`/tournaments/${t.id}/`);
+      nav('/tournaments');
     } finally {
       setSaving(false);
     }
