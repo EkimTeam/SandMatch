@@ -97,6 +97,7 @@ export const TournamentDetailPage: React.FC = () => {
       const s = document.createElement('script');
       s.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
       s.async = true;
+      s.crossOrigin = 'anonymous';
       s.onload = () => resolve();
       s.onerror = () => reject(new Error('Не удалось загрузить html2canvas'));
       document.head.appendChild(s);
