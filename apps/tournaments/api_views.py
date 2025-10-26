@@ -1013,6 +1013,145 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return Response({"ok": True, "match": MatchSerializer(m).data})
 
     @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="match_save_score_free_format", permission_classes=[IsAuthenticated])
+    def match_save_score_free_format(self, request, pk=None):
+        """
+        Сохранить счёт матча в свободном формате.
+        
+        Ожидает JSON:
+        {
+            "match_id": int,
+            "sets": [
+                {
+                    "index": 1,
+                    "games_1": 5,
+                    "games_2": 4,
+                    "tb_loser_points": 3,  // Опционально, только очки проигравшего
+                    "is_tiebreak_only": false  // Для чемпионского TB
+                },
+                ...
+            ]
+        }
+        
+        Backend автоматически рассчитывает очки победителя в TB.
+        Для олимпийской системы валидирует возможность определения победителя.
+        """
+        from apps.tournaments.free_format_utils import (
+            process_free_format_set,
+            validate_knockout_winner,
+            is_free_format
+        )
+        from django.utils import timezone
+        from django.db import transaction as db_transaction
+        
+        tournament: Tournament = self.get_object()
+        
+        # Блокировка для завершённых турниров
+        if tournament.status == Tournament.Status.COMPLETED:
+            return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
+        
+        # Проверка формата турнира
+        if not is_free_format(tournament.set_format):
+            return Response({
+                "error": "Этот endpoint только для турниров со свободным форматом"
+            }, status=400)
+        
+        match_id = request.data.get("match_id")
+        sets_data = request.data.get("sets", [])
+        
+        if not match_id:
+            return Response({"error": "match_id обязателен"}, status=400)
+        
+        if not sets_data:
+            return Response({"error": "Необходимо указать хотя бы один сет"}, status=400)
+        
+        try:
+            m = Match.objects.get(id=int(match_id), tournament=tournament)
+        except Match.DoesNotExist:
+            return Response({"error": "Матч не найден"}, status=404)
+        
+        # Обработка сетов с автозаполнением TB
+        try:
+            processed_sets = []
+            tiebreak_points = tournament.set_format.tiebreak_points
+            decider_tiebreak_points = tournament.set_format.decider_tiebreak_points
+            
+            for set_data in sets_data:
+                processed_set = process_free_format_set(set_data, tiebreak_points, decider_tiebreak_points)
+                processed_sets.append(processed_set)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=400)
+        
+        # Валидация победителя для олимпийской системы
+        if tournament.system == Tournament.System.KNOCKOUT:
+            valid, error_msg, winner_index = validate_knockout_winner(processed_sets)
+            if not valid:
+                return Response({"error": error_msg}, status=400)
+        else:
+            # Для круговой системы ничьи разрешены
+            winner_index = None
+            # Определяем победителя по разнице геймов (если есть)
+            total_games_1 = sum(
+                1 if s.get('is_tiebreak_only') and s.get('tb_1', 0) > s.get('tb_2', 0)
+                else s.get('games_1', 0)
+                for s in processed_sets
+            )
+            total_games_2 = sum(
+                1 if s.get('is_tiebreak_only') and s.get('tb_2', 0) > s.get('tb_1', 0)
+                else s.get('games_2', 0)
+                for s in processed_sets
+            )
+            if total_games_1 > total_games_2:
+                winner_index = 1
+            elif total_games_2 > total_games_1:
+                winner_index = 2
+        
+        # Сохранение в БД
+        with db_transaction.atomic():
+            # Удаляем старые сеты
+            MatchSet.objects.filter(match=m).delete()
+            
+            # Создаём новые сеты
+            for set_data in processed_sets:
+                MatchSet.objects.create(
+                    match=m,
+                    index=set_data['index'],
+                    games_1=set_data['games_1'],
+                    games_2=set_data['games_2'],
+                    tb_1=set_data.get('tb_1'),
+                    tb_2=set_data.get('tb_2'),
+                    is_tiebreak_only=set_data.get('is_tiebreak_only', False)
+                )
+            
+            # Обновляем матч
+            m.finished_at = timezone.now()
+            m.status = Match.Status.COMPLETED
+            
+            if winner_index == 1:
+                m.winner = m.team_1
+            elif winner_index == 2:
+                m.winner = m.team_2
+            else:
+                m.winner = None  # Ничья
+            
+            m.save(update_fields=["finished_at", "winner", "status", "updated_at"])
+            
+            # Продвинуть победителя в плей-офф (только для олимпийской)
+            if m.bracket and winner_index:
+                try:
+                    from apps.tournaments.services.knockout import advance_winner
+                    advance_winner(m)
+                except Exception as e:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Failed to advance winner for match {m.id}: {e}")
+                    return Response({
+                        "error": f"Не удалось продвинуть победителя: {str(e)}"
+                    }, status=500)
+        
+        return Response({"ok": True, "match": MatchSerializer(m).data})
+
+    @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="match_cancel", permission_classes=[AllowAny], authentication_classes=[])
     def match_cancel(self, request, pk=None):
         tournament: Tournament = self.get_object()
@@ -1050,6 +1189,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
                         "wins": data.get("wins", 0),
                         "sets_won": data.get("sets_won", 0),
                         "sets_lost": data.get("sets_lost", 0),
+                        "sets_drawn": data.get("sets_drawn", 0),
                         "games_won": data.get("games_won", 0),
                         "games_lost": data.get("games_lost", 0),
                     }

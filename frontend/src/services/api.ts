@@ -238,6 +238,24 @@ export const matchApi = {
     const response = await api.post<Match>(`/matches/${id}/save_score/`, { score1, score2 });
     return response.data;
   },
+  // Сохранить счёт в свободном формате
+  saveFreeFormatScore: async (
+    tournamentId: number,
+    matchId: number,
+    sets: Array<{
+      index: number;
+      games_1: number;
+      games_2: number;
+      tb_loser_points: number | null;
+      is_tiebreak_only: boolean;
+    }>
+  ): Promise<{ ok: boolean; match: any }> => {
+    const response = await api.post(
+      `/tournaments/${tournamentId}/match_save_score_free_format/`,
+      { match_id: matchId, sets }
+    );
+    return response.data;
+  },
   // Сохранить счёт (плей-офф, через tournament action)
   savePlayoffScore: async (
     tournamentId: number,

@@ -2,8 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { formatDate } from '../services/date';
 import { ParticipantPickerModal } from '../components/ParticipantPickerModal';
-import api, { tournamentApi } from '../services/api';
+import api, { tournamentApi, matchApi } from '../services/api';
 import { MatchScoreModal } from '../components/MatchScoreModal';
+import FreeFormatScoreModal from '../components/FreeFormatScoreModal';
 
 type Participant = {
   id: number;
@@ -79,12 +80,13 @@ export const TournamentDetailPage: React.FC = () => {
     team2: { id: number; name: string };
     matchTeam1Id?: number | null;
     matchTeam2Id?: number | null;
+    existingSets?: any[];
   }>(null);
   // Расписание по группам: { [groupIndex]: [ [a,b], [c,d] ][] } — туры, каждый тур: массив пар [a,b]
   const [schedule, setSchedule] = useState<Record<number, [number, number][][]>>({});
   const [scheduleLoaded, setScheduleLoaded] = useState(false);
   // Данные групп с бэкенда: { [group_index]: { stats: { [team_id]: {...} }, placements: { [team_id]: place } } }
-  const [groupStats, setGroupStats] = useState<Record<number, { stats: Record<number, { wins: number; sets_won: number; sets_lost: number; games_won: number; games_lost: number }>; placements: Record<number, number> }>>({});
+  const [groupStats, setGroupStats] = useState<Record<number, { stats: Record<number, { wins: number; sets_won: number; sets_lost: number; sets_drawn?: number; games_won: number; games_lost: number }>; placements: Record<number, number> }>>({});
   const exportRef = useRef<HTMLDivElement | null>(null);
 
   // Динамическая загрузка html2canvas с CDN
@@ -193,7 +195,7 @@ export const TournamentDetailPage: React.FC = () => {
     rIdx: number,
     cIdx: number,
     rI: number
-  ): { left: number; right: number; tbOnly: boolean }[] => {
+  ): { left: number; right: number; tbOnly: boolean; isTB?: boolean }[] => {
     if (!t) return [];
     const aId = g.entries[rI]?.team?.id;
     const bId = g.entries[cIdx - 1]?.team?.id;
@@ -228,13 +230,13 @@ export const TournamentDetailPage: React.FC = () => {
         const t1 = s.tb_1 ?? 0; const t2 = s.tb_2 ?? 0;
         const w = winnerId === team1Id ? t1 : t2;
         const l = winnerId === team1Id ? t2 : t1;
-        return { left: aIsWinner ? w : l, right: aIsWinner ? l : w, tbOnly: true };
+        return { left: aIsWinner ? w : l, right: aIsWinner ? l : w, tbOnly: true, isTB: true };
       }
       const g1 = s.games_1 ?? 0; const g2 = s.games_2 ?? 0;
       let w = winnerId === team1Id ? g1 : g2;
       let l = winnerId === team1Id ? g2 : g1;
       if (winnerId && w < l) { const tmp = w; w = l; l = tmp; }
-      return { left: aIsWinner ? w : l, right: aIsWinner ? l : w, tbOnly: false };
+      return { left: aIsWinner ? w : l, right: aIsWinner ? l : w, tbOnly: false, isTB: false };
     });
     return pairs;
   };
@@ -246,7 +248,8 @@ export const TournamentDetailPage: React.FC = () => {
     const groupAgg = groupStats[g.idx];
     if (teamId && groupAgg && groupAgg.stats && groupAgg.stats[teamId]) {
       const st = groupAgg.stats[teamId];
-      const setsTotal = st.sets_won + st.sets_lost;
+      // Учитываем ничьи в знаменателе для соотношения сетов
+      const setsTotal = st.sets_won + st.sets_lost + (st.sets_drawn || 0);
       const gamesTotal = st.games_won + st.games_lost;
       const setsRatio = setsTotal > 0 ? (st.sets_won / setsTotal).toFixed(2) : '0.00';
       const gamesRatio = gamesTotal > 0 ? (st.games_won / gamesTotal).toFixed(2) : '0.00';
@@ -442,16 +445,36 @@ export const TournamentDetailPage: React.FC = () => {
         if (w && typeof w === 'object') return w.id ?? null;
         return null;
       })();
+      
+      // Для свободного формата без победителя (ничья) - показываем счет без ориентации
       if (!winnerId) {
-        // TODO: доработать для онлайн счета с учетом winner_id=NULL
-        // Если матч live и winner пока нет — всё равно показываем индикатор live
-        const liveDot = (
-          <span style={{ display: 'inline-block', width: '0.6em', height: '0.6em', background: '#dc3545', borderRadius: '50%', marginRight: 6, verticalAlign: 'middle' }} />
-        );
         if (m.status === 'live') {
+          const liveDot = (
+            <span style={{ display: 'inline-block', width: '0.6em', height: '0.6em', background: '#dc3545', borderRadius: '50%', marginRight: 6, verticalAlign: 'middle' }} />
+          );
           return <span style={{ fontWeight: 700 }}>{liveDot}счет error</span>;
         }
-        return <span style={{ fontWeight: 700 }}>счет error</span>;
+        
+        // Ничья - показываем счет как есть (для свободного формата)
+        const aId = g.entries[rI]?.team?.id;
+        const team1Id = m.team_1?.id;
+        const aIsTeam1 = (aId === team1Id);
+        
+        const scoreStr = sets.map((s: any) => {
+          if (s.is_tiebreak_only) {
+            const t1 = s.tb_1 ?? 0; const t2 = s.tb_2 ?? 0;
+            const left = aIsTeam1 ? t1 : t2;
+            const right = aIsTeam1 ? t2 : t1;
+            return `${left}:${right}TB`;
+          }
+          const g1 = s.games_1 ?? 0; const g2 = s.games_2 ?? 0;
+          const left = aIsTeam1 ? g1 : g2;
+          const right = aIsTeam1 ? g2 : g1;
+          const tbShown = (s.tb_1 != null && s.tb_2 != null) ? Math.min(s.tb_1, s.tb_2) : null;
+          return tbShown != null ? `${left}:${right}(${tbShown})` : `${left}:${right}`;
+        }).join(', ');
+        
+        return <span style={{ fontWeight: 700 }}>{scoreStr}</span>;
       }
       const team1Id = m.team_1?.id;
       const team2Id = m.team_2?.id;
@@ -470,14 +493,14 @@ export const TournamentDetailPage: React.FC = () => {
       const aIsWinner = isWinnerCell; // если false — в этой ячейке должен быть зеркальный счёт
       const scoreStr = sets.map((s: any) => {
         if (s.is_tiebreak_only) {
-          // Чемпионский TB — сначала соберём как Winner:Loser
+          // Чемпионский TB — добавляем "TB" в конце
           const t1 = s.tb_1 ?? 0; const t2 = s.tb_2 ?? 0;
           const w = winnerId === team1Id ? t1 : t2;
           const l = winnerId === team1Id ? t2 : t1;
           // Зеркалим при необходимости
           const left = aIsWinner ? w : l;
           const right = aIsWinner ? l : w;
-          return `${left}:${right}`;
+          return `${left}:${right}TB`;
         }
         // Обычный сет — собрать как Winner:Loser из games_1/games_2 без принудительного переворота
         const g1 = s.games_1 ?? 0; const g2 = s.games_2 ?? 0;
@@ -709,58 +732,99 @@ export const TournamentDetailPage: React.FC = () => {
           <div style={{ fontSize: 28, fontWeight: 700 }}>{t.name}</div>
           <div style={{ fontSize: 16, color: '#666' }}>{formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}</div>
         </div>
-        {/* Модалка ввода счёта (унифицированная) */}
-        <MatchScoreModal
-          isOpen={!!scoreInput}
-          onClose={() => setScoreInput(null)}
-          setFormat={(t as any)?.set_format}
-          onSaveFull={async (sets) => {
-            if (!t || !scoreInput) return;
-            // Блокировка для завершённых турниров
-            if (t.status === 'completed') return;
-            // Приводим порядок сторон к порядку матча на бэкенде: Match.team_1 / Match.team_2
-            let setsToSend = sets;
-            const mt1 = scoreInput.matchTeam1Id ?? null;
-            const uiT1 = scoreInput.team1?.id ?? null;
-            if (mt1 && uiT1 && mt1 !== uiT1) {
-              // UI team1 соответствует backend team_2 — нужно поменять стороны в каждом сете
-              setsToSend = sets.map(s => ({
-                index: s.index,
-                games_1: s.games_2,
-                games_2: s.games_1,
-                tb_1: s.tb_2 ?? null,
-                tb_2: s.tb_1 ?? null,
-                is_tiebreak_only: s.is_tiebreak_only,
-              }));
-            }
-            await api.post(`/tournaments/${t.id}/match_save_score_full/`, {
-              match_id: scoreInput.matchId,
-              sets: setsToSend,
-            });
-            // обновить таблицу сразу после сохранения
-            setScoreInput(null);
-            await refreshGroupStats();
-            reload();
-          }}
-          onSave={async (winnerTeamId, loserTeamId, gamesWinner, gamesLoser) => {
-            // Блокировка для завершённых турниров
-            if (t?.status === 'completed') return;
-            
-            if (!scoreInput) return;
-            await api.post(`/tournaments/${t.id}/match_save_score/`, {
-              match_id: scoreInput.matchId,
-              id_team_first: winnerTeamId,
-              id_team_second: loserTeamId,
-              games_first: gamesWinner,
-              games_second: gamesLoser,
-            });
-            setScoreInput(null);
-            await refreshGroupStats();
-            reload();
-          }}
-          team1={scoreInput?.team1 || null}
-          team2={scoreInput?.team2 || null}
-        />
+        {/* Модалка ввода счёта - выбор между обычной и свободным форматом */}
+        {scoreInput && (t as any)?.set_format?.games_to === 0 ? (
+          <FreeFormatScoreModal
+            match={{
+              id: scoreInput.matchId,
+              team_1: { 
+                id: scoreInput.team1.id, 
+                name: scoreInput.team1.name,
+                display_name: scoreInput.team1.name 
+              },
+              team_2: { 
+                id: scoreInput.team2.id, 
+                name: scoreInput.team2.name,
+                display_name: scoreInput.team2.name 
+              },
+              sets: scoreInput.existingSets || []
+            }}
+            tournament={t}
+            onClose={() => setScoreInput(null)}
+            onSave={async (sets) => {
+              if (!t) return;
+              if (t.status === 'completed') return;
+              
+              // Преобразуем данные для API
+              const setsToSend = sets
+                .filter(s => s.custom_enabled || s.champion_tb_enabled)
+                .map(s => ({
+                  index: s.index,
+                  games_1: s.games_1,
+                  games_2: s.games_2,
+                  tb_loser_points: s.champion_tb_enabled ? null : s.tb_loser_points,
+                  is_tiebreak_only: s.champion_tb_enabled
+                }));
+              
+              await matchApi.saveFreeFormatScore(t.id, scoreInput.matchId, setsToSend);
+              setScoreInput(null);
+              await refreshGroupStats();
+              reload();
+            }}
+          />
+        ) : (
+          <MatchScoreModal
+            isOpen={!!scoreInput}
+            onClose={() => setScoreInput(null)}
+            setFormat={(t as any)?.set_format}
+            onSaveFull={async (sets) => {
+              if (!t || !scoreInput) return;
+              // Блокировка для завершённых турниров
+              if (t.status === 'completed') return;
+              // Приводим порядок сторон к порядку матча на бэкенде: Match.team_1 / Match.team_2
+              let setsToSend = sets;
+              const mt1 = scoreInput.matchTeam1Id ?? null;
+              const uiT1 = scoreInput.team1?.id ?? null;
+              if (mt1 && uiT1 && mt1 !== uiT1) {
+                // UI team1 соответствует backend team_2 — нужно поменять стороны в каждом сете
+                setsToSend = sets.map(s => ({
+                  index: s.index,
+                  games_1: s.games_2,
+                  games_2: s.games_1,
+                  tb_1: s.tb_2 ?? null,
+                  tb_2: s.tb_1 ?? null,
+                  is_tiebreak_only: s.is_tiebreak_only,
+                }));
+              }
+              await api.post(`/tournaments/${t.id}/match_save_score_full/`, {
+                match_id: scoreInput.matchId,
+                sets: setsToSend,
+              });
+              // обновить таблицу сразу после сохранения
+              setScoreInput(null);
+              await refreshGroupStats();
+              reload();
+            }}
+            onSave={async (winnerTeamId, loserTeamId, gamesWinner, gamesLoser) => {
+              // Блокировка для завершённых турниров
+              if (t?.status === 'completed') return;
+              
+              if (!scoreInput) return;
+              await api.post(`/tournaments/${t.id}/match_save_score/`, {
+                match_id: scoreInput.matchId,
+                id_team_first: winnerTeamId,
+                id_team_second: loserTeamId,
+                games_first: gamesWinner,
+                games_second: gamesLoser,
+              });
+              setScoreInput(null);
+              await refreshGroupStats();
+              reload();
+            }}
+            team1={scoreInput?.team1 || null}
+            team2={scoreInput?.team2 || null}
+          />
+        )}
 
       {/* Диалог действий по ячейке счёта */}
       {scoreDialog && (
@@ -815,12 +879,18 @@ export const TournamentDetailPage: React.FC = () => {
                       const bTeam = g?.entries[scoreDialog.b - 1]?.team as any;
                       if (!aTeam?.id || !bTeam?.id) return;
                       const fmt = (team: any) => showFullName ? (team.full_name || '—') : (team.display_name || team.name || '—');
+                      
+                      // Найти матч и получить существующие сеты
+                      const match = t?.matches?.find(m => m.id === scoreDialog.matchId);
+                      const existingSets = match?.sets || [];
+                      
                       setScoreInput({
                         matchId: scoreDialog.matchId!,
                         team1: { id: aTeam.id, name: fmt(aTeam) },
                         team2: { id: bTeam.id, name: fmt(bTeam) },
                         matchTeam1Id: scoreDialog.matchTeam1Id ?? null,
                         matchTeam2Id: scoreDialog.matchTeam2Id ?? null,
+                        existingSets: existingSets,
                       });
                       setScoreDialog(null); // Закрываем диалог действий, чтобы не перекрывал модалку счета
                     }}
@@ -845,10 +915,16 @@ export const TournamentDetailPage: React.FC = () => {
                       const bTeam = g?.entries[scoreDialog.b - 1]?.team as any;
                       if (!aTeam?.id || !bTeam?.id) return;
                       const fmt = (team: any) => showFullName ? (team.full_name || '—') : (team.display_name || team.name || '—');
+                      
+                      // Найти матч и получить существующие сеты
+                      const match = t?.matches?.find(m => m.id === scoreDialog.matchId);
+                      const existingSets = match?.sets || [];
+                      
                       setScoreInput({
                         matchId: scoreDialog.matchId!,
                         team1: { id: aTeam.id, name: fmt(aTeam) },
                         team2: { id: bTeam.id, name: fmt(bTeam) },
+                        existingSets: existingSets,
                       });
                       setScoreDialog(null);
                     }}

@@ -15,22 +15,29 @@ def _ensure_stats(entry: TournamentEntry) -> TournamentEntryStats:
 
 
 def _aggregate_for_group(tournament: Tournament, group_index: int) -> Dict[int, dict]:
-    """Возвращает словарь team_id -> агрегаты (wins, sets_won, sets_lost, games_won, games_lost) по группе."""
-    agg = defaultdict(lambda: {"wins": 0, "sets_won": 0, "sets_lost": 0, "games_won": 0, "games_lost": 0})
+    """Возвращает словарь team_id -> агрегаты (wins, sets_won, sets_lost, sets_drawn, games_won, games_lost) по группе."""
+    agg = defaultdict(lambda: {"wins": 0, "sets_won": 0, "sets_lost": 0, "sets_drawn": 0, "games_won": 0, "games_lost": 0})
 
     matches = (
         Match.objects.filter(tournament=tournament, stage=Match.Stage.GROUP, group_index=group_index)
         .prefetch_related("sets")
     )
-    # Определим, является ли формат турнира режимом "только тай-брейк"
-    # Эвристика: max_sets == 1 и allow_tiebreak_only_set == True
+    # Определим, является ли формат турнира режимом "только тай-брейк" или свободным форматом
     set_format = getattr(tournament, "set_format", None)
     only_tiebreak_mode = False
+    is_free_format = False
+    
     if set_format is not None:
         try:
+            # Свободный формат: games_to == 0 и max_sets == 0
+            is_free_format = (int(getattr(set_format, "games_to", 6)) == 0 and 
+                            int(getattr(set_format, "max_sets", 1)) == 0)
+            
+            # Режим только тайбрейк
             only_tiebreak_mode = bool(getattr(set_format, "allow_tiebreak_only_set", False)) and int(getattr(set_format, "max_sets", 1)) == 1
         except Exception:
             only_tiebreak_mode = False
+            is_free_format = False
 
     for m in matches:
         t1 = m.team_1_id
@@ -39,39 +46,54 @@ def _aggregate_for_group(tournament: Tournament, group_index: int) -> Dict[int, 
         sets_won_2 = 0
         games_1 = 0
         games_2 = 0
+        
         for s in m.sets.all().order_by("index"):
             if s.is_tiebreak_only:
                 # Чемпионский TB: всегда 1:0/0:1 по сетам.
-                if s.games_1 > s.games_2:
+                if s.tb_1 > s.tb_2:
                     sets_won_1 += 1
                     # В геймы добавляем 1:0 (кроме режима only_tiebreak, где считаем TB очками)
                     if only_tiebreak_mode:
-                        games_1 += s.games_1
-                        games_2 += s.games_2
+                        games_1 += s.tb_1
+                        games_2 += s.tb_2
                     else:
                         games_1 += 1
                         # проигравшей стороне ничего не добавляем
-                elif s.games_2 > s.games_1:
+                elif s.tb_2 > s.tb_1:
                     sets_won_2 += 1
                     if only_tiebreak_mode:
-                        games_1 += s.games_1
-                        games_2 += s.games_2
+                        games_1 += s.tb_1
+                        games_2 += s.tb_2
                     else:
                         games_2 += 1
             else:
                 # Обычный сет
-                if s.games_1 > s.games_2:
-                    sets_won_1 += 1
-                elif s.games_2 > s.games_1:
-                    sets_won_2 += 1
-                # При равенстве геймов смотрим тай-брейк
-                elif (s.tb_1 is not None) and (s.tb_2 is not None):
-                    if s.tb_1 > s.tb_2:
+                if is_free_format:
+                    # Для свободного формата: учитываем ничьи отдельно
+                    if s.games_1 > s.games_2:
                         sets_won_1 += 1
-                    elif s.tb_2 > s.tb_1:
+                    elif s.games_2 > s.games_1:
                         sets_won_2 += 1
+                    elif s.games_1 == s.games_2:
+                        # Ничья - добавляем в sets_drawn для обеих команд
+                        agg[t1]["sets_drawn"] += 1
+                        agg[t2]["sets_drawn"] += 1
+                else:
+                    # Стандартная логика
+                    if s.games_1 > s.games_2:
+                        sets_won_1 += 1
+                    elif s.games_2 > s.games_1:
+                        sets_won_2 += 1
+                    # При равенстве геймов смотрим тай-брейк
+                    elif (s.tb_1 is not None) and (s.tb_2 is not None):
+                        if s.tb_1 > s.tb_2:
+                            sets_won_1 += 1
+                        elif s.tb_2 > s.tb_1:
+                            sets_won_2 += 1
+                
                 games_1 += s.games_1
                 games_2 += s.games_2
+        
         agg[t1]["sets_won"] += sets_won_1
         agg[t1]["sets_lost"] += sets_won_2
         agg[t1]["games_won"] += games_1
@@ -80,11 +102,14 @@ def _aggregate_for_group(tournament: Tournament, group_index: int) -> Dict[int, 
         agg[t2]["sets_lost"] += sets_won_1
         agg[t2]["games_won"] += games_2
         agg[t2]["games_lost"] += games_1
-        # Победы по победителю матча
-        if m.winner_id == t1:
-            agg[t1]["wins"] += 1
-        elif m.winner_id == t2:
-            agg[t2]["wins"] += 1
+        # Примечание: sets_drawn уже добавлены внутри цикла по сетам
+        
+        # Победы по победителю матча (для свободного формата всегда 0)
+        if not is_free_format:
+            if m.winner_id == t1:
+                agg[t1]["wins"] += 1
+            elif m.winner_id == t2:
+                agg[t2]["wins"] += 1
 
     return agg
 
@@ -100,7 +125,7 @@ def recalc_group_stats(tournament: Tournament, group_index: int) -> int:
     entries = TournamentEntry.objects.filter(tournament=tournament, group_index=group_index).select_related("team")
     for e in entries:
         st = _ensure_stats(e)
-        data = agg.get(e.team_id, {"wins": 0, "sets_won": 0, "sets_lost": 0, "games_won": 0, "games_lost": 0})
+        data = agg.get(e.team_id, {"wins": 0, "sets_won": 0, "sets_lost": 0, "sets_drawn": 0, "games_won": 0, "games_lost": 0})
         st.wins = data["wins"]
         st.sets_won = data["sets_won"]
         st.sets_lost = data["sets_lost"]
@@ -139,8 +164,9 @@ def rank_group(tournament: Tournament, group_index: int, agg: Dict[int, dict]) -
         name_by_team[e.team_id] = str(e.team)
 
     def key(team_id: int):
-        d = agg.get(team_id, {"wins": 0, "sets_won": 0, "sets_lost": 0, "games_won": 0, "games_lost": 0})
-        sets_total = d["sets_won"] + d["sets_lost"]
+        d = agg.get(team_id, {"wins": 0, "sets_won": 0, "sets_lost": 0, "sets_drawn": 0, "games_won": 0, "games_lost": 0})
+        # Для соотношения сетов учитываем ничьи
+        sets_total = d["sets_won"] + d["sets_lost"] + d.get("sets_drawn", 0)
         games_total = d["games_won"] + d["games_lost"]
         sets_ratio = (d["sets_won"] / sets_total) if sets_total > 0 else 0.0
         games_ratio = (d["games_won"] / games_total) if games_total > 0 else 0.0
@@ -214,8 +240,9 @@ def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[
         team = e.team
         team_obj_by_id[team_id] = team
         name_by_team[team_id] = str(team)
-        d = agg.get(team_id, {"wins": 0, "sets_won": 0, "sets_lost": 0, "games_won": 0, "games_lost": 0})
-        st = d["sets_won"] + d["sets_lost"]
+        d = agg.get(team_id, {"wins": 0, "sets_won": 0, "sets_lost": 0, "sets_drawn": 0, "games_won": 0, "games_lost": 0})
+        # Для соотношения сетов учитываем ничьи: выигранные / (выигранные + проигранные + ничьи)
+        st = d["sets_won"] + d["sets_lost"] + d["sets_drawn"]
         gt = d["games_won"] + d["games_lost"]
         sets_ratio[team_id] = (d["sets_won"] / st) if st > 0 else 0.0
         games_ratio[team_id] = (d["games_won"] / gt) if gt > 0 else 0.0
