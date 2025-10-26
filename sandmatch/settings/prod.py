@@ -69,6 +69,7 @@ CSP_DEFAULT_SRC = ("'self'",)
 CSP_SCRIPT_SRC = (
     "'self'",
     "'unsafe-inline'",  # consider removing after inlining is cleaned up
+    "https://cdn.jsdelivr.net",  # html2canvas для экспорта таблиц
 )
 CSP_STYLE_SRC = (
     "'self'",
