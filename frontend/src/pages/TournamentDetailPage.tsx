@@ -476,8 +476,36 @@ export const TournamentDetailPage: React.FC = () => {
         
         return <span style={{ fontWeight: 700 }}>{scoreStr}</span>;
       }
+      
       const team1Id = m.team_1?.id;
       const team2Id = m.team_2?.id;
+      
+      // Проверяем, является ли это свободным форматом
+      const isFreeFormat = (t as any)?.set_format?.games_to === 0;
+      
+      if (isFreeFormat) {
+        // Для свободного формата отображаем счет как есть (по team_1/team_2)
+        const aId = g.entries[rI]?.team?.id;
+        const aIsTeam1 = (aId === team1Id);
+        
+        const scoreStr = sets.map((s: any) => {
+          if (s.is_tiebreak_only) {
+            const t1 = s.tb_1 ?? 0; const t2 = s.tb_2 ?? 0;
+            const left = aIsTeam1 ? t1 : t2;
+            const right = aIsTeam1 ? t2 : t1;
+            return `${left}:${right}TB`;
+          }
+          const g1 = s.games_1 ?? 0; const g2 = s.games_2 ?? 0;
+          const left = aIsTeam1 ? g1 : g2;
+          const right = aIsTeam1 ? g2 : g1;
+          const tbShown = (s.tb_1 != null && s.tb_2 != null) ? Math.min(s.tb_1, s.tb_2) : null;
+          return tbShown != null ? `${left}:${right}(${tbShown})` : `${left}:${right}`;
+        }).join(', ');
+        
+        return <span style={{ fontWeight: 700 }}>{scoreStr}</span>;
+      }
+      
+      // Стандартная логика для обычных форматов (с победителем)
       const loserId = winnerId === team1Id ? team2Id : team1Id;
       const findRowByTeamId = (teamId?: number | null) => {
         if (!teamId) return null;
@@ -756,7 +784,7 @@ export const TournamentDetailPage: React.FC = () => {
               if (t.status === 'completed') return;
               
               // Преобразуем данные для API
-              const setsToSend = sets
+              let setsToSend = sets
                 .filter(s => s.custom_enabled || s.champion_tb_enabled)
                 .map(s => ({
                   index: s.index,
@@ -765,6 +793,20 @@ export const TournamentDetailPage: React.FC = () => {
                   tb_loser_points: s.champion_tb_enabled ? null : s.tb_loser_points,
                   is_tiebreak_only: s.champion_tb_enabled
                 }));
+              
+              // Для свободного формата: если порядок команд в UI не совпадает с порядком в матче, переворачиваем сеты
+              const matchTeam1Id = scoreInput.matchTeam1Id;
+              const uiTeam1Id = scoreInput.team1?.id;
+              if (matchTeam1Id && uiTeam1Id && matchTeam1Id !== uiTeam1Id) {
+                // Порядок не совпадает - переворачиваем сеты перед отправкой
+                setsToSend = setsToSend.map(s => ({
+                  index: s.index,
+                  games_1: s.games_2,
+                  games_2: s.games_1,
+                  tb_loser_points: s.tb_loser_points,
+                  is_tiebreak_only: s.is_tiebreak_only
+                }));
+              }
               
               await matchApi.saveFreeFormatScore(t.id, scoreInput.matchId, setsToSend);
               setScoreInput(null);
@@ -882,7 +924,24 @@ export const TournamentDetailPage: React.FC = () => {
                       
                       // Найти матч и получить существующие сеты
                       const match = t?.matches?.find(m => m.id === scoreDialog.matchId);
-                      const existingSets = match?.sets || [];
+                      let existingSets = match?.sets || [];
+                      
+                      // Для свободного формата: если порядок команд в UI не совпадает с порядком в матче, переворачиваем сеты
+                      const isFreeFormat = (t as any)?.set_format?.games_to === 0;
+                      if (isFreeFormat && existingSets.length > 0) {
+                        const matchTeam1Id = scoreDialog.matchTeam1Id;
+                        const uiTeam1Id = aTeam.id;
+                        if (matchTeam1Id && uiTeam1Id && matchTeam1Id !== uiTeam1Id) {
+                          // Порядок не совпадает - переворачиваем сеты для отображения
+                          existingSets = existingSets.map((s: any) => ({
+                            ...s,
+                            games_1: s.games_2,
+                            games_2: s.games_1,
+                            tb_1: s.tb_2,
+                            tb_2: s.tb_1
+                          }));
+                        }
+                      }
                       
                       setScoreInput({
                         matchId: scoreDialog.matchId!,
