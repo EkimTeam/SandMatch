@@ -9,6 +9,7 @@ import { formatDate } from '../services/date';
 import { DraggableParticipant, DropSlot, DragDropState } from '../types/dragdrop';
 import { MatchActionDialog } from '../components/MatchActionDialog';
 import { MatchScoreModal } from '../components/MatchScoreModal';
+import FreeFormatScoreModal from '../components/FreeFormatScoreModal';
 import '../styles/knockout-dragdrop.css';
 
 export const KnockoutPage: React.FC = () => {
@@ -864,25 +865,59 @@ export const KnockoutPage: React.FC = () => {
       />
       
       {/* Модальное окно ввода счёта */}
-      <MatchScoreModal
-        isOpen={scoreModal.open}
-        onClose={() => setScoreModal({ open: false, matchId: null, team1: null, team2: null })}
-        onSave={handleSaveScore}
-        setFormat={(tMeta as any)?.set_format}
-        onSaveFull={async (sets) => {
-          if (tMeta?.status === 'completed') return;
-          if (!scoreModal.matchId) return;
-          await matchApi.savePlayoffScoreFull(
-            tournamentId,
-            scoreModal.matchId,
-            sets
-          );
-          await loadDraw();
-          setScoreModal({ open: false, matchId: null, team1: null, team2: null });
-        }}
-        team1={scoreModal.team1}
-        team2={scoreModal.team2}
-      />
+      {scoreModal.open && (tMeta as any)?.set_format?.games_to === 0 && scoreModal.team1 && scoreModal.team2 && (
+        <FreeFormatScoreModal
+          match={{
+            id: scoreModal.matchId || 0,
+            team_1: {
+              id: scoreModal.team1.id,
+              name: scoreModal.team1.name,
+              display_name: scoreModal.team1.name
+            },
+            team_2: {
+              id: scoreModal.team2.id,
+              name: scoreModal.team2.name,
+              display_name: scoreModal.team2.name
+            },
+            sets: []
+          }}
+          tournament={tMeta}
+          onClose={() => setScoreModal({ open: false, matchId: null, team1: null, team2: null })}
+          onSave={async (sets) => {
+            if (tMeta?.status === 'completed') return;
+            if (!scoreModal.matchId) return;
+            await matchApi.savePlayoffScoreFull(
+              tournamentId,
+              scoreModal.matchId,
+              sets
+            );
+            await loadDraw();
+            setScoreModal({ open: false, matchId: null, team1: null, team2: null });
+          }}
+        />
+      )}
+      
+      {scoreModal.open && (tMeta as any)?.set_format?.games_to !== 0 && (
+        <MatchScoreModal
+          isOpen={scoreModal.open}
+          onClose={() => setScoreModal({ open: false, matchId: null, team1: null, team2: null })}
+          onSave={handleSaveScore}
+          setFormat={(tMeta as any)?.set_format}
+          onSaveFull={async (sets) => {
+            if (tMeta?.status === 'completed') return;
+            if (!scoreModal.matchId) return;
+            await matchApi.savePlayoffScoreFull(
+              tournamentId,
+              scoreModal.matchId,
+              sets
+            );
+            await loadDraw();
+            setScoreModal({ open: false, matchId: null, team1: null, team2: null });
+          }}
+          team1={scoreModal.team1}
+          team2={scoreModal.team2}
+        />
+      )}
 
       {/* Нижние общие кнопки */}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-start', padding: '16px', borderTop: '1px solid #eee' }} data-export-exclude="true">
