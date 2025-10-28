@@ -207,18 +207,110 @@ def _head_to_head_winner(tournament: Tournament, group_index: int, team_a: int, 
     return int(m.winner_id)
 
 
-def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[int, dict]) -> List[int]:
-    """Ранжирование по правилам из Ruleset.ordering_priority.
-
-    Поддерживаемые критерии: wins, sets_ratio, games_ratio, h2h, name.
-    Алгоритм:
-    - Группируем участников по текущему критерию
-    - Для групп из 2 участников применяем личную встречу (h2h)
-    - Для групп из 3+ участников рекурсивно применяем следующий критерий
+def _rank_by_h2h_mini_tournament(tournament: Tournament, group_index: int, team_list: List[int], agg: Dict[int, dict]) -> List[int]:
+    """Ранжирование группы команд по мини-турниру личных встреч (ITF правила).
+    
+    Возвращает отсортированный список команд или None, если не удалось определить порядок.
+    Применяет те же критерии (победы, сеты, геймы) только для матчей внутри этой группы.
     """
-    # Пресет правил: Победы -> Сеты соот. -> Геймы соот.
-    # H2H применяется для пар после каждого шага, финально — спец/рейтинг/алфавит.
-    # Игнорируем кастомные ruleset.ordering_priority для детерминированности пресета id=5.
+    if len(team_list) <= 1:
+        return team_list
+    
+    # Собираем статистику только по матчам между командами из team_list
+    h2h_agg = {tid: {"wins": 0, "sets_won": 0, "sets_lost": 0, "sets_drawn": 0, "games_won": 0, "games_lost": 0} for tid in team_list}
+    
+    from apps.matches.models import Match
+    matches = Match.objects.filter(
+        tournament=tournament,
+        stage=Match.Stage.GROUP,
+        group_index=group_index,
+        team_1_id__in=team_list,
+        team_2_id__in=team_list
+    ).prefetch_related("sets")
+    
+    for m in matches:
+        t1 = m.team_1_id
+        t2 = m.team_2_id
+        if t1 not in team_list or t2 not in team_list:
+            continue
+            
+        sets_won_1 = 0
+        sets_won_2 = 0
+        games_1 = 0
+        games_2 = 0
+        
+        for s in m.sets.all().order_by("index"):
+            if s.is_tiebreak_only:
+                if s.tb_1 > s.tb_2:
+                    sets_won_1 += 1
+                elif s.tb_2 > s.tb_1:
+                    sets_won_2 += 1
+                games_1 += s.tb_1 or 0
+                games_2 += s.tb_2 or 0
+            else:
+                if s.games_1 > s.games_2:
+                    sets_won_1 += 1
+                elif s.games_2 > s.games_1:
+                    sets_won_2 += 1
+                elif s.games_1 == s.games_2:
+                    # Ничья
+                    h2h_agg[t1]["sets_drawn"] += 1
+                    h2h_agg[t2]["sets_drawn"] += 1
+                elif (s.tb_1 is not None) and (s.tb_2 is not None):
+                    if s.tb_1 > s.tb_2:
+                        sets_won_1 += 1
+                    elif s.tb_2 > s.tb_1:
+                        sets_won_2 += 1
+                
+                games_1 += s.games_1 or 0
+                games_2 += s.games_2 or 0
+        
+        h2h_agg[t1]["sets_won"] += sets_won_1
+        h2h_agg[t1]["sets_lost"] += sets_won_2
+        h2h_agg[t1]["games_won"] += games_1
+        h2h_agg[t1]["games_lost"] += games_2
+        h2h_agg[t2]["sets_won"] += sets_won_2
+        h2h_agg[t2]["sets_lost"] += sets_won_1
+        h2h_agg[t2]["games_won"] += games_2
+        h2h_agg[t2]["games_lost"] += games_1
+        
+        if m.winner_id == t1:
+            h2h_agg[t1]["wins"] += 1
+        elif m.winner_id == t2:
+            h2h_agg[t2]["wins"] += 1
+    
+    # Сортируем по критериям: победы -> сеты соот. -> геймы соот.
+    def h2h_key(tid: int):
+        d = h2h_agg[tid]
+        st = d["sets_won"] + d["sets_lost"] + d["sets_drawn"]
+        gt = d["games_won"] + d["games_lost"]
+        sets_ratio = (d["sets_won"] / st) if st > 0 else 0.0
+        games_ratio = (d["games_won"] / gt) if gt > 0 else 0.0
+        return (-d["wins"], -sets_ratio, -games_ratio)
+    
+    sorted_teams = sorted(team_list, key=h2h_key)
+    
+    # Проверяем, что порядок определен однозначно (нет одинаковых значений)
+    keys = [h2h_key(tid) for tid in sorted_teams]
+    if len(set(keys)) == len(keys):
+        return sorted_teams
+    
+    # Если есть одинаковые значения - не удалось определить порядок
+    return None
+
+
+def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[int, dict]) -> List[int]:
+    """Ранжирование по правилам ITF.
+
+    Алгоритм ITF:
+    1. Победы
+    2. Личные встречи (мини-турнир)
+    3. Разница сетов
+    4. Личные встречи (мини-турнир)
+    5. Разница геймов
+    6. Личные встречи (мини-турнир)
+    7. Финальные тай-брейкеры: спец. участник -> рейтинг -> алфавит
+    """
     priority: List[str] = ["wins", "sets_ratio", "games_ratio"]
 
     # Предрасчёт вспомогательных величин и состав группы
@@ -289,7 +381,7 @@ def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[
         return None
 
     def rank_teams_recursive(team_list: List[int], criteria_index: int) -> List[int]:
-        """Рекурсивное ранжирование списка команд по критериям."""
+        """Рекурсивное ранжирование списка команд по критериям ITF."""
         if len(team_list) <= 1:
             return team_list
         if criteria_index >= len(priority):
@@ -333,8 +425,14 @@ def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[
                     # Нет данных о личной встрече — переходим к следующему критерию
                     result.extend(rank_teams_recursive(group, criteria_index + 1))
             else:
-                # Для 3+ участников рекурсивно применяем следующий критерий
-                result.extend(rank_teams_recursive(group, criteria_index + 1))
+                # Для 3+ участников: сначала пробуем мини-турнир по личным встречам (ITF)
+                h2h_result = _rank_by_h2h_mini_tournament(tournament, group_index, group, agg)
+                if h2h_result is not None:
+                    # Личные встречи определили порядок
+                    result.extend(h2h_result)
+                else:
+                    # Личные встречи не определили порядок — переходим к следующему критерию
+                    result.extend(rank_teams_recursive(group, criteria_index + 1))
         
         return result
 
