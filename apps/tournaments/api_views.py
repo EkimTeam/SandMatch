@@ -1764,12 +1764,65 @@ class PlayerCreateView(APIView):
 
 @api_view(["GET"])
 def tournament_list(request):
-    """Сводный список турниров: активные и история."""
+    """Сводный список турниров: активные и история с пагинацией и фильтрацией."""
     today = timezone.now().date()
-    active_qs = Tournament.objects.filter(status__in=[Tournament.Status.CREATED, Tournament.Status.ACTIVE]).order_by(
-        "date"
-    )
-    history_qs = Tournament.objects.filter(status=Tournament.Status.COMPLETED).order_by("-date")[:20]
+    
+    # Параметры пагинации для завершенных турниров
+    history_offset = int(request.GET.get('history_offset', 0))
+    history_limit = int(request.GET.get('history_limit', 20))
+    
+    # Параметры фильтрации
+    name_filter = request.GET.get('name', '').strip()
+    system_filter = request.GET.get('system', '').strip()  # 'round_robin' или 'knockout'
+    mode_filter = request.GET.get('participant_mode', '').strip()  # 'singles' или 'doubles'
+    date_from = request.GET.get('date_from', '').strip()
+    date_to = request.GET.get('date_to', '').strip()
+    
+    # Базовые запросы
+    active_qs = Tournament.objects.filter(status__in=[Tournament.Status.CREATED, Tournament.Status.ACTIVE])
+    history_qs = Tournament.objects.filter(status=Tournament.Status.COMPLETED)
+    
+    # Применяем фильтры (поиск по имени без учета регистра)
+    if name_filter:
+        active_qs = active_qs.filter(name__icontains=name_filter)
+        history_qs = history_qs.filter(name__icontains=name_filter)
+    
+    if system_filter in ['round_robin', 'knockout']:
+        active_qs = active_qs.filter(system=system_filter)
+        history_qs = history_qs.filter(system=system_filter)
+    
+    if mode_filter in ['singles', 'doubles']:
+        active_qs = active_qs.filter(participant_mode=mode_filter)
+        history_qs = history_qs.filter(participant_mode=mode_filter)
+    
+    if date_from:
+        try:
+            from datetime import datetime
+            date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
+            active_qs = active_qs.filter(date__gte=date_from_obj)
+            history_qs = history_qs.filter(date__gte=date_from_obj)
+        except ValueError:
+            pass
+    
+    if date_to:
+        try:
+            from datetime import datetime
+            date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
+            active_qs = active_qs.filter(date__lte=date_to_obj)
+            history_qs = history_qs.filter(date__lte=date_to_obj)
+        except ValueError:
+            pass
+    
+    # Сортировка
+    active_qs = active_qs.order_by("date")
+    history_qs = history_qs.order_by("-date")
+    
+    # Подсчет общего количества завершенных турниров
+    history_total = history_qs.count()
+    
+    # Пагинация для завершенных турниров
+    history_page = history_qs[history_offset:history_offset + history_limit]
+    history_has_more = (history_offset + history_limit) < history_total
 
     def serialize_t(t: Tournament):
         return {
@@ -1785,7 +1838,11 @@ def tournament_list(request):
 
     return Response({
         "active": [serialize_t(t) for t in active_qs],
-        "history": [serialize_t(t) for t in history_qs],
+        "history": [serialize_t(t) for t in history_page],
+        "history_total": history_total,
+        "history_has_more": history_has_more,
+        "history_offset": history_offset,
+        "history_limit": history_limit,
     })
 
 
