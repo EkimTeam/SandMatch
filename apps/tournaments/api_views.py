@@ -1813,9 +1813,9 @@ def tournament_list(request):
         except ValueError:
             pass
     
-    # Сортировка
-    active_qs = active_qs.order_by("date")
-    history_qs = history_qs.order_by("-date")
+    # Сортировка: по дате, затем по имени
+    active_qs = active_qs.order_by("date", "name")
+    history_qs = history_qs.order_by("-date", "name")
     
     # Подсчет общего количества завершенных турниров
     history_total = history_qs.count()
