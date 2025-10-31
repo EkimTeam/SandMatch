@@ -363,19 +363,24 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 "matches": [],
             }
             for m in matches_qs:
-                # Надёжно сериализуем команды: сначала пробуем related, затем по *_id, затем по low/high id
-                t1 = serialize_team(m.team_1) or serialize_team_by_id(getattr(m, "team_1_id", None)) or serialize_team_by_id(getattr(m, "team_low_id", None))
-                t2 = serialize_team(m.team_2) or serialize_team_by_id(getattr(m, "team_2_id", None)) or serialize_team_by_id(getattr(m, "team_high_id", None))
+                # Сериализуем команды: если team_1/team_2 = None, возвращаем None (не пытаемся искать по ID)
+                t1 = serialize_team(m.team_1) if m.team_1_id else None
+                t2 = serialize_team(m.team_2) if m.team_2_id else None
                 
                 # Получить счёт матча
                 score_str = None
                 if m.status == Match.Status.COMPLETED and m.winner_id:
                     sets = m.sets.all().order_by('index')
                     if sets:
-                        # Формат: "6:4" для одного сета
+                        # Формат: "6:4" для обычного сета, "10:5TB" для чемпионского тайбрейка
                         score_parts = []
                         for s in sets:
-                            score_parts.append(f"{s.games_1}:{s.games_2}")
+                            if s.is_tiebreak_only:
+                                # Чемпионский тайбрейк: показываем очки TB, а не games (1:0)
+                                score_parts.append(f"{s.tb_1}:{s.tb_2}TB")
+                            else:
+                                # Обычный сет
+                                score_parts.append(f"{s.games_1}:{s.games_2}")
                         score_str = " ".join(score_parts)
                 
                 round_payload["matches"].append({
@@ -881,7 +886,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="match_reset", permission_classes=[IsAuthenticated])
     def match_reset(self, request, pk=None):
-        """Сбросить результат матча (удалить счёт, победителя, убрать из следующего раунда)."""
+        """Сбросить результат матча (удалить счёт, победителя, каскадно очистить все последующие раунды)."""
         tournament: Tournament = self.get_object()
         
         # Блокировка для завершённых турниров
@@ -897,26 +902,14 @@ class TournamentViewSet(viewsets.ModelViewSet):
         except Match.DoesNotExist:
             return Response({"ok": False, "error": "Матч не найден"}, status=404)
         
-        # Удалить победителя из следующего раунда
+        # Каскадная очистка всех последующих раундов
         if m.winner_id and m.bracket:
-            next_round = (m.round_index or 0) + 1
-            next_order = (m.order_in_round + 1) // 2
-            target_slot = 'team_1' if (m.order_in_round % 2 == 1) else 'team_2'
-            
-            next_match = Match.objects.filter(
-                bracket=m.bracket,
-                round_index=next_round,
-                order_in_round=next_order
-            ).first()
-            
-            if next_match:
-                setattr(next_match, target_slot, None)
-                next_match.save(update_fields=[target_slot, 'updated_at'])
+            self._cascade_reset_matches(m)
         
-        # Удалить сеты
+        # Удалить сеты текущего матча
         m.sets.all().delete()
         
-        # Очистить результат матча
+        # Очистить результат текущего матча
         m.winner = None
         m.started_at = None
         m.finished_at = None
@@ -924,6 +917,84 @@ class TournamentViewSet(viewsets.ModelViewSet):
         m.save(update_fields=["winner", "started_at", "finished_at", "status", "updated_at"])
         
         return Response({"ok": True})
+    
+    def _cascade_reset_matches(self, match: Match):
+        """
+        Каскадно сбросить все последующие раунды после данного матча.
+        Включает обработку матча за 3-е место для полуфиналов.
+        """
+        if not match.bracket or not match.winner_id:
+            return
+        
+        # Список матчей для сброса
+        matches_to_reset = []
+        
+        # 1. Обработка обычного следующего раунда
+        if not match.is_third_place:
+            next_round = (match.round_index or 0) + 1
+            next_order = (match.order_in_round + 1) // 2
+            target_slot = 'team_1' if (match.order_in_round % 2 == 1) else 'team_2'
+            
+            next_match = Match.objects.filter(
+                bracket=match.bracket,
+                round_index=next_round,
+                order_in_round=next_order,
+                is_third_place=False
+            ).first()
+            
+            if next_match:
+                # Очистить слот победителя
+                setattr(next_match, target_slot, None)
+                next_match.save(update_fields=[target_slot, 'updated_at'])
+                
+                # Если следующий матч был завершен, добавить его в список для сброса
+                if next_match.status == Match.Status.COMPLETED:
+                    matches_to_reset.append(next_match)
+        
+        # 2. Обработка матча за 3-е место для полуфиналов
+        if (match.round_name or "").lower().startswith("полуфинал"):
+            third_place_match = Match.objects.filter(
+                bracket=match.bracket,
+                is_third_place=True
+            ).first()
+            
+            if third_place_match:
+                # Определить, какой слот очищать (проигравший из этого полуфинала)
+                # Полуфинал 1 -> team_1 матча за 3-е место
+                # Полуфинал 2 -> team_2 матча за 3-е место
+                semis = Match.objects.filter(
+                    bracket=match.bracket,
+                    round_name__icontains="Полуфинал"
+                ).order_by("order_in_round")
+                
+                if semis.count() == 2:
+                    if match.id == semis[0].id:
+                        # Первый полуфинал -> очистить team_1
+                        third_place_match.team_1 = None
+                        third_place_match.save(update_fields=['team_1', 'updated_at'])
+                    elif match.id == semis[1].id:
+                        # Второй полуфинал -> очистить team_2
+                        third_place_match.team_2 = None
+                        third_place_match.save(update_fields=['team_2', 'updated_at'])
+                
+                # Если матч за 3-е место был завершен, добавить его в список для сброса
+                if third_place_match.status == Match.Status.COMPLETED:
+                    matches_to_reset.append(third_place_match)
+        
+        # 3. Рекурсивно сбросить все найденные матчи
+        for m in matches_to_reset:
+            # Сначала каскадно очистить следующие раунды (до удаления сетов текущего)
+            self._cascade_reset_matches(m)
+            
+            # Удалить сеты текущего матча
+            m.sets.all().delete()
+            
+            # Очистить результат текущего матча
+            m.winner = None
+            m.started_at = None
+            m.finished_at = None
+            m.status = Match.Status.SCHEDULED
+            m.save(update_fields=["winner", "started_at", "finished_at", "status", "updated_at"])
 
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="match_save_score", permission_classes=[IsAuthenticated])

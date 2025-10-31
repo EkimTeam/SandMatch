@@ -762,7 +762,7 @@ export const TournamentDetailPage: React.FC = () => {
           <div style={{ fontSize: 16, color: '#666' }}>{formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}</div>
         </div>
         {/* Модалка ввода счёта - выбор между обычной и свободным форматом */}
-        {scoreInput && (t as any)?.set_format?.games_to === 0 ? (
+        {scoreInput && (t as any)?.set_format?.games_to === 0 && (t as any)?.set_format?.max_sets !== 1 ? (
           <FreeFormatScoreModal
             match={{
               id: scoreInput.matchId,

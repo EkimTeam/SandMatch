@@ -209,7 +209,8 @@ export const KnockoutPage: React.FC = () => {
     setError(null);
     try {
       // Добавляем timestamp для предотвращения кэширования
-      const resp = await tournamentApi.getBracketDraw(tournamentId, bracketId);
+      const timestamp = Date.now();
+      const resp = await tournamentApi.getBracketDraw(tournamentId, bracketId, timestamp);
       // Создаём новый объект для гарантированного обновления React
       setData({ ...resp } as BracketData);
       
@@ -865,7 +866,7 @@ export const KnockoutPage: React.FC = () => {
       />
       
       {/* Модальное окно ввода счёта */}
-      {scoreModal.open && (tMeta as any)?.set_format?.games_to === 0 && scoreModal.team1 && scoreModal.team2 && (
+      {scoreModal.open && (tMeta as any)?.set_format?.games_to === 0 && (tMeta as any)?.set_format?.max_sets !== 1 && scoreModal.team1 && scoreModal.team2 && (
         <FreeFormatScoreModal
           match={{
             id: scoreModal.matchId || 0,
@@ -886,10 +887,38 @@ export const KnockoutPage: React.FC = () => {
           onSave={async (sets) => {
             if (tMeta?.status === 'completed') return;
             if (!scoreModal.matchId) return;
+            
+            // Преобразуем данные для API
+            const setsToSend = sets
+              .filter(s => s.custom_enabled || s.champion_tb_enabled)
+              .map(s => {
+                if (s.champion_tb_enabled) {
+                  // Для чемпионского TB: очки из games_1/games_2 переносим в tb_1/tb_2
+                  return {
+                    index: s.index,
+                    games_1: 0,
+                    games_2: 0,
+                    tb_1: s.games_1,
+                    tb_2: s.games_2,
+                    is_tiebreak_only: true
+                  };
+                } else {
+                  // Обычный сет
+                  return {
+                    index: s.index,
+                    games_1: s.games_1,
+                    games_2: s.games_2,
+                    tb_1: s.tb_enabled && s.tb_loser_points !== null ? (s.games_1 > s.games_2 ? null : null) : null,
+                    tb_2: s.tb_enabled && s.tb_loser_points !== null ? (s.games_1 > s.games_2 ? null : null) : null,
+                    is_tiebreak_only: false
+                  };
+                }
+              });
+            
             await matchApi.savePlayoffScoreFull(
               tournamentId,
               scoreModal.matchId,
-              sets
+              setsToSend
             );
             await loadDraw();
             setScoreModal({ open: false, matchId: null, team1: null, team2: null });
@@ -897,7 +926,7 @@ export const KnockoutPage: React.FC = () => {
         />
       )}
       
-      {scoreModal.open && (tMeta as any)?.set_format?.games_to !== 0 && (
+      {scoreModal.open && ((tMeta as any)?.set_format?.games_to !== 0 || (tMeta as any)?.set_format?.max_sets === 1) && (
         <MatchScoreModal
           isOpen={scoreModal.open}
           onClose={() => setScoreModal({ open: false, matchId: null, team1: null, team2: null })}
