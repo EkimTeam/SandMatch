@@ -73,8 +73,9 @@ export const RoundComponent: React.FC<{
             };
             
             // Для участников из dropSlots тоже применяем getTeamName
-            const team1Display = (slot1?.currentParticipant ? (m?.team_1 ? getTeamName(m.team_1) : slot1.currentParticipant.name) : null) ?? (m?.team_1 ? getTeamName(m.team_1) : null) ?? (isFirstRound && canDrop ? 'Свободное место' : placeholderTop);
-            const team2Display = (slot2?.currentParticipant ? (m?.team_2 ? getTeamName(m.team_2) : slot2.currentParticipant.name) : null) ?? (m?.team_2 ? getTeamName(m.team_2) : null) ?? (isFirstRound && canDrop ? 'Свободное место' : placeholderBottom);
+            // ВАЖНО: Если m?.team_1 === null (после сброса матча), показываем placeholder
+            const team1Display = m?.team_1 ? getTeamName(m.team_1) : (isFirstRound && canDrop ? 'Свободное место' : placeholderTop);
+            const team2Display = m?.team_2 ? getTeamName(m.team_2) : (isFirstRound && canDrop ? 'Свободное место' : placeholderBottom);
             
             // Для тултипов всегда используем full_name
             const team1Tooltip = m?.team_1?.full_name || m?.team_1?.name;
@@ -127,7 +128,15 @@ export const RoundComponent: React.FC<{
               onClick={() => m && onMatchClick?.(m.id)}
             >
               <div 
-                style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, padding: canDrop ? 4 : 0, border: canDrop && !slot1?.currentParticipant ? '1px dashed #d1d5db' : 'none', borderRadius: 4, background: canDrop && !slot1?.currentParticipant ? '#f9fafb' : 'transparent' }}
+                style={{ 
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  marginBottom: 4, 
+                  padding: canDrop ? 4 : 0, 
+                  border: canDrop && !slot1?.currentParticipant ? '1px dashed #d1d5db' : 'none', 
+                  borderRadius: 4, 
+                  background: canDrop && !slot1?.currentParticipant ? '#f9fafb' : (winnerId === m?.team_1?.id && status === 'completed' ? '#d1fae5' : 'transparent')
+                }}
                 onDragOver={canDrop ? handleDragOver : undefined}
                 onDrop={canDrop ? (e) => handleDrop(e, 'team_1') : undefined}
               >
@@ -168,7 +177,15 @@ export const RoundComponent: React.FC<{
                 })()}
               </div>
               <div 
-                style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, padding: canDrop ? 4 : 0, border: canDrop && !slot2?.currentParticipant ? '1px dashed #d1d5db' : 'none', borderRadius: 4, background: canDrop && !slot2?.currentParticipant ? '#f9fafb' : 'transparent' }}
+                style={{ 
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  marginTop: 4, 
+                  padding: canDrop ? 4 : 0, 
+                  border: canDrop && !slot2?.currentParticipant ? '1px dashed #d1d5db' : 'none', 
+                  borderRadius: 4, 
+                  background: canDrop && !slot2?.currentParticipant ? '#f9fafb' : (winnerId === m?.team_2?.id && status === 'completed' ? '#d1fae5' : 'transparent')
+                }}
                 onDragOver={canDrop ? handleDragOver : undefined}
                 onDrop={canDrop ? (e) => handleDrop(e, 'team_2') : undefined}
               >

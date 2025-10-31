@@ -143,10 +143,12 @@ export const tournamentApi = {
 
   getBracketDraw: async (
     id: number,
-    bracketId: number
+    bracketId: number,
+    timestamp?: number
   ): Promise<any> => {
     // Добавляем timestamp для предотвращения кэширования
-    const response = await api.get(`/tournaments/${id}/brackets/${bracketId}/draw/?_t=${Date.now()}`);
+    const ts = timestamp || Date.now();
+    const response = await api.get(`/tournaments/${id}/brackets/${bracketId}/draw/?_t=${ts}`);
     return response.data;
   },
 

@@ -64,8 +64,20 @@ def process_free_format_set(set_data: Dict, tiebreak_points: int = 7, decider_ti
     
     if is_tiebreak_only:
         # Чемпионский тайбрейк - используем games_1 и games_2 как очки TB
-        result['tb_1'] = games_1
-        result['tb_2'] = games_2
+        # games_1 и games_2 содержат очки победителя и проигравшего
+        # Нужно определить, кто победитель, и правильно записать tb_1 и tb_2
+        if games_1 > games_2:
+            # Первый участник победил
+            result['tb_1'] = games_1
+            result['tb_2'] = games_2
+        elif games_2 > games_1:
+            # Второй участник победил
+            result['tb_1'] = games_1
+            result['tb_2'] = games_2
+        else:
+            # Ничья в чемпионском TB невозможна
+            raise ValueError(f"Невозможна ничья в чемпионском тайбрейке: {games_1}:{games_2}")
+        
         result['games_1'] = 0
         result['games_2'] = 0
     elif tb_loser_points is not None:

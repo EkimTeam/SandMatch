@@ -77,6 +77,7 @@ class MatchSerializer(serializers.ModelSerializer):
     team_1 = TeamSerializer(read_only=True)
     team_2 = TeamSerializer(read_only=True)
     sets = serializers.SerializerMethodField()
+    score = serializers.SerializerMethodField()
 
     class Meta:
         model = Match
@@ -98,6 +99,7 @@ class MatchSerializer(serializers.ModelSerializer):
             "started_at",
             "finished_at",
             "sets",
+            "score",
             "created_at",
             "updated_at",
         ]
@@ -118,6 +120,41 @@ class MatchSerializer(serializers.ModelSerializer):
                 }
             )
         return items
+    
+    def get_score(self, obj: Match):
+        # Формируем строку счета для отображения в плитке матча
+        if obj.status != Match.Status.COMPLETED:
+            return None
+        
+        winner_id = obj.winner_id
+        team1_id = obj.team_1_id
+        
+        score_parts = []
+        for s in obj.sets.all().order_by('index'):
+            if s.is_tiebreak_only:
+                # Чемпионский тайбрейк: показываем очки TB, а не games (1:0)
+                # Ориентируем по победителю
+                if winner_id == team1_id:
+                    score_parts.append(f"{s.tb_1}:{s.tb_2}TB")
+                else:
+                    score_parts.append(f"{s.tb_2}:{s.tb_1}TB")
+            else:
+                # Обычный сет - используем games_1/games_2
+                if winner_id == team1_id:
+                    g_winner = s.games_1
+                    g_loser = s.games_2
+                else:
+                    g_winner = s.games_2
+                    g_loser = s.games_1
+                
+                # Добавляем тайбрейк если есть
+                if s.tb_1 is not None and s.tb_2 is not None:
+                    tb_loser = min(s.tb_1, s.tb_2)
+                    score_parts.append(f"{g_winner}:{g_loser}({tb_loser})")
+                else:
+                    score_parts.append(f"{g_winner}:{g_loser}")
+        
+        return ", ".join(score_parts) if score_parts else None
 
 
 class TournamentSerializer(serializers.ModelSerializer):
