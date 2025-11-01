@@ -95,6 +95,8 @@ export const TournamentDetailPage: React.FC = () => {
   // Данные групп с бэкенда: { [group_index]: { stats: { [team_id]: {...} }, placements: { [team_id]: place } } }
   const [groupStats, setGroupStats] = useState<Record<number, { stats: Record<number, { wins: number; sets_won: number; sets_lost: number; sets_drawn?: number; games_won: number; games_lost: number }>; placements: Record<number, number> }>>({});
   const exportRef = useRef<HTMLDivElement | null>(null);
+  // Состояние для hover эффекта на расписании
+  const [hoveredMatch, setHoveredMatch] = useState<{ groupIdx: number; row1: number; row2: number } | null>(null);
 
   // Динамическая загрузка html2canvas с CDN
   const ensureHtml2Canvas = async (): Promise<any> => {
@@ -1103,6 +1105,13 @@ export const TournamentDetailPage: React.FC = () => {
                           style={{
                             border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center',
                             background: (() => {
+                              // Hover эффект от расписания
+                              if (hoveredMatch && hoveredMatch.groupIdx === g.idx) {
+                                if ((rIdx === hoveredMatch.row1 && cIdx === hoveredMatch.row2) ||
+                                    (rIdx === hoveredMatch.row2 && cIdx === hoveredMatch.row1)) {
+                                  return '#f3f4f6';
+                                }
+                              }
                               // Подсветка ячеек:
                               // - live матч: чуть более насыщённый зелёный (#e9fbe9)
                               // - ячейка победителя (winner vs loser): более светлый зелёный (#f3fdf3)
@@ -1165,7 +1174,55 @@ export const TournamentDetailPage: React.FC = () => {
             {schedule[g.idx] && schedule[g.idx].length > 0 ? (
               <div className="flex flex-col gap-1">
                 {schedule[g.idx].map((tour: [number, number][], ti: number) => (
-                  <div key={ti}>Тур {ti + 1}: {tour.map((pair: [number, number]) => `${pair[0]}–${pair[1]}`).join(', ')}</div>
+                  <div key={ti} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <span>Тур {ti + 1}:</span>
+                    {tour.map((pair: [number, number], pi: number) => {
+                      // Найти матч для этой пары
+                      const team1 = g.entries[pair[0] - 1]?.team;
+                      const team2 = g.entries[pair[1] - 1]?.team;
+                      const m = (t.matches || []).find((mm: any) => 
+                        mm.stage === 'group' && mm.group_index === g.idx &&
+                        ((mm.team_1?.id === team1?.id && mm.team_2?.id === team2?.id) || 
+                         (mm.team_1?.id === team2?.id && mm.team_2?.id === team1?.id))
+                      );
+                      const isCompleted = m?.status === 'completed';
+                      const isLive = m?.status === 'live';
+                      
+                      return (
+                        <span
+                          key={pi}
+                          style={{
+                            textDecoration: isCompleted ? 'line-through' : 'none',
+                            background: isLive ? MATCH_COLORS.LIVE : 'transparent',
+                            padding: isLive ? '2px 6px' : '0',
+                            borderRadius: isLive ? '4px' : '0',
+                            cursor: effectiveLocked && !completed ? 'pointer' : 'default',
+                            transition: 'background 0.15s ease'
+                          }}
+                          onMouseEnter={() => setHoveredMatch({ groupIdx: g.idx, row1: pair[0], row2: pair[1] })}
+                          onMouseLeave={() => setHoveredMatch(null)}
+                          onClick={() => {
+                            if (effectiveLocked && !completed && team1?.id && team2?.id) {
+                              // Открыть диалог как при клике на ячейку
+                              const matchTeam1Id = (m as any)?.team_1?.id ?? (m as any)?.team_1_id ?? null;
+                              const matchTeam2Id = (m as any)?.team_2?.id ?? (m as any)?.team_2_id ?? null;
+                              setScoreDialog({ 
+                                group: g.idx, 
+                                a: pair[0], 
+                                b: pair[1], 
+                                matchId: m?.id, 
+                                isLive: isLive,
+                                matchTeam1Id,
+                                matchTeam2Id
+                              });
+                            }
+                          }}
+                        >
+                          {pair[0]}–{pair[1]}
+                        </span>
+                      );
+                    })}
+                  </div>
                 ))}
               </div>
             ) : (
