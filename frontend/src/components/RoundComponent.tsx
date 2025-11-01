@@ -2,6 +2,12 @@ import React from 'react';
 import { BracketRound } from '../types/bracket';
 import { DropSlot, DraggableParticipant } from '../types/dragdrop';
 
+// Константы цветов для подсветки (синхронизированы с TournamentDetailPage)
+const MATCH_COLORS = {
+  LIVE: '#e9fbe9',      // Матч в процессе (чуть более насыщенный зеленый)
+  WINNER: '#d1fae5',   // Победная ячейка (светло-зеленый)
+} as const;
+
 export const RoundComponent: React.FC<{
   round: BracketRound;
   matchWidth: number;
@@ -135,7 +141,7 @@ export const RoundComponent: React.FC<{
                   padding: canDrop ? 4 : 0, 
                   border: canDrop && !slot1?.currentParticipant ? '1px dashed #d1d5db' : 'none', 
                   borderRadius: 4, 
-                  background: canDrop && !slot1?.currentParticipant ? '#f9fafb' : (winnerId === m?.team_1?.id && status === 'completed' ? '#d1fae5' : 'transparent')
+                  background: canDrop && !slot1?.currentParticipant ? '#f9fafb' : (winnerId === m?.team_1?.id && status === 'completed' ? MATCH_COLORS.WINNER : 'transparent')
                 }}
                 onDragOver={canDrop ? handleDragOver : undefined}
                 onDrop={canDrop ? (e) => handleDrop(e, 'team_1') : undefined}
@@ -184,7 +190,7 @@ export const RoundComponent: React.FC<{
                   padding: canDrop ? 4 : 0, 
                   border: canDrop && !slot2?.currentParticipant ? '1px dashed #d1d5db' : 'none', 
                   borderRadius: 4, 
-                  background: canDrop && !slot2?.currentParticipant ? '#f9fafb' : (winnerId === m?.team_2?.id && status === 'completed' ? '#d1fae5' : 'transparent')
+                  background: canDrop && !slot2?.currentParticipant ? '#f9fafb' : (winnerId === m?.team_2?.id && status === 'completed' ? MATCH_COLORS.WINNER : 'transparent')
                 }}
                 onDragOver={canDrop ? handleDragOver : undefined}
                 onDrop={canDrop ? (e) => handleDrop(e, 'team_2') : undefined}
