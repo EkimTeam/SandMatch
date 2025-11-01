@@ -1,10 +1,17 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { formatDate } from '../services/date';
+import api, { matchApi, tournamentApi } from '../services/api';
 import { ParticipantPickerModal } from '../components/ParticipantPickerModal';
-import api, { tournamentApi, matchApi } from '../services/api';
 import { MatchScoreModal } from '../components/MatchScoreModal';
 import FreeFormatScoreModal from '../components/FreeFormatScoreModal';
+import html2canvas from 'html2canvas';
+
+// Константы цветов для подсветки ячеек
+const MATCH_COLORS = {
+  LIVE: '#e9fbe9',      // Матч в процессе (чуть более насыщенный зеленый)
+  WINNER: '#d1fae5',   // Победная ячейка (светло-зеленый, как в олимпийской системе)
+} as const;
 
 type Participant = {
   id: number;
@@ -1096,12 +1103,42 @@ export const TournamentDetailPage: React.FC = () => {
                           style={{
                             border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center',
                             background: (() => {
-                              // Зелёная подсветка, если матч LIVE
+                              // Подсветка ячеек:
+                              // - live матч: чуть более насыщённый зелёный (#e9fbe9)
+                              // - ячейка победителя (winner vs loser): более светлый зелёный (#f3fdf3)
                               const aId = g.entries[rI]?.team?.id;
                               const bId = g.entries[cIdx - 1]?.team?.id;
                               const m = (t.matches || []).find((mm: any) => mm.stage === 'group' && mm.group_index === g.idx &&
                                 ((mm.team_1?.id === aId && mm.team_2?.id === bId) || (mm.team_1?.id === bId && mm.team_2?.id === aId)));
-                              return m?.status === 'live' ? '#e9fbe9' : 'transparent';
+                              if (!m) return 'transparent';
+                              if (m.status === 'live') return MATCH_COLORS.LIVE;
+                              // Подсветка победной ячейки только для завершённых матчей с наличием победителя
+                              if (m.status === 'completed') {
+                                const sets: any[] = (m as any).sets || [];
+                                if (sets.length === 0) return 'transparent';
+                                const winnerId = (() => {
+                                  const w: any = (m as any).winner;
+                                  if (typeof w === 'number') return w;
+                                  if (w && typeof w === 'object') return w.id ?? null;
+                                  return null;
+                                })();
+                                if (!winnerId) return 'transparent';
+                                const team1Id = m.team_1?.id;
+                                const team2Id = m.team_2?.id;
+                                const loserId = winnerId === team1Id ? team2Id : team1Id;
+                                const findRowByTeamId = (teamId?: number | null) => {
+                                  if (!teamId) return null;
+                                  const idx = g.entries.findIndex((e) => e?.team?.id === teamId);
+                                  return idx >= 0 ? (idx + 1) : null;
+                                };
+                                const win_row = findRowByTeamId(winnerId);
+                                const lose_row = findRowByTeamId(loserId);
+                                if (win_row && lose_row && rIdx === win_row && cIdx === lose_row) {
+                                  // Такой же цвет, как подсветка победителя в олимпийской сетке
+                                  return MATCH_COLORS.WINNER;
+                                }
+                              }
+                              return 'transparent';
                             })()
                           }}
                           onClick={() => effectiveLocked && !completed && handleCellClick('score', g.idx, rIdx, cIdx)}
