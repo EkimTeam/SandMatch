@@ -884,6 +884,37 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return Response({"ok": True, "match": {"id": m.id, "status": m.status}})
 
     @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="match_delete_score", permission_classes=[IsAuthenticated])
+    def match_delete_score(self, request, pk=None):
+        """Удалить счет матча (очистить сеты и winner_id) для круговой системы."""
+        tournament: Tournament = self.get_object()
+        
+        # Блокировка для завершённых турниров
+        if tournament.status == Tournament.Status.COMPLETED:
+            return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
+        
+        match_id = request.data.get("match_id")
+        if not match_id:
+            return Response({"ok": False, "error": "match_id обязателен"}, status=400)
+        
+        try:
+            m = Match.objects.get(id=int(match_id), tournament=tournament)
+        except Match.DoesNotExist:
+            return Response({"ok": False, "error": "Матч не найден"}, status=404)
+        
+        # Удалить все сеты матча
+        m.sets.all().delete()
+        
+        # Очистить winner_id и статус
+        m.winner = None
+        m.status = Match.Status.SCHEDULED
+        m.started_at = None
+        m.finished_at = None
+        m.save(update_fields=["winner", "status", "started_at", "finished_at", "updated_at"])
+        
+        return Response({"ok": True})
+
+    @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="match_reset", permission_classes=[IsAuthenticated])
     def match_reset(self, request, pk=None):
         """Сбросить результат матча (удалить счёт, победителя, каскадно очистить все последующие раунды)."""
