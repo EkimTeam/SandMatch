@@ -13,6 +13,13 @@ const MATCH_COLORS = {
   WINNER: '#d1fae5',   // Победная ячейка (светло-зеленый, как в олимпийской системе)
 } as const;
 
+// Константы цветов для кнопок
+const BUTTON_COLORS = {
+  PRIMARY: '#007bff',   // Синий цвет для основных кнопок
+  SUCCESS: '#28a745',   // Зеленый цвет для кнопки "Начать матч"
+  DANGER: '#dc3545',    // Красный цвет для кнопки "Удалить матч"
+} as const;
+
 type Participant = {
   id: number;
   team?: { id: number; name: string; display_name?: string; full_name?: string; player_1?: number | { id: number }; player_2?: number | { id: number } } | null;
@@ -897,7 +904,13 @@ export const TournamentDetailPage: React.FC = () => {
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid #eee' }}>
-              <strong>{scoreDialog.isLive ? 'Матч идёт' : 'Матч не начат'}</strong>
+              <strong>{(() => {
+                const match = t?.matches?.find(m => m.id === scoreDialog.matchId);
+                const hasScore = match?.sets && match.sets.length > 0;
+                if (hasScore && match?.status === 'completed') return 'Матч завершен';
+                if (scoreDialog.isLive) return 'Матч идёт';
+                return 'Матч не начат';
+              })()}</strong>
               <button onClick={() => setScoreDialog(null)} style={{ border: 0, background: 'transparent', fontSize: 18, lineHeight: 1, cursor: 'pointer' }}>×</button>
             </div>
             <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -915,94 +928,169 @@ export const TournamentDetailPage: React.FC = () => {
                   );
                 })()}
               </div>
-              {!scoreDialog.isLive ? (
-                <>
-                  <button
-                    onClick={startMatch}
-                    style={{ padding: '8px 12px', borderRadius: 6, background: '#28a745', color: '#fff', border: '1px solid #28a745', cursor: 'pointer' }}
-                  >
-                    Начать матч
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (!scoreDialog?.matchId) return;
-                      const g = groups.find(x => x.idx === scoreDialog.group);
-                      const aTeam = g?.entries[scoreDialog.a - 1]?.team as any;
-                      const bTeam = g?.entries[scoreDialog.b - 1]?.team as any;
-                      if (!aTeam?.id || !bTeam?.id) return;
-                      const fmt = (team: any) => showFullName ? (team.full_name || '—') : (team.display_name || team.name || '—');
-                      
-                      // Найти матч и получить существующие сеты
-                      const match = t?.matches?.find(m => m.id === scoreDialog.matchId);
-                      let existingSets = match?.sets || [];
-                      
-                      // Для свободного формата: если порядок команд в UI не совпадает с порядком в матче, переворачиваем сеты
-                      const isFreeFormat = (t as any)?.set_format?.games_to === 0;
-                      if (isFreeFormat && existingSets.length > 0) {
-                        const matchTeam1Id = scoreDialog.matchTeam1Id;
-                        const uiTeam1Id = aTeam.id;
-                        if (matchTeam1Id && uiTeam1Id && matchTeam1Id !== uiTeam1Id) {
-                          // Порядок не совпадает - переворачиваем сеты для отображения
-                          existingSets = existingSets.map((s: any) => ({
-                            ...s,
-                            games_1: s.games_2,
-                            games_2: s.games_1,
-                            tb_1: s.tb_2,
-                            tb_2: s.tb_1
-                          }));
-                        }
-                      }
-                      
-                      setScoreInput({
-                        matchId: scoreDialog.matchId!,
-                        team1: { id: aTeam.id, name: fmt(aTeam) },
-                        team2: { id: bTeam.id, name: fmt(bTeam) },
-                        matchTeam1Id: scoreDialog.matchTeam1Id ?? null,
-                        matchTeam2Id: scoreDialog.matchTeam2Id ?? null,
-                        existingSets: existingSets,
-                      });
-                      setScoreDialog(null); // Закрываем диалог действий, чтобы не перекрывал модалку счета
-                    }}
-                    className="btn btn-primary"
-                  >
-                    Ввести счёт
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    onClick={cancelMatch}
-                    style={{ padding: '8px 12px', borderRadius: 6, background: '#dc3545', color: '#fff', border: '1px solid #dc3545', cursor: 'pointer' }}
-                  >
-                    Отменить матч
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (!scoreDialog?.matchId) return;
-                      const g = groups.find(x => x.idx === scoreDialog.group);
-                      const aTeam = g?.entries[scoreDialog.a - 1]?.team as any;
-                      const bTeam = g?.entries[scoreDialog.b - 1]?.team as any;
-                      if (!aTeam?.id || !bTeam?.id) return;
-                      const fmt = (team: any) => showFullName ? (team.full_name || '—') : (team.display_name || team.name || '—');
-                      
-                      // Найти матч и получить существующие сеты
-                      const match = t?.matches?.find(m => m.id === scoreDialog.matchId);
-                      const existingSets = match?.sets || [];
-                      
-                      setScoreInput({
-                        matchId: scoreDialog.matchId!,
-                        team1: { id: aTeam.id, name: fmt(aTeam) },
-                        team2: { id: bTeam.id, name: fmt(bTeam) },
-                        existingSets: existingSets,
-                      });
-                      setScoreDialog(null);
-                    }}
-                    style={{ padding: '8px 12px', borderRadius: 6, background: '#f8f9fa', color: '#111', border: '1px solid #dcdcdc', cursor: 'pointer' }}
-                  >
-                    Ввести счёт
-                  </button>
-                </>
-              )}
+              {(() => {
+                const match = t?.matches?.find(m => m.id === scoreDialog.matchId);
+                const hasScore = match?.sets && match.sets.length > 0;
+                const isCompleted = hasScore && match?.status === 'completed';
+                
+                if (isCompleted) {
+                  // Завершенный матч со счетом
+                  return (
+                    <>
+                      <button
+                        onClick={() => {
+                          if (!scoreDialog?.matchId) return;
+                          const g = groups.find(x => x.idx === scoreDialog.group);
+                          const aTeam = g?.entries[scoreDialog.a - 1]?.team as any;
+                          const bTeam = g?.entries[scoreDialog.b - 1]?.team as any;
+                          if (!aTeam?.id || !bTeam?.id) return;
+                          const fmt = (team: any) => showFullName ? (team.full_name || '—') : (team.display_name || team.name || '—');
+                          
+                          const match = t?.matches?.find(m => m.id === scoreDialog.matchId);
+                          let existingSets = match?.sets || [];
+                          
+                          const isFreeFormat = (t as any)?.set_format?.games_to === 0;
+                          if (isFreeFormat && existingSets.length > 0) {
+                            const matchTeam1Id = scoreDialog.matchTeam1Id;
+                            const uiTeam1Id = aTeam.id;
+                            if (matchTeam1Id && uiTeam1Id && matchTeam1Id !== uiTeam1Id) {
+                              existingSets = existingSets.map((s: any) => ({
+                                ...s,
+                                games_1: s.games_2,
+                                games_2: s.games_1,
+                                tb_1: s.tb_2,
+                                tb_2: s.tb_1
+                              }));
+                            }
+                          }
+                          
+                          setScoreInput({
+                            matchId: scoreDialog.matchId!,
+                            team1: { id: aTeam.id, name: fmt(aTeam) },
+                            team2: { id: bTeam.id, name: fmt(bTeam) },
+                            matchTeam1Id: scoreDialog.matchTeam1Id ?? null,
+                            matchTeam2Id: scoreDialog.matchTeam2Id ?? null,
+                            existingSets: existingSets,
+                          });
+                          setScoreDialog(null);
+                        }}
+                        style={{ padding: '8px 12px', borderRadius: 6, background: BUTTON_COLORS.PRIMARY, color: '#fff', border: `1px solid ${BUTTON_COLORS.PRIMARY}`, cursor: 'pointer' }}
+                      >
+                        Ввести счёт
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!scoreDialog?.matchId) return;
+                          if (!confirm('Удалить счет матча? Это действие нельзя отменить.')) return;
+                          try {
+                            await api.post(`/tournaments/${t.id}/match_delete_score/`, { match_id: scoreDialog.matchId });
+                            await refreshGroupStats();
+                            reload();
+                            setScoreDialog(null);
+                          } catch (error) {
+                            console.error('Ошибка удаления счета:', error);
+                            alert('Не удалось удалить счет матча');
+                          }
+                        }}
+                        style={{ padding: '8px 12px', borderRadius: 6, background: BUTTON_COLORS.DANGER, color: '#fff', border: `1px solid ${BUTTON_COLORS.DANGER}`, cursor: 'pointer' }}
+                      >
+                        Удалить матч
+                      </button>
+                    </>
+                  );
+                }
+                
+                if (!scoreDialog.isLive) {
+                  // Матч не начат
+                  return (
+                    <>
+                      <button
+                        onClick={startMatch}
+                        style={{ padding: '8px 12px', borderRadius: 6, background: BUTTON_COLORS.SUCCESS, color: '#fff', border: `1px solid ${BUTTON_COLORS.SUCCESS}`, cursor: 'pointer' }}
+                      >
+                        Начать матч
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (!scoreDialog?.matchId) return;
+                          const g = groups.find(x => x.idx === scoreDialog.group);
+                          const aTeam = g?.entries[scoreDialog.a - 1]?.team as any;
+                          const bTeam = g?.entries[scoreDialog.b - 1]?.team as any;
+                          if (!aTeam?.id || !bTeam?.id) return;
+                          const fmt = (team: any) => showFullName ? (team.full_name || '—') : (team.display_name || team.name || '—');
+                          
+                          const match = t?.matches?.find(m => m.id === scoreDialog.matchId);
+                          let existingSets = match?.sets || [];
+                          
+                          const isFreeFormat = (t as any)?.set_format?.games_to === 0;
+                          if (isFreeFormat && existingSets.length > 0) {
+                            const matchTeam1Id = scoreDialog.matchTeam1Id;
+                            const uiTeam1Id = aTeam.id;
+                            if (matchTeam1Id && uiTeam1Id && matchTeam1Id !== uiTeam1Id) {
+                              existingSets = existingSets.map((s: any) => ({
+                                ...s,
+                                games_1: s.games_2,
+                                games_2: s.games_1,
+                                tb_1: s.tb_2,
+                                tb_2: s.tb_1
+                              }));
+                            }
+                          }
+                          
+                          setScoreInput({
+                            matchId: scoreDialog.matchId!,
+                            team1: { id: aTeam.id, name: fmt(aTeam) },
+                            team2: { id: bTeam.id, name: fmt(bTeam) },
+                            matchTeam1Id: scoreDialog.matchTeam1Id ?? null,
+                            matchTeam2Id: scoreDialog.matchTeam2Id ?? null,
+                            existingSets: existingSets,
+                          });
+                          setScoreDialog(null);
+                        }}
+                        style={{ padding: '8px 12px', borderRadius: 6, background: BUTTON_COLORS.PRIMARY, color: '#fff', border: `1px solid ${BUTTON_COLORS.PRIMARY}`, cursor: 'pointer' }}
+                      >
+                        Ввести счёт
+                      </button>
+                    </>
+                  );
+                }
+                
+                // Матч идет (live)
+                return (
+                  <>
+                    <button
+                      onClick={cancelMatch}
+                      style={{ padding: '8px 12px', borderRadius: 6, background: BUTTON_COLORS.DANGER, color: '#fff', border: `1px solid ${BUTTON_COLORS.DANGER}`, cursor: 'pointer' }}
+                    >
+                      Отменить матч
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (!scoreDialog?.matchId) return;
+                        const g = groups.find(x => x.idx === scoreDialog.group);
+                        const aTeam = g?.entries[scoreDialog.a - 1]?.team as any;
+                        const bTeam = g?.entries[scoreDialog.b - 1]?.team as any;
+                        if (!aTeam?.id || !bTeam?.id) return;
+                        const fmt = (team: any) => showFullName ? (team.full_name || '—') : (team.display_name || team.name || '—');
+                        
+                        const match = t?.matches?.find(m => m.id === scoreDialog.matchId);
+                        const existingSets = match?.sets || [];
+                        
+                        setScoreInput({
+                          matchId: scoreDialog.matchId!,
+                          team1: { id: aTeam.id, name: fmt(aTeam) },
+                          team2: { id: bTeam.id, name: fmt(bTeam) },
+                          existingSets: existingSets,
+                        });
+                        setScoreDialog(null);
+                      }}
+                      style={{ padding: '8px 12px', borderRadius: 6, background: BUTTON_COLORS.PRIMARY, color: '#fff', border: `1px solid ${BUTTON_COLORS.PRIMARY}`, cursor: 'pointer' }}
+                    >
+                      Ввести счёт
+                    </button>
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>
