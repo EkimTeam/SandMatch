@@ -451,9 +451,15 @@ export const TournamentDetailPage: React.FC = () => {
         ((mm.team_1?.id === aId && mm.team_2?.id === bId) || (mm.team_1?.id === bId && mm.team_2?.id === aId)));
       if (!m) return '';
       const sets: any[] = (m as any).sets || [];
+      
+      // Красный кружочек для live-матчей
+      const liveDot = (
+        <span style={{ display: 'inline-block', width: '0.6em', height: '0.6em', background: '#dc3545', borderRadius: '50%', marginRight: 6, verticalAlign: 'middle' }} />
+      );
+      
       // Для live: если счёт уже есть — показываем счёт, иначе «идет»
       if (m.status === 'live' && sets.length === 0) {
-        return 'идет';
+        return <span style={{ fontWeight: 700 }}>{liveDot}идет</span>;
       }
       if (sets.length === 0) return '';
       const winnerId = (() => {
@@ -465,14 +471,6 @@ export const TournamentDetailPage: React.FC = () => {
       
       // Для свободного формата без победителя (ничья) - показываем счет без ориентации
       if (!winnerId) {
-        if (m.status === 'live') {
-          const liveDot = (
-            <span style={{ display: 'inline-block', width: '0.6em', height: '0.6em', background: '#dc3545', borderRadius: '50%', marginRight: 6, verticalAlign: 'middle' }} />
-          );
-          return <span style={{ fontWeight: 700 }}>{liveDot}счет error</span>;
-        }
-        
-        // Ничья - показываем счет как есть (для свободного формата)
         const aId = g.entries[rI]?.team?.id;
         const team1Id = m.team_1?.id;
         const aIsTeam1 = (aId === team1Id);
@@ -491,7 +489,8 @@ export const TournamentDetailPage: React.FC = () => {
           return tbShown != null ? `${left}:${right}(${tbShown})` : `${left}:${right}`;
         }).join(', ');
         
-        return <span style={{ fontWeight: 700 }}>{scoreStr}</span>;
+        const content = <span style={{ fontWeight: 700 }}>{scoreStr}</span>;
+        return m.status === 'live' ? <span>{liveDot}{content}</span> : content;
       }
       
       const team1Id = m.team_1?.id;
@@ -519,7 +518,8 @@ export const TournamentDetailPage: React.FC = () => {
           return tbShown != null ? `${left}:${right}(${tbShown})` : `${left}:${right}`;
         }).join(', ');
         
-        return <span style={{ fontWeight: 700 }}>{scoreStr}</span>;
+        const content = <span style={{ fontWeight: 700 }}>{scoreStr}</span>;
+        return m.status === 'live' ? <span>{liveDot}{content}</span> : content;
       }
       
       // Стандартная логика для обычных форматов (с победителем)
@@ -557,13 +557,7 @@ export const TournamentDetailPage: React.FC = () => {
         return tbShown != null ? `${left}:${right}(${tbShown})` : `${left}:${right}`;
       }).join(', ');
       const content = <span style={{ fontWeight: 700 }}>{scoreStr}</span>;
-      if (m.status === 'live') {
-        const liveDot = (
-          <span style={{ display: 'inline-block', width: '0.6em', height: '0.6em', background: '#dc3545', borderRadius: '50%', marginRight: 6, verticalAlign: 'middle' }} />
-        );
-        return <span>{liveDot}{content}</span>;
-      }
-      return content;
+      return m.status === 'live' ? <span>{liveDot}{content}</span> : content;
     } catch (e) {
       return '';
     }
@@ -673,6 +667,41 @@ export const TournamentDetailPage: React.FC = () => {
     if (t?.status === 'completed') return;
     
     if (!t || !scoreDialog?.matchId) return;
+    
+    // Проверка: оба участника не должны участвовать в других live-матчах
+    const g = groups.find(x => x.idx === scoreDialog.group);
+    const team1Id = g?.entries[scoreDialog.a - 1]?.team?.id;
+    const team2Id = g?.entries[scoreDialog.b - 1]?.team?.id;
+    
+    if (team1Id && team2Id) {
+      const liveMatches = (t.matches || []).filter((m: any) => 
+        m.status === 'live' && m.id !== scoreDialog.matchId
+      );
+      
+      const team1InLive = liveMatches.find((m: any) => 
+        m.team_1?.id === team1Id || m.team_2?.id === team1Id
+      );
+      const team2InLive = liveMatches.find((m: any) => 
+        m.team_1?.id === team2Id || m.team_2?.id === team2Id
+      );
+      
+      if (team1InLive || team2InLive) {
+        const team1Name = g?.entries[scoreDialog.a - 1]?.team?.display_name || 
+                          g?.entries[scoreDialog.a - 1]?.team?.name || 'Участник 1';
+        const team2Name = g?.entries[scoreDialog.b - 1]?.team?.display_name || 
+                          g?.entries[scoreDialog.b - 1]?.team?.name || 'Участник 2';
+        
+        if (team1InLive && team2InLive) {
+          alert(`Оба участника (${team1Name} и ${team2Name}) уже играют в других матчах. Завершите их текущие матчи перед началом нового.`);
+        } else if (team1InLive) {
+          alert(`${team1Name} уже играет в другом матче. Завершите текущий матч перед началом нового.`);
+        } else {
+          alert(`${team2Name} уже играет в другом матче. Завершите текущий матч перед началом нового.`);
+        }
+        return;
+      }
+    }
+    
     try {
       await api.post(`/tournaments/${t.id}/match_start/`, { match_id: scoreDialog.matchId });
       await reload();
@@ -935,8 +964,18 @@ export const TournamentDetailPage: React.FC = () => {
                 
                 if (isCompleted) {
                   // Завершенный матч со счетом
+                  const isFreeFormat = (t as any)?.set_format?.games_to === 0;
+                  
                   return (
                     <>
+                      {isFreeFormat && (
+                        <button
+                          onClick={startMatch}
+                          style={{ padding: '8px 12px', borderRadius: 6, background: BUTTON_COLORS.SUCCESS, color: '#fff', border: `1px solid ${BUTTON_COLORS.SUCCESS}`, cursor: 'pointer' }}
+                        >
+                          Начать матч
+                        </button>
+                      )}
                       <button
                         onClick={() => {
                           if (!scoreDialog?.matchId) return;
