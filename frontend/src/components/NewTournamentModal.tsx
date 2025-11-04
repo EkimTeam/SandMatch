@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import './NewTournamentModal.css';
+import { schedulePatternApi, SchedulePattern } from '../services/api';
 
 interface SetFormat {
   id: number;
@@ -37,9 +38,12 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
     participants: '',
     ko_participants: '',
     brackets_count: 1,
+    schedule_pattern_id: '',
   });
 
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
+  const [schedulePatterns, setSchedulePatterns] = useState<SchedulePattern[]>([]);
+  const [loadingPatterns, setLoadingPatterns] = useState(false);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -90,12 +94,41 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
       participants: formData.participants ? Number(formData.participants) : undefined,
       ko_participants: formData.ko_participants ? Number(formData.ko_participants) : undefined,
       brackets_count: 1, // Всегда 1 сетка
+      schedule_pattern_id: formData.schedule_pattern_id ? Number(formData.schedule_pattern_id) : undefined,
     };
     onSubmit(payload);
   };
 
   const isRoundRobin = formData.system === 'round_robin';
   const isKnockout = formData.system === 'knockout';
+
+  // Загрузка шаблонов расписания для круговой системы
+  useEffect(() => {
+    if (formData.system === 'round_robin') {
+      loadSchedulePatterns();
+    }
+  }, [formData.system]);
+
+  const loadSchedulePatterns = async () => {
+    setLoadingPatterns(true);
+    try {
+      const patterns = await schedulePatternApi.getAll();
+      const roundRobinPatterns = patterns
+        .filter(p => p.tournament_system === 'round_robin')
+        .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+      setSchedulePatterns(roundRobinPatterns);
+      
+      // Автоматически выбираем "Алгоритм Бергера" по умолчанию
+      const bergerPattern = roundRobinPatterns.find(p => p.name === 'Алгоритм Бергера');
+      if (bergerPattern && !formData.schedule_pattern_id) {
+        setFormData(prev => ({ ...prev, schedule_pattern_id: bergerPattern.id.toString() }));
+      }
+    } catch (error) {
+      console.error('Ошибка загрузки шаблонов расписания:', error);
+    } finally {
+      setLoadingPatterns(false);
+    }
+  };
 
   // Обновляем дефолтные значения при поступлении справочников
   useEffect(() => {
@@ -216,8 +249,23 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
                   />
                 </div>
                 <div className="form-row">
-                  <label>Порядок игр</label>
-                  <div className="muted">выбирается/генерируется (скоро)</div>
+                  <label htmlFor="schedule_pattern_id">Порядок игр</label>
+                  {loadingPatterns ? (
+                    <div className="muted">Загрузка шаблонов...</div>
+                  ) : (
+                    <select 
+                      id="schedule_pattern_id" 
+                      name="schedule_pattern_id" 
+                      value={formData.schedule_pattern_id} 
+                      onChange={handleChange}
+                    >
+                      {schedulePatterns.map(pattern => (
+                        <option key={pattern.id} value={pattern.id}>
+                          {pattern.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
                 <div className="form-row">
                   <label htmlFor="ruleset_id">Регламент</label>

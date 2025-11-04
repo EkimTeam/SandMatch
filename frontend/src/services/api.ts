@@ -63,6 +63,26 @@ export interface Tournament {
   updated_at: string;
 }
 
+export interface SchedulePattern {
+  id: number;
+  name: string;
+  pattern_type: 'berger' | 'snake' | 'custom';
+  pattern_type_display: string;
+  tournament_system: 'round_robin' | 'knockout';
+  tournament_system_display: string;
+  description: string;
+  participants_count: number | null;
+  custom_schedule: {
+    rounds: Array<{
+      round: number;
+      pairs: Array<[number, number]>;
+    }>;
+  } | null;
+  is_system: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ApiResponse<T> {
   results?: T[];
   count?: number;
@@ -306,6 +326,47 @@ export const matchApi = {
   resetMatch: async (tournamentId: number, matchId: number): Promise<{ ok: boolean }> => {
     const response = await api.post(`/tournaments/${tournamentId}/match_reset/`, {
       match_id: matchId,
+    });
+    return response.data;
+  },
+};
+
+// API методы для шаблонов расписания
+export const schedulePatternApi = {
+  // Получить все шаблоны
+  getAll: async (): Promise<SchedulePattern[]> => {
+    const response = await api.get<any>('/schedule-patterns/');
+    const data = response.data as any;
+    if (Array.isArray(data)) return data as SchedulePattern[];
+    if (data && Array.isArray(data.results)) return data.results as SchedulePattern[];
+    return [] as SchedulePattern[];
+  },
+
+  // Получить шаблоны по количеству участников
+  getByParticipants: async (count: number, system: string = 'round_robin'): Promise<SchedulePattern[]> => {
+    const response = await api.get<any>('/schedule-patterns/by_participants/', {
+      params: { count, system }
+    });
+    const data = response.data as any;
+    if (Array.isArray(data)) return data as SchedulePattern[];
+    if (data && Array.isArray(data.results)) return data.results as SchedulePattern[];
+    return [] as SchedulePattern[];
+  },
+
+  // Пересоздать расписание группы
+  regenerateGroupSchedule: async (
+    tournamentId: number,
+    groupName: string,
+    patternId: number
+  ): Promise<{
+    ok: boolean;
+    deleted: number;
+    created: number;
+    pattern: SchedulePattern;
+  }> => {
+    const response = await api.post(`/tournaments/${tournamentId}/regenerate_group_schedule/`, {
+      group_name: groupName,
+      pattern_id: patternId,
     });
     return response.data;
   },

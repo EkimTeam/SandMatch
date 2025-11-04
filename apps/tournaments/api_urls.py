@@ -8,6 +8,7 @@ router = DefaultRouter()
 router.register(r'tournaments', api_views.TournamentViewSet)
 router.register(r'participants', api_views.ParticipantViewSet)
 router.register(r'matches', api_views.MatchViewSet)
+router.register(r'schedule-patterns', api_views.SchedulePatternViewSet, basename='schedulepattern')
 
 urlpatterns = [
     # ВАЖНО: кастомные пути выше router.urls, чтобы не конфликтовать с tournaments/<pk>
