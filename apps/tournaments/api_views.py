@@ -41,7 +41,7 @@ from apps.tournaments.services.round_robin import (
 class TournamentViewSet(viewsets.ModelViewSet):
     queryset = Tournament.objects.all().order_by("-created_at")
     serializer_class = TournamentSerializer
-    permission_classes = [IsAdminOrReadOnly]
+    permission_classes = [AllowAny]
 
     def destroy(self, request, *args, **kwargs):
         """Переопределяем стандартное удаление для корректной обработки олимпийских турниров."""
@@ -629,6 +629,182 @@ class TournamentViewSet(viewsets.ModelViewSet):
             tournament.save(update_fields=['status'])
         
         return Response({"ok": True})
+
+    # --- ТУРНИРЫ КИНГ ---
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=['post'], url_path='lock_participants_king', permission_classes=[IsAuthenticated])
+    def lock_participants_king(self, request, pk=None):
+        """Фиксация участников для турнира Кинг и генерация матчей"""
+        tournament = self.get_object()
+        
+        if tournament.system != Tournament.System.KING:
+            return Response({'error': 'Не турнир Кинг'}, status=400)
+        
+        if tournament.status == Tournament.Status.COMPLETED:
+            return Response({'error': 'Турнир завершён, изменения запрещены'}, status=400)
+        
+        # Валидация: 4-16 участников в каждой группе
+        groups_count = max(1, tournament.groups_count or 1)
+        for group_idx in range(1, groups_count + 1):
+            entries_count = tournament.entries.filter(group_index=group_idx).count()
+            if not (4 <= entries_count <= 16):
+                return Response({
+                    'error': f'Группа {group_idx}: должно быть от 4 до 16 участников, найдено {entries_count}'
+                }, status=400)
+        
+        try:
+            # Удаляем старые незавершенные матчи
+            Match.objects.filter(
+                tournament=tournament,
+                stage=Match.Stage.GROUP,
+                status=Match.Status.SCHEDULED
+            ).delete()
+            
+            # Генерация и сохранение матчей
+            from apps.tournaments.services.king import generate_king_matches, persist_king_matches
+            generated = generate_king_matches(tournament)
+            created = persist_king_matches(tournament, generated)
+            
+            # Изменить статус турнира на active
+            if tournament.status == Tournament.Status.CREATED:
+                tournament.status = Tournament.Status.ACTIVE
+                tournament.save(update_fields=['status'])
+            
+            return Response({'ok': True, 'created': created})
+            
+        except Exception as e:
+            return Response(
+                {'ok': False, 'error': f'Ошибка при создании расписания: {str(e)}'}, 
+                status=500
+            )
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=['get'], url_path='king_schedule', permission_classes=[AllowAny])
+    def king_schedule(self, request, pk=None):
+        """Получить расписание турнира Кинг для отображения"""
+        tournament = self.get_object()
+        
+        if tournament.system != Tournament.System.KING:
+            return Response({'error': 'Не турнир Кинг'}, status=400)
+        
+        groups_count = max(1, tournament.groups_count or 1)
+        schedule = {}
+        
+        for group_idx in range(1, groups_count + 1):
+            # Получаем участников группы
+            entries = list(
+                tournament.entries.filter(group_index=group_idx)
+                .select_related('team__player_1', 'team__player_2')
+                .order_by('row_index')
+            )
+            
+            # Получаем матчи группы
+            matches = Match.objects.filter(
+                tournament=tournament,
+                stage=Match.Stage.GROUP,
+                group_index=group_idx
+            ).select_related('team_1__player_1', 'team_1__player_2', 'team_2__player_1', 'team_2__player_2', 'winner').prefetch_related('sets').order_by('round_index', 'order_in_round')
+            
+            # Группируем по турам
+            rounds_dict = {}
+            for match in matches:
+                round_num = match.round_index or 1
+                if round_num not in rounds_dict:
+                    rounds_dict[round_num] = []
+                
+                # Определяем игроков в парах
+                team1_players = []
+                team2_players = []
+                
+                if match.team_1 and match.team_1.player_1:
+                    team1_players.append({
+                        'id': match.team_1.player_1.id,
+                        'name': f"{match.team_1.player_1.last_name} {match.team_1.player_1.first_name}",
+                        'display_name': match.team_1.player_1.display_name or match.team_1.player_1.first_name
+                    })
+                if match.team_1 and match.team_1.player_2:
+                    team1_players.append({
+                        'id': match.team_1.player_2.id,
+                        'name': f"{match.team_1.player_2.last_name} {match.team_1.player_2.first_name}",
+                        'display_name': match.team_1.player_2.display_name or match.team_1.player_2.first_name
+                    })
+                
+                if match.team_2 and match.team_2.player_1:
+                    team2_players.append({
+                        'id': match.team_2.player_1.id,
+                        'name': f"{match.team_2.player_1.last_name} {match.team_2.player_1.first_name}",
+                        'display_name': match.team_2.player_1.display_name or match.team_2.player_1.first_name
+                    })
+                if match.team_2 and match.team_2.player_2:
+                    team2_players.append({
+                        'id': match.team_2.player_2.id,
+                        'name': f"{match.team_2.player_2.last_name} {match.team_2.player_2.first_name}",
+                        'display_name': match.team_2.player_2.display_name or match.team_2.player_2.first_name
+                    })
+                
+                # Получить счёт
+                score_str = None
+                if match.status == Match.Status.COMPLETED and match.winner_id:
+                    sets = match.sets.all().order_by('index')
+                    if sets:
+                        score_parts = []
+                        for s in sets:
+                            if s.is_tiebreak_only:
+                                score_parts.append(f"{s.tb_1}:{s.tb_2}TB")
+                            else:
+                                score_parts.append(f"{s.games_1}:{s.games_2}")
+                        score_str = " ".join(score_parts)
+                
+                rounds_dict[round_num].append({
+                    'id': match.id,
+                    'team1_players': team1_players,
+                    'team2_players': team2_players,
+                    'score': score_str,
+                    'status': match.status,
+                })
+            
+            # Формируем итоговый список туров
+            rounds_list = []
+            for round_num in sorted(rounds_dict.keys()):
+                rounds_list.append({
+                    'round': round_num,
+                    'matches': rounds_dict[round_num]
+                })
+            
+            schedule[str(group_idx)] = {
+                'participants': [
+                    {
+                        'id': e.id,
+                        'team_id': e.team_id,
+                        'name': f"{e.team.player_1.last_name} {e.team.player_1.first_name}",
+                        'display_name': e.team.player_1.display_name or e.team.player_1.first_name,
+                        'row_index': e.row_index
+                    }
+                    for e in entries
+                ],
+                'rounds': rounds_list
+            }
+        
+        return Response({'ok': True, 'schedule': schedule})
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=['post'], url_path='set_king_calculation_mode', permission_classes=[IsAuthenticated])
+    def set_king_calculation_mode(self, request, pk=None):
+        """Изменить режим подсчета G-/M+/NO для турнира Кинг"""
+        tournament = self.get_object()
+        
+        if tournament.system != Tournament.System.KING:
+            return Response({'error': 'Не турнир Кинг'}, status=400)
+        
+        mode = request.data.get('mode')
+        
+        if mode not in ['g_minus', 'm_plus', 'no']:
+            return Response({'error': 'Неверный режим. Допустимые: g_minus, m_plus, no'}, status=400)
+        
+        tournament.king_calculation_mode = mode
+        tournament.save(update_fields=['king_calculation_mode'])
+        
+        return Response({'ok': True, 'mode': mode})
 
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="match_start", permission_classes=[IsAuthenticated])

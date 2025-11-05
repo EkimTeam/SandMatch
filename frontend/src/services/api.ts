@@ -61,6 +61,54 @@ export interface Tournament {
   participants_count: number;
   created_at: string;
   updated_at: string;
+  system?: 'round_robin' | 'knockout' | 'king';
+  king_calculation_mode?: 'g_minus' | 'm_plus' | 'no';
+  groups_count?: number;
+  planned_participants?: number;
+  participant_mode?: 'singles' | 'doubles';
+  set_format_id?: number;
+}
+
+// Типы для турниров Кинг
+export type KingCalculationMode = 'g_minus' | 'm_plus' | 'no';
+
+export interface KingPlayer {
+  id: number;
+  name: string;
+  display_name: string;
+}
+
+export interface KingMatch {
+  id: number;
+  team1_players: KingPlayer[];
+  team2_players: KingPlayer[];
+  score: string | null;
+  status: string;
+}
+
+export interface KingRound {
+  round: number;
+  matches: KingMatch[];
+}
+
+export interface KingParticipant {
+  id: number;
+  team_id: number;
+  name: string;
+  display_name: string;
+  row_index: number;
+}
+
+export interface KingGroupSchedule {
+  participants: KingParticipant[];
+  rounds: KingRound[];
+}
+
+export interface KingScheduleResponse {
+  ok: boolean;
+  schedule: {
+    [groupIndex: string]: KingGroupSchedule;
+  };
 }
 
 export interface SchedulePattern {
@@ -68,7 +116,7 @@ export interface SchedulePattern {
   name: string;
   pattern_type: 'berger' | 'snake' | 'custom';
   pattern_type_display: string;
-  tournament_system: 'round_robin' | 'knockout';
+  tournament_system: 'round_robin' | 'knockout' | 'king';
   tournament_system_display: string;
   description: string;
   participants_count: number | null;
@@ -229,6 +277,33 @@ export const tournamentApi = {
       participantData
     );
     return response.data;
+  },
+
+  // --- МЕТОДЫ ДЛЯ ТУРНИРОВ КИНГ ---
+  
+  // Зафиксировать участников и сгенерировать матчи для турнира Кинг
+  lockParticipantsKing: async (tournamentId: number) => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/lock_participants_king/`);
+    return data;
+  },
+
+  getKingSchedule: async (tournamentId: number): Promise<KingScheduleResponse> => {
+    const { data } = await api.get(`/tournaments/${tournamentId}/king_schedule/`);
+    return data;
+  },
+
+  setKingCalculationMode: async (tournamentId: number, mode: KingCalculationMode) => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/set_king_calculation_mode/`, { mode });
+    return data;
+  },
+
+  complete: async (tournamentId: number) => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/complete/`);
+    return data;
+  },
+
+  delete: async (tournamentId: number) => {
+    await api.delete(`/tournaments/${tournamentId}/`);
   },
 };
 

@@ -13,6 +13,7 @@ class SchedulePattern(models.Model):
     class TournamentSystem(models.TextChoices):
         ROUND_ROBIN = "round_robin", "Круговая система"
         KNOCKOUT = "knockout", "Олимпийская система"
+        KING = "king", "Кинг"
 
     name = models.CharField(max_length=100, verbose_name="Название")
 
@@ -227,10 +228,16 @@ class Tournament(models.Model):
     class System(models.TextChoices):
         ROUND_ROBIN = "round_robin", "Круговая"
         KNOCKOUT = "knockout", "Олимпийка"
+        KING = "king", "Кинг"
 
     class ParticipantMode(models.TextChoices):
         SINGLES = "singles", "Одиночки"
         DOUBLES = "doubles", "Пары"
+
+    class KingCalculationMode(models.TextChoices):
+        G_MINUS = "g_minus", "G- (не учитывать лишние матчи)"
+        M_PLUS = "m_plus", "M+ (добавить средние за недостающие)"
+        NO = "no", "NO (без компенсации)"
 
     name = models.CharField(max_length=200)
     date = models.DateField()
@@ -252,6 +259,16 @@ class Tournament(models.Model):
         blank=True,
         verbose_name="Шаблоны расписания для групп",
         help_text="Сопоставление названия группы с ID выбранного шаблона расписания"
+    )
+
+    king_calculation_mode = models.CharField(
+        max_length=10,
+        choices=KingCalculationMode.choices,
+        default=KingCalculationMode.G_MINUS,
+        null=True,
+        blank=True,
+        verbose_name="Режим подсчета (Кинг)",
+        help_text="Режим компенсации разного количества матчей в турнире Кинг"
     )
 
     created_at = models.DateTimeField(auto_now_add=True)

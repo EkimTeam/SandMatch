@@ -175,6 +175,7 @@ class TournamentSerializer(serializers.ModelSerializer):
     planned_participants = serializers.IntegerField(read_only=True)
     used_player_ids = serializers.SerializerMethodField()
     group_schedule_patterns = serializers.SerializerMethodField()
+    king_calculation_mode = serializers.CharField(read_only=True)
 
     class Meta:
         model = Tournament
@@ -190,6 +191,7 @@ class TournamentSerializer(serializers.ModelSerializer):
             "planned_participants",
             "used_player_ids",
             "group_schedule_patterns",
+            "king_calculation_mode",
             "tournament_type",
             "status",
             "set_format",

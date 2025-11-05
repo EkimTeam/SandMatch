@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 from . import api_views
 from .api_new_round_robin import new_round_robin
 from .api_new_knockout import new_knockout
+from .api_new_king import new_king
 
 router = DefaultRouter()
 router.register(r'tournaments', api_views.TournamentViewSet)
@@ -17,6 +18,7 @@ urlpatterns = [
     path('rulesets/', api_views.rulesets_list, name='api_rulesets'),
     path('tournaments/new_round_robin/', new_round_robin, name='api_tournament_create_rr'),
     path('tournaments/new_knockout/', new_knockout, name='api_tournament_create_ko'),
+    path('tournaments/new_king/', new_king, name='api_tournament_create_king'),
     # Управляющие действия без CSRF
     path('tournaments/<int:pk>/complete/', api_views.tournament_complete, name='api_tournament_complete'),
     path('tournaments/<int:pk>/remove/', api_views.tournament_remove, name='api_tournament_remove'),

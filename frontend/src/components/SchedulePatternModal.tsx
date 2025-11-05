@@ -9,6 +9,7 @@ interface SchedulePatternModalProps {
   tournamentId: number;
   currentPatternId?: number | null;
   onSuccess: () => void;
+  tournamentSystem?: 'round_robin' | 'knockout';
 }
 
 const SchedulePatternModal: React.FC<SchedulePatternModalProps> = ({
@@ -19,6 +20,7 @@ const SchedulePatternModal: React.FC<SchedulePatternModalProps> = ({
   tournamentId,
   currentPatternId,
   onSuccess,
+  tournamentSystem = 'round_robin',
 }) => {
   const [patterns, setPatterns] = useState<SchedulePattern[]>([]);
   const [selectedPattern, setSelectedPattern] = useState<SchedulePattern | null>(null);
@@ -30,17 +32,17 @@ const SchedulePatternModal: React.FC<SchedulePatternModalProps> = ({
     if (isOpen) {
       loadPatterns();
     }
-  }, [isOpen, participantsCount, currentPatternId]);
+  }, [isOpen, participantsCount, currentPatternId, tournamentSystem]);
 
   const loadPatterns = async () => {
     setLoading(true);
     setError(null);
     try {
       // При нечетном N — подгружаем два списка: для N и для N+1, затем мержим
-      let baseList = await schedulePatternApi.getByParticipants(participantsCount, 'round_robin');
+      let baseList = await schedulePatternApi.getByParticipants(participantsCount, tournamentSystem);
       let plusOneList: typeof baseList = [];
       if (participantsCount % 2 === 1) {
-        plusOneList = await schedulePatternApi.getByParticipants(participantsCount + 1, 'round_robin');
+        plusOneList = await schedulePatternApi.getByParticipants(participantsCount + 1, tournamentSystem);
       }
 
       // Объединяем по id

@@ -247,6 +247,17 @@ export const TournamentDetailPage: React.FC = () => {
       const resp = await fetch(`/api/tournaments/${id}/`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
+      
+      // Редирект на правильную страницу в зависимости от системы турнира
+      if (data.system === 'king') {
+        nav(`/tournaments/${id}/king`);
+        return;
+      }
+      if (data.system === 'knockout') {
+        nav(`/tournaments/${id}/knockout`);
+        return;
+      }
+      
       setT(data);
       setShowTech(Array.from({ length: data.groups_count || 1 }).map(() => false));
       // Определить состояние фиксации на основе статуса турнира
