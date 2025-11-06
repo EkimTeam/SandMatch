@@ -2,7 +2,7 @@ from rest_framework import serializers
 from apps.players.models import Player
 from apps.teams.models import Team
 from apps.matches.models import Match, MatchSet
-from .models import Tournament, TournamentEntry, SetFormat, SchedulePattern
+from .models import Tournament, TournamentEntry, SetFormat, SchedulePattern, Ruleset
 
 
 class PlayerSerializer(serializers.ModelSerializer):
@@ -176,6 +176,7 @@ class TournamentSerializer(serializers.ModelSerializer):
     used_player_ids = serializers.SerializerMethodField()
     group_schedule_patterns = serializers.SerializerMethodField()
     king_calculation_mode = serializers.CharField(read_only=True)
+    ruleset = serializers.SerializerMethodField()
 
     class Meta:
         model = Tournament
@@ -200,6 +201,7 @@ class TournamentSerializer(serializers.ModelSerializer):
             "participants_count",
             "created_at",
             "updated_at",
+            "ruleset",
         ]
 
     def get_participants_count(self, obj: Tournament) -> int:
@@ -254,6 +256,17 @@ class TournamentSerializer(serializers.ModelSerializer):
                 "max_sets": sf.max_sets,
                 "tiebreak_points": sf.tiebreak_points,
                 "decider_tiebreak_points": sf.decider_tiebreak_points,
+            }
+        except Exception:
+            return None
+
+    def get_ruleset(self, obj: Tournament):
+        try:
+            rs: Ruleset = obj.ruleset
+            return {
+                "id": rs.id,
+                "name": rs.name,
+                "ordering_priority": rs.ordering_priority,
             }
         except Exception:
             return None

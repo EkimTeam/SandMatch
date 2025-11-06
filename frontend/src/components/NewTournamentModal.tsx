@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import './NewTournamentModal.css';
-import { schedulePatternApi, SchedulePattern } from '../services/api';
+import { schedulePatternApi, SchedulePattern, tournamentApi } from '../services/api';
 
 interface SetFormat {
   id: number;
@@ -14,7 +14,7 @@ interface Ruleset {
 
 interface NewTournamentModalProps {
   setFormats: SetFormat[];
-  rulesets: Ruleset[];
+  rulesets: Ruleset[]; // fallback, если локальная загрузка не сработала
   onSubmit: (data: any) => void;
   onClose: () => void;
 }
@@ -25,8 +25,12 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
   onSubmit,
   onClose,
 }) => {
-  const defaultRulesetId = rulesets.find(r => r.name.includes('ITF'))?.id || rulesets[0]?.id || '';
-  const kingDefaultRulesetId = rulesets.find(r => r.name.includes('победы>разница сетов между всеми'))?.id || defaultRulesetId;
+  // Дефолт для круговой по заданной строке, затем fallback на (ITF), затем на первый
+  const RR_DEFAULT_NAME = '(ITF): победы > личные встречи > разница сетов между всеми > личные встречи > разница геймов между всеми > личные встречи';
+  const KING_DEFAULT_NAME = 'победы > разница геймов между всеми > разница геймов между собой > личные встречи';
+  const defaultRulesetId = (rulesets.find(r => r.name === RR_DEFAULT_NAME)?.id)
+    || (rulesets.find(r => r.name.includes('ITF'))?.id)
+    || rulesets[0]?.id || '';
 
   const [formData, setFormData] = useState({
     name: '',
@@ -45,6 +49,9 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
   const [schedulePatterns, setSchedulePatterns] = useState<SchedulePattern[]>([]);
   const [loadingPatterns, setLoadingPatterns] = useState(false);
+  // Локально загруженные регламенты по выбранной системе
+  const [localRulesets, setLocalRulesets] = useState<Ruleset[]>([]);
+  const effectiveRulesets = (localRulesets && localRulesets.length > 0) ? localRulesets : rulesets;
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -133,12 +140,23 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
 
   // Автоматический выбор регламента для Кинг
   useEffect(() => {
-    if (formData.system === 'king' && formData.ruleset_id === defaultRulesetId) {
-      setFormData(prev => ({ ...prev, ruleset_id: kingDefaultRulesetId }));
-    } else if (formData.system === 'round_robin' && formData.ruleset_id === kingDefaultRulesetId) {
-      setFormData(prev => ({ ...prev, ruleset_id: defaultRulesetId }));
+    if (formData.system === 'king') {
+      const desired = (localRulesets.find(r => r.name === KING_DEFAULT_NAME)?.id)
+        || (effectiveRulesets.find(r => r.name === KING_DEFAULT_NAME)?.id)
+        || formData.ruleset_id;
+      if (desired && formData.ruleset_id !== desired) {
+        setFormData(prev => ({ ...prev, ruleset_id: desired }));
+      }
+    } else if (formData.system === 'round_robin') {
+      const desired = (localRulesets.find(r => r.name === RR_DEFAULT_NAME)?.id)
+        || (effectiveRulesets.find(r => r.name === RR_DEFAULT_NAME)?.id)
+        || (effectiveRulesets.find(r => r.name.includes('ITF'))?.id)
+        || formData.ruleset_id;
+      if (desired && formData.ruleset_id !== desired) {
+        setFormData(prev => ({ ...prev, ruleset_id: desired }));
+      }
     }
-  }, [formData.system]);
+  }, [formData.system, localRulesets]);
 
   const loadSchedulePatterns = async (system: 'round_robin' | 'king') => {
     setLoadingPatterns(true);
@@ -171,13 +189,36 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
   // Обновляем дефолтные значения при поступлении справочников
   useEffect(() => {
     const sf = setFormats[0]?.id;
-    const rs = rulesets.find(r => r.name.includes('ITF'))?.id || rulesets[0]?.id;
+    const rs = (rulesets.find(r => r.name === RR_DEFAULT_NAME)?.id)
+      || (rulesets.find(r => r.name.includes('ITF'))?.id)
+      || rulesets[0]?.id;
     setFormData(prev => ({
       ...prev,
       set_format_id: prev.set_format_id || (sf ?? ''),
       ruleset_id: prev.ruleset_id || (rs ?? ''),
     }));
   }, [setFormats, rulesets]);
+
+  // Загрузка регламентов по системе (round_robin | king)
+  useEffect(() => {
+    const load = async () => {
+      try {
+        if (isRoundRobin) {
+          const list = await tournamentApi.getRulesets('round_robin');
+          setLocalRulesets(list);
+        } else if (isKing) {
+          const list = await tournamentApi.getRulesets('king');
+          setLocalRulesets(list);
+        } else {
+          setLocalRulesets([]);
+        }
+      } catch (e) {
+        setLocalRulesets([]);
+      }
+    };
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.system]);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -308,7 +349,7 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
                 <div className="form-row">
                   <label htmlFor="ruleset_id">Регламент</label>
                   <select id="ruleset_id" name="ruleset_id" value={formData.ruleset_id} onChange={handleChange}>
-                    {rulesets.map(ruleset => (
+                    {effectiveRulesets.map(ruleset => (
                       <option key={ruleset.id} value={ruleset.id}>
                         {ruleset.name}
                       </option>
@@ -389,7 +430,7 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
                 <div className="form-row">
                   <label htmlFor="ruleset_id">Регламент</label>
                   <select id="ruleset_id" name="ruleset_id" value={formData.ruleset_id} onChange={handleChange}>
-                    {rulesets.map(ruleset => (
+                    {effectiveRulesets.map(ruleset => (
                       <option key={ruleset.id} value={ruleset.id}>
                         {ruleset.name}
                       </option>

@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { formatDate } from '../services/date';
-import api, { matchApi, tournamentApi } from '../services/api';
+import api, { matchApi, tournamentApi, Ruleset as ApiRuleset } from '../services/api';
+import { getAccessToken } from '../services/auth';
 import { ParticipantPickerModal } from '../components/ParticipantPickerModal';
 import { MatchScoreModal } from '../components/MatchScoreModal';
 import FreeFormatScoreModal from '../components/FreeFormatScoreModal';
@@ -158,6 +159,9 @@ export const TournamentDetailPage: React.FC = () => {
   const [hoveredMatch, setHoveredMatch] = useState<{ groupIdx: number; row1: number; row2: number } | null>(null);
   // Модальное окно выбора формата расписания
   const [schedulePatternModal, setSchedulePatternModal] = useState<{ groupName: string; participantsCount: number; currentPatternId?: number | null } | null>(null);
+  // Регламенты для круговой системы
+  const [rrRulesets, setRrRulesets] = useState<ApiRuleset[]>([]);
+  const [savingRrRuleset, setSavingRrRuleset] = useState(false);
 
   // Динамическая загрузка html2canvas с CDN
   const ensureHtml2Canvas = async (): Promise<any> => {
@@ -633,6 +637,33 @@ export const TournamentDetailPage: React.FC = () => {
       await fetchGroupSchedule();
     })();
   }, [fetchGroupSchedule]);
+
+  // Загрузка регламентов для круговой системы (только для отображения селекта)
+  useEffect(() => {
+    const loadRulesets = async () => {
+      try {
+        const list = await tournamentApi.getRulesets('round_robin');
+        setRrRulesets(list);
+      } catch (e) {
+        console.warn('Не удалось загрузить регламенты RR:', e);
+      }
+    };
+    loadRulesets();
+  }, []);
+
+  const handleRrRulesetChange = async (rulesetId: number) => {
+    if (!t) return;
+    try {
+      setSavingRrRuleset(true);
+      await tournamentApi.setRuleset(t.id, rulesetId);
+      await reload();
+      await refreshGroupStats();
+    } catch (e: any) {
+      alert(e?.response?.data?.error || 'Ошибка при изменении регламента');
+    } finally {
+      setSavingRrRuleset(false);
+    }
+  };
 
   // Группы: равномерное распределение существующих участников по group_index,
   // если group_index не задан — распределим по порядку.
@@ -1440,6 +1471,31 @@ export const TournamentDetailPage: React.FC = () => {
           {/* TODO: как появиться сайт вставить сюда URL */}
         </div>
       </div>
+
+      {/* Регламент (круговая): селект вверху страницы, не попадает в экспорт */}
+      {t?.system === 'round_robin' && (
+        <div className="mb-4 flex items-center gap-3 flex-wrap" data-export-exclude="true">
+          <span className="font-semibold">Регламент:</span>
+          <div className="flex-1 min-w-[240px]" style={{ maxWidth: '100%' }}>
+            <select
+              className="w-full border rounded px-2 py-1 text-sm"
+              value={(t as any)?.ruleset?.id || ''}
+              disabled={!getAccessToken() || savingRrRuleset}
+              onChange={(e) => {
+                const val = Number(e.target.value);
+                if (!Number.isNaN(val)) handleRrRulesetChange(val);
+              }}
+            >
+              {(!rrRulesets || rrRulesets.length === 0) && (
+                <option value="">Загрузка…</option>
+              )}
+              {rrRulesets.map((rs) => (
+                <option key={rs.id} value={rs.id}>{rs.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
 
       {/* Модалка выбора участника */}
       {pickerOpen && (

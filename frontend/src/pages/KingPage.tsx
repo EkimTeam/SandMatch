@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import api, { tournamentApi, Tournament, KingScheduleResponse, KingCalculationMode } from '../services/api';
+import api, { tournamentApi, Tournament, KingScheduleResponse, KingCalculationMode, Ruleset } from '../services/api';
 import { ParticipantPickerModal } from '../components/ParticipantPickerModal';
 import { MatchScoreModal } from '../components/MatchScoreModal';
+import { computeKingGroupRanking } from '../utils/kingRanking';
 
 export const KingPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -26,6 +27,7 @@ export const KingPage: React.FC = () => {
     existingSets?: any[];
   }>(null);
   const exportRef = useRef<HTMLDivElement | null>(null);
+  const [rulesets, setRulesets] = useState<Ruleset[]>([]);
 
   // Загрузка данных турнира
   useEffect(() => {
@@ -38,6 +40,19 @@ export const KingPage: React.FC = () => {
       loadSchedule();
     }
   }, [tournament]);
+
+  // Загрузка регламентов (единожды)
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const list = await tournamentApi.getRulesets('king');
+        setRulesets(list);
+      } catch (e) {
+        console.error('Failed to load rulesets:', e);
+      }
+    };
+    load();
+  }, []);
 
   const loadTournament = async () => {
     try {
@@ -66,6 +81,18 @@ export const KingPage: React.FC = () => {
       setError(err.response?.data?.error || 'Ошибка загрузки турнира');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRulesetChange = async (rulesetId: number) => {
+    try {
+      const result = await tournamentApi.setRuleset(tournamentId, rulesetId);
+      if (result.ok) {
+        await loadTournament();
+        // schedule и таблица пересчитаются автоматически на основе обновленного ruleset
+      }
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Ошибка при изменении регламента');
     }
   };
 
@@ -201,7 +228,7 @@ export const KingPage: React.FC = () => {
 
       {/* Радиокнопки G- / M+ / NO */}
       {tournament.status === 'active' && (
-        <div className="mb-4 flex items-center gap-4" data-export-exclude="true">
+        <div className="mb-4 flex items-center gap-4 flex-wrap" data-export-exclude="true">
           <span className="font-semibold">Режим подсчета:</span>
           <label className="flex items-center gap-2 cursor-pointer">
             <input
@@ -242,6 +269,26 @@ export const KingPage: React.FC = () => {
               <span title={tip} className="text-gray-500 cursor-help select-none">ℹ️</span>
             );
           })()}
+          {/* Регламент: выпадающий список */}
+          <span className="font-semibold ml-4">Регламент:</span>
+          <div className="flex-1 min-w-[240px]" style={{ maxWidth: '100%' }}>
+            <select
+              className="w-full border rounded px-2 py-1 text-sm"
+              value={tournament.ruleset?.id || ''}
+              onChange={(e) => {
+                const val = Number(e.target.value);
+                if (!Number.isNaN(val)) handleRulesetChange(val);
+              }}
+            >
+              {/* Пустой вариант, если не загружено */}
+              {(!rulesets || rulesets.length === 0) && (
+                <option value="">Загрузка…</option>
+              )}
+              {rulesets.map((rs) => (
+                <option key={rs.id} value={rs.id}>{rs.name}</option>
+              ))}
+            </select>
+          </div>
         </div>
       )}
 
@@ -430,7 +477,7 @@ export const KingPage: React.FC = () => {
                       }}
                       className="mt-2 px-3 py-1.5 text-sm text-white bg-green-600 rounded hover:bg-green-700 transition-colors"
                     >
-                      Выбрать формат расписания
+                      Выбрать формат<br/>расписания
                     </button>
                   )}
                 </div>
@@ -442,7 +489,13 @@ export const KingPage: React.FC = () => {
 
       {tournament.status === 'active' && schedule && (
         <div className="space-y-8">
-          {Object.entries(schedule.schedule).map(([groupIndex, groupData]) => (
+          {Object.entries(schedule.schedule).map(([groupIndex, groupData]) => {
+            const rankMap = computeKingGroupRanking(tournament, groupData, groupIndex, calculationMode);
+            const toRoman = (num: number) => {
+              const romans: [number, string][] = [[1000,'M'],[900,'CM'],[500,'D'],[400,'CD'],[100,'C'],[90,'XC'],[50,'L'],[40,'XL'],[10,'X'],[9,'IX'],[5,'V'],[4,'IV'],[1,'I']];
+              let n = Math.max(1, Math.floor(num)); let res=''; for(const [v,s] of romans){ while(n>=v){res+=s;n-=v;} } return res;
+            };
+            return (
             <div key={groupIndex} style={{ marginBottom: 22 }}>
               <div style={{ marginBottom: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <strong>Группа {groupIndex}</strong>
@@ -475,6 +528,7 @@ export const KingPage: React.FC = () => {
                       {groupData.rounds.map((round) => (
                         <th key={round.round} style={{ border: '1px solid #e7e7ea', padding: '6px 8px' }}>Тур {round.round}</th>
                       ))}
+                      <th style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 70 }}>G-/M+</th>
                       <th className={showTech ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 80 }}>Победы</th>
                       <th className={showTech ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 60 }}>Сеты</th>
                       <th className={showTech ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 60 }}>Сеты<br />соот.</th>
@@ -556,77 +610,241 @@ export const KingPage: React.FC = () => {
                           >
                             {showFullName ? participant.name : participant.display_name}
                           </td>
-                          {groupData.rounds.map((round) => {
-                            // 1) Используем расписание (schedule) для определения участия и стороны
-                            const scheduleMatches: any[] = (round.matches || []) as any[];
+                          {/* Предварительный расчет очков по турам для участника + вывод всех ячеек строки */}
+                          {(() => {
+                            const scheduleRounds: any[] = groupData.rounds || [];
                             const allMatches: any[] = (tournament as any)?.matches || [];
 
-                            // Ищем соответствующий матч в расписании
-                            const schedMatch = scheduleMatches.find((sm: any) => {
-                              const inT1 = sm.team1_players?.some((p: any) => playerIds.has(Number(p.id)));
-                              const inT2 = sm.team2_players?.some((p: any) => playerIds.has(Number(p.id)));
-                              return inT1 || inT2;
+                            const pointsByRound: Array<number | null> = [];
+                            const oppPointsByRound: Array<number | null> = [];
+                            let computedWins = 0;
+                            let computedSetsWon = 0;
+                            let computedSetsLost = 0;
+
+                            scheduleRounds.forEach((round: any, rIdx: number) => {
+                              const sms: any[] = (round.matches || []) as any[];
+                              const schedMatch = sms.find((sm: any) => {
+                                const inT1 = sm.team1_players?.some((p: any) => playerIds.has(Number(p.id)));
+                                const inT2 = sm.team2_players?.some((p: any) => playerIds.has(Number(p.id)));
+                                return inT1 || inT2;
+                              });
+                              if (!schedMatch) { pointsByRound[rIdx] = null; oppPointsByRound[rIdx] = null; return; }
+                              const iAmTeam1 = schedMatch.team1_players?.some((p: any) => playerIds.has(Number(p.id)));
+                              const full = allMatches.find((fm: any) => fm.id === schedMatch.id);
+                              const sets = (full?.sets || []) as any[];
+                              if (!sets.length) { pointsByRound[rIdx] = null; oppPointsByRound[rIdx] = null; return; }
+                              let sum = 0;
+                              let oppSum = 0;
+                              let hadAnySet = false;
+                              sets.forEach((s: any) => {
+                                const isTBOnly = !!s.is_tiebreak_only;
+                                const hasTB = s.tb_1 != null || s.tb_2 != null;
+                                const idx = Number(s.index || 0);
+                                if (isTBOnly) {
+                                  hadAnySet = true;
+                                  const my = iAmTeam1 ? Number(s.tb_1 ?? 0) : Number(s.tb_2 ?? 0);
+                                  const op = iAmTeam1 ? Number(s.tb_2 ?? 0) : Number(s.tb_1 ?? 0);
+                                  sum += my; oppSum += op;
+                                  if (my > op) computedSetsWon++; else if (op > my) computedSetsLost++;
+                                } else if (hasTB && idx === 3) {
+                                  hadAnySet = true;
+                                  const t1 = Number(s.tb_1 ?? 0);
+                                  const t2 = Number(s.tb_2 ?? 0);
+                                  const myPoint = iAmTeam1 ? (t1 > t2 ? 1 : 0) : (t2 > t1 ? 1 : 0);
+                                  const opPoint = iAmTeam1 ? (t2 > t1 ? 1 : 0) : (t1 > t2 ? 1 : 0);
+                                  sum += myPoint; oppSum += opPoint;
+                                  if (myPoint > opPoint) computedSetsWon++; else if (opPoint > myPoint) computedSetsLost++;
+                                } else {
+                                  const g1 = Number(s.games_1 || 0);
+                                  const g2 = Number(s.games_2 || 0);
+                                  if (g1 !== 0 || g2 !== 0) hadAnySet = true;
+                                  const my = iAmTeam1 ? g1 : g2;
+                                  const op = iAmTeam1 ? g2 : g1;
+                                  sum += my; oppSum += op;
+                                  if (g1 > g2) { if (iAmTeam1) computedSetsWon++; else computedSetsLost++; }
+                                  else if (g2 > g1) { if (iAmTeam1) computedSetsLost++; else computedSetsWon++; }
+                                }
+                              });
+                              if (!hadAnySet) { pointsByRound[rIdx] = null; oppPointsByRound[rIdx] = null; return; }
+                              pointsByRound[rIdx] = sum; oppPointsByRound[rIdx] = oppSum;
+
+                              // Подсчёт матча как победа/поражение по набранным сетам
+                              const mySets = computedSetsWon + 0; // already incremented per set
+                              const opSets = computedSetsLost + 0;
+                              // Нельзя определять победителя по кумулятивным (требуется на матч), поэтому определим на основе сравнения суммарно по сетам этого матча
+                              // Пересчитаем winner только по сетам текущего матча
+                              let mSetsMy = 0, mSetsOp = 0;
+                              sets.forEach((s: any) => {
+                                const isTBOnly = !!s.is_tiebreak_only;
+                                const hasTB = s.tb_1 != null || s.tb_2 != null;
+                                const idx = Number(s.index || 0);
+                                if (isTBOnly) {
+                                  const t1 = Number(s.tb_1 ?? 0), t2 = Number(s.tb_2 ?? 0);
+                                  if (t1 > t2) { if (iAmTeam1) mSetsMy++; else mSetsOp++; }
+                                  else if (t2 > t1) { if (iAmTeam1) mSetsOp++; else mSetsMy++; }
+                                } else if (hasTB && idx === 3) {
+                                  const t1 = Number(s.tb_1 ?? 0), t2 = Number(s.tb_2 ?? 0);
+                                  if (t1 > t2) { if (iAmTeam1) mSetsMy++; else mSetsOp++; }
+                                  else if (t2 > t1) { if (iAmTeam1) mSetsOp++; else mSetsMy++; }
+                                } else {
+                                  const g1 = Number(s.games_1 || 0), g2 = Number(s.games_2 || 0);
+                                  if (g1 > g2) { if (iAmTeam1) mSetsMy++; else mSetsOp++; }
+                                  else if (g2 > g1) { if (iAmTeam1) mSetsOp++; else mSetsMy++; }
+                                }
+                              });
+                              if (mSetsMy > mSetsOp) computedWins++;
                             });
 
-                            if (!schedMatch) {
-                              // Отдых
-                              return (
-                                <td key={round.round} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center', background: '#f1f5f9' }}>—</td>
-                              );
+                            // Подсчет G-/M+
+                            const playedPoints = pointsByRound.filter((v) => v !== null) as number[];
+                            const playedOppPoints = oppPointsByRound.filter((v) => v !== null) as number[];
+                            const playedCount = playedPoints.length;
+
+                            const countsAcrossGroup = (groupData.participants || []).map((pt: any) => {
+                              const pIds = new Set<number>();
+                              const gi2 = parseInt(String(groupIndex), 10);
+                              const e2 = (tournament.participants as any[] | undefined)?.find((e: any) => e.group_index === gi2 && e.row_index === pt.row_index);
+                              const t2: any = e2?.team || {};
+                              if (Array.isArray(t2.players)) t2.players.forEach((pl: any) => { if (pl?.id) pIds.add(pl.id); });
+                              else { if (t2.player_1) pIds.add(t2.player_1); if (t2.player_2) pIds.add(t2.player_2); }
+                              let c = 0;
+                              scheduleRounds.forEach((r: any) => {
+                                const sms = r.matches || [];
+                                const has = sms.some((sm: any) => sm.team1_players?.some((p:any)=>pIds.has(Number(p.id))) || sm.team2_players?.some((p:any)=>pIds.has(Number(p.id))));
+                                if (has) c++;
+                              });
+                              return c;
+                            });
+                            const minMatches = Math.min(...countsAcrossGroup);
+                            const maxMatches = Math.max(...countsAcrossGroup);
+
+                            let gmDisplay = '—';
+                            let effectiveGamesSum = playedPoints.reduce((a,b)=>a+b, 0);
+                            let gamesDisplay: string | number = '';
+                            let gamesRatioDisplay: string | undefined = undefined;
+
+                            if (calculationMode === 'g_minus') {
+                              const excessPoints = playedPoints.slice(minMatches).reduce((a,b)=>a+b, 0);
+                              // Если участник сыграл ровно минимальное число матчей — показываем "—"
+                              gmDisplay = (playedCount === minMatches) ? '—' : `-${excessPoints}`;
+                              effectiveGamesSum = playedPoints.slice(0, minMatches).reduce((a,b)=>a+b, 0);
+                            } else if (calculationMode === 'm_plus') {
+                              const missing = Math.max(0, maxMatches - playedCount);
+                              const avg = playedCount > 0 ? Math.round(playedPoints.reduce((a,b)=>a+b, 0) / playedCount) : 0;
+                              const add = missing * avg;
+                              // Если участник уже сыграл максимум — показываем "—"
+                              gmDisplay = (playedCount === maxMatches) ? '—' : `+${add}`;
+                              effectiveGamesSum = playedPoints.reduce((a,b)=>a+b, 0) + add;
+                              gamesRatioDisplay = '1';
+                              gamesDisplay = effectiveGamesSum; // одиночное число в M+
+                            } else {
+                              gmDisplay = '—';
                             }
 
-                            const iAmTeam1 = schedMatch.team1_players?.some((p: any) => playerIds.has(Number(p.id)));
-                            // 2) Берем ПОЛНЫЙ матч из tournament.matches по id, чтобы получить сеты
-                            const full = allMatches.find((fm: any) => fm.id === schedMatch.id);
-                            const sets = (full?.sets || []) as any[];
+                            // Games и Ratio для NO и G-
+                            if (calculationMode !== 'm_plus') {
+                              const indices = pointsByRound.map((v, i) => v !== null ? i : -1).filter(i => i !== -1);
+                              const takeIndices = (calculationMode === 'g_minus') ? indices.slice(0, minMatches) : indices;
+                              const wonSum = takeIndices.reduce((acc, i) => acc + (pointsByRound[i] || 0), 0);
+                              const lostSum = takeIndices.reduce((acc, i) => acc + (oppPointsByRound[i] || 0), 0);
+                              gamesDisplay = `${wonSum}/${lostSum}`;
+                              const denom = wonSum + lostSum;
+                              gamesRatioDisplay = denom > 0 ? (wonSum / denom).toFixed(2) : '0.00';
+                            }
 
-                            // 3) Суммируем очки
-                            let myGamesSum = 0;
-                            let hadAnySet = false;
-                            sets.forEach((s: any) => {
-                              const isTBOnly = !!s.is_tiebreak_only;
-                              const hasTB = s.tb_1 != null || s.tb_2 != null;
-                              const idx = Number(s.index || 0);
-                              if (isTBOnly) {
-                                hadAnySet = true;
-                                if (iAmTeam1) myGamesSum += Number(s.tb_1 ?? 0);
-                                else myGamesSum += Number(s.tb_2 ?? 0);
-                              } else if (hasTB && idx === 3) {
-                                // Тай-брейк в третьем сете: считаем как 1:0 или 0:1 в пользу победителя тай-брейка
-                                hadAnySet = true;
-                                const t1 = Number(s.tb_1 ?? 0);
-                                const t2 = Number(s.tb_2 ?? 0);
-                                const t1Point = t1 > t2 ? 1 : 0;
-                                const t2Point = t2 > t1 ? 1 : 0;
-                                myGamesSum += iAmTeam1 ? t1Point : t2Point;
-                              } else {
-                                // Обычный геймовый сет
-                                const g1 = Number(s.games_1 || 0);
-                                const g2 = Number(s.games_2 || 0);
-                                if (g1 !== 0 || g2 !== 0) hadAnySet = true;
-                                myGamesSum += iAmTeam1 ? g1 : g2;
-                              }
+                            // Пересчёт «Сеты» и «Сеты соот.» с учётом G-/M+
+                            // Соберём по-раундно количество выигранных/проигранных сетов в каждом сыгранном матче
+                            const setsWonByRound: Array<number | null> = [];
+                            const setsLostByRound: Array<number | null> = [];
+                            scheduleRounds.forEach((round: any, rIdx: number) => {
+                              const sms: any[] = (round.matches || []) as any[];
+                              const schedMatch = sms.find((sm: any) => (sm.team1_players||[]).some((p:any)=>playerIds.has(Number(p.id))) || (sm.team2_players||[]).some((p:any)=>playerIds.has(Number(p.id))));
+                              if (!schedMatch) { setsWonByRound[rIdx] = null; setsLostByRound[rIdx] = null; return; }
+                              const iAmTeam1 = (schedMatch.team1_players||[]).some((p:any)=>playerIds.has(Number(p.id)));
+                              const full = allMatches.find((fm: any) => fm.id === schedMatch.id);
+                              const sets = (full?.sets || []) as any[];
+                              if (!sets.length) { setsWonByRound[rIdx] = null; setsLostByRound[rIdx] = null; return; }
+                              let mW = 0, mL = 0, hadAny = false;
+                              sets.forEach((s: any) => {
+                                const isTBOnly = !!s.is_tiebreak_only;
+                                const hasTB = s.tb_1 != null || s.tb_2 != null;
+                                const idx = Number(s.index || 0);
+                                if (isTBOnly) {
+                                  hadAny = true;
+                                  const t1 = Number(s.tb_1 ?? 0), t2 = Number(s.tb_2 ?? 0);
+                                  if (t1 > t2) { if (iAmTeam1) mW++; else mL++; } else if (t2 > t1) { if (iAmTeam1) mL++; else mW++; }
+                                } else if (hasTB && idx === 3) {
+                                  hadAny = true;
+                                  const t1 = Number(s.tb_1 ?? 0), t2 = Number(s.tb_2 ?? 0);
+                                  if (t1 > t2) { if (iAmTeam1) mW++; else mL++; } else if (t2 > t1) { if (iAmTeam1) mL++; else mW++; }
+                                } else {
+                                  const g1 = Number(s.games_1 || 0), g2 = Number(s.games_2 || 0);
+                                  if (g1 !== 0 || g2 !== 0) hadAny = true;
+                                  if (g1 > g2) { if (iAmTeam1) mW++; else mL++; } else if (g2 > g1) { if (iAmTeam1) mL++; else mW++; }
+                                }
+                              });
+                              if (!hadAny) { setsWonByRound[rIdx] = null; setsLostByRound[rIdx] = null; return; }
+                              setsWonByRound[rIdx] = mW; setsLostByRound[rIdx] = mL;
                             });
 
-                            // Если матч есть, но сетов ещё нет — показываем '—'
-                            if (!sets.length || !hadAnySet) {
-                              return (
-                                <td key={round.round} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>—</td>
-                              );
+                            let setsRatioDisplay: string | number = `${computedSetsWon}/${computedSetsLost}`;
+                            let setsFractionDisplay: string = (computedSetsWon + computedSetsLost) > 0
+                              ? (computedSetsWon / (computedSetsWon + computedSetsLost)).toFixed(2)
+                              : '0.00';
+
+                            if (calculationMode !== 'no') {
+                              const indicesSets = setsWonByRound.map((v, i) => v !== null ? i : -1).filter(i => i !== -1);
+                              if (calculationMode === 'g_minus') {
+                                const takeIdx = indicesSets.slice(0, minMatches);
+                                const sW = takeIdx.reduce((acc, i) => acc + (setsWonByRound[i] || 0), 0);
+                                const sL = takeIdx.reduce((acc, i) => acc + (setsLostByRound[i] || 0), 0);
+                                setsRatioDisplay = `${sW}/${sL}`;
+                                const denom = sW + sL;
+                                setsFractionDisplay = denom > 0 ? (sW / denom).toFixed(2) : '0.00';
+                              } else if (calculationMode === 'm_plus') {
+                                const playedS = indicesSets.length;
+                                const sWSum = indicesSets.reduce((acc, i) => acc + (setsWonByRound[i] || 0), 0);
+                                const avgS = playedS > 0 ? Math.round(sWSum / playedS) : 0;
+                                const missingS = Math.max(0, maxMatches - playedS);
+                                const addS = missingS * avgS;
+                                const effSW = sWSum + addS;
+                                // По аналогии с геймами: в режиме M+ показываем одно число и коэффициент 1
+                                setsRatioDisplay = String(effSW);
+                                setsFractionDisplay = '1';
+                              }
                             }
 
                             return (
-                              <td key={round.round} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center', fontWeight: 600 }}>
-                                {myGamesSum}
-                              </td>
+                              <>
+                                {scheduleRounds.map((round: any, idx: number) => {
+                                  const val = pointsByRound[idx];
+                                  if (val === null) {
+                                    const isRest = !((round.matches || []) as any[]).some((sm: any)=> (sm.team1_players||[]).concat(sm.team2_players||[]).some((p:any)=> playerIds.has(Number(p.id))));
+                                    return (
+                                      <td key={round.round} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center', background: isRest ? '#f1f5f9' : undefined }}>—</td>
+                                    );
+                                  }
+                                  return (
+                                    <td key={round.round} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center', fontWeight: 600 }}>{val}</td>
+                                  );
+                                })}
+                                <td style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{gmDisplay}</td>
+                                <td className={showTech ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{computedWins}</td>
+                                <td className={showTech ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{setsRatioDisplay}</td>
+                                <td className={showTech ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{setsFractionDisplay}</td>
+                                <td style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{gamesDisplay}</td>
+                                <td className={showTech ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{gamesRatioDisplay}</td>
+                                {/* Место: римской цифрой полужирно */}
+                                {(() => {
+                                  const place = rankMap.get(Number(participant.row_index)) || 0;
+                                  const roman = toRoman(place);
+                                  return (
+                                    <td style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center', fontWeight: 700 }}>{roman}</td>
+                                  );
+                                })()}
+                              </>
                             );
-                          })}
-                          <td className={showTech ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{wins}</td>
-                          <td className={showTech ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{setsRatio}</td>
-                          <td className={showTech ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{setsWon - setsLost}</td>
-                          <td style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{gamesWon}</td>
-                          <td className={showTech ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{gamesWon - gamesLost}</td>
-                          <td style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>—</td>
+                          })()}
                         </tr>
                       );
                     })}
@@ -655,7 +873,7 @@ export const KingPage: React.FC = () => {
                   const canClick = effectiveLocked && !completed;
 
                   return (
-                    <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
                       {/* Левая колонка: текстовые строки по алгоритму (A+B vs C+D) */}
                       <div style={{ minWidth: 260 }}>
                         {(() => {
@@ -689,9 +907,9 @@ export const KingPage: React.FC = () => {
                       </div>
 
                       {/* Правая колонка: плитки матчей */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 280, flex: 1 }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 280, flex: 1 }}>
                         {groupData.rounds.map((round: any) => (
-                          <div key={round.round} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          <div key={round.round} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                             {round.matches.map((match: any) => {
                               const isLive = match.status === 'live';
                               const team1Players = match.team1_players;
@@ -752,7 +970,7 @@ export const KingPage: React.FC = () => {
                 })()}
               </div>
             </div>
-          ))}
+          )})}
         </div>
       )}
 

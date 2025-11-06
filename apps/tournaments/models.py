@@ -185,8 +185,20 @@ class SchedulePattern(models.Model):
 
 
 class Ruleset(models.Model):
+    class TournamentSystem(models.TextChoices):
+        ROUND_ROBIN = "round_robin", "Круговой"
+        KNOCKOUT = "knockout", "Олимпийка"
+        KING = "king", "Кинг"
+
     name = models.CharField(max_length=255, unique=True)
     ordering_priority = models.JSONField(help_text="Приоритет критериев сортировки/определения мест")
+    tournament_system = models.CharField(
+        max_length=32,
+        choices=TournamentSystem.choices,
+        default=TournamentSystem.ROUND_ROBIN,
+        db_index=True,
+        help_text="Система турнира, для которой предназначен регламент",
+    )
 
     class Meta:
         verbose_name = "Регламент"

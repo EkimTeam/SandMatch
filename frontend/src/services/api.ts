@@ -67,6 +67,13 @@ export interface Tournament {
   planned_participants?: number;
   participant_mode?: 'singles' | 'doubles';
   set_format_id?: number;
+  ruleset?: { id: number; name: string; ordering_priority?: string[] } | null;
+}
+
+export interface Ruleset {
+  id: number;
+  name: string;
+  ordering_priority?: string[];
 }
 
 // Типы для турниров Кинг
@@ -149,6 +156,19 @@ export const tournamentApi = {
   // Получить турнир по ID
   getById: async (id: number): Promise<Tournament> => {
     const response = await api.get<Tournament>(`/tournaments/${id}/`);
+    return response.data;
+  },
+  // Получить список регламентов
+  getRulesets: async (system?: 'round_robin' | 'knockout' | 'king'): Promise<{ id: number; name: string }[]> => {
+    const qs = system ? `?system=${encodeURIComponent(system)}` : '';
+    const response = await api.get<{ rulesets: { id: number; name: string }[] }>(`/rulesets/${qs}`);
+    const list = response.data?.rulesets || [];
+    // Отсортировать по алфавиту
+    return [...list].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  },
+  // Установить регламент турнира
+  setRuleset: async (id: number, rulesetId: number): Promise<{ ok: boolean }> => {
+    const response = await api.post(`/tournaments/${id}/set_ruleset/`, { ruleset_id: rulesetId });
     return response.data;
   },
   // Сохранить ПОЛНЫЙ счёт (все сеты) — для плей-офф

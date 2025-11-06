@@ -92,6 +92,24 @@ class TournamentViewSet(viewsets.ModelViewSet):
         
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="set_ruleset", permission_classes=[IsAuthenticated])
+    def set_ruleset(self, request, pk=None):
+        """Установить регламент турнира (ruleset_id)."""
+        tournament = self.get_object()
+        data = request.data or {}
+        try:
+            ruleset_id = int(data.get("ruleset_id"))
+        except Exception:
+            return Response({"ok": False, "error": "Некорректный ruleset_id"}, status=400)
+        try:
+            rs = Ruleset.objects.get(pk=ruleset_id)
+        except Ruleset.DoesNotExist:
+            return Response({"ok": False, "error": "Регламент не найден"}, status=404)
+        tournament.ruleset = rs
+        tournament.save(update_fields=["ruleset"])
+        return Response({"ok": True})
+
     @action(detail=True, methods=["post"])
     def save_participants(self, request, pk=None):
         tournament = self.get_object()
@@ -2199,9 +2217,12 @@ def set_formats_list(request):
 
 @api_view(["GET"])
 def rulesets_list(request):
-    rulesets = Ruleset.objects.all()
+    qs = Ruleset.objects.all()
+    system = request.GET.get("system")
+    if system:
+        qs = qs.filter(tournament_system=system)
     return Response({
-        "rulesets": [{"id": rs.id, "name": rs.name} for rs in rulesets]
+        "rulesets": [{"id": rs.id, "name": rs.name} for rs in qs]
     })
 
 
