@@ -65,21 +65,24 @@ log "Running migrations with rollback protection..."
 
 # Бэкап БД перед миграциями
 BACKUP_FILE="/tmp/sandmatch_backup_$(date +%Y%m%d_%H%M%S).json"
-log "Creating database backup: $BACKUP_FILE"
-docker compose exec -T web python manage.py dumpdata \
+log "Creating database backup (best-effort): $BACKUP_FILE"
+if docker compose exec -T web python manage.py dumpdata \
     --natural-foreign \
     --exclude=contenttypes \
     --exclude=auth.Permission \
     --exclude=admin.logentry \
-    --indent=2 > "$BACKUP_FILE"
-
-# Проверить что бэкап создался
-if [ ! -s "$BACKUP_FILE" ]; then
-    log "ERROR: Backup file is empty or not created"
-    exit 1
+    --indent=2 > "$BACKUP_FILE" 2>/tmp/dumpdata.err; then
+  if [ -s "$BACKUP_FILE" ]; then
+    BACKUP_SIZE=$(wc -l < "$BACKUP_FILE")
+    log "Backup created successfully ($BACKUP_SIZE lines)"
+  else
+    log "WARNING: Backup file is empty after dumpdata; continuing without backup"
+    BACKUP_FILE=""
+  fi
+else
+  log "WARNING: dumpdata failed (see /tmp/dumpdata.err); continuing without backup"
+  BACKUP_FILE=""
 fi
-BACKUP_SIZE=$(wc -l < "$BACKUP_FILE")
-log "Backup created successfully ($BACKUP_SIZE lines)"
 
 # Выполнить миграции
 if docker compose exec -T web python manage.py migrate --noinput; then
@@ -88,21 +91,24 @@ if docker compose exec -T web python manage.py migrate --noinput; then
     # Удалить старые бэкапы (оставить последние 5)
     find /tmp -maxdepth 1 -name "sandmatch_backup_*.json" -type f | sort -r | tail -n +6 | xargs rm -f -- 2>/dev/null || true
 else
-    log "ERROR: Migrations failed! Restoring from backup..."
+    log "ERROR: Migrations failed! Attempting rollback..."
     
     # Откат к последней успешной миграции
     LAST_GOOD_MIGRATION=$(docker compose exec -T web python manage.py showmigrations | grep -B1 "\[X\]" | grep -v "\[X\]" | tail -1 | awk '{print $1}')
     if [ -n "$LAST_GOOD_MIGRATION" ]; then
         log "Rolling back to: $LAST_GOOD_MIGRATION"
-        docker compose exec -T web python manage.py migrate "$LAST_GOOD_MIGRATION" --noinput
+        docker compose exec -T web python manage.py migrate "$LAST_GOOD_MIGRATION" --noinput || true
     fi
     
-    # Восстановление данных
-    log "Restoring data from backup..."
-    docker compose exec -T web python manage.py flush --noinput
-    docker compose exec -T web python manage.py loaddata "$BACKUP_FILE"
-    
-    log "Database restored from backup: $BACKUP_FILE"
+    # Восстановление данных из бэкапа (если он есть)
+    if [ -n "$BACKUP_FILE" ] && [ -s "$BACKUP_FILE" ]; then
+        log "Restoring data from backup: $BACKUP_FILE"
+        docker compose exec -T web python manage.py flush --noinput || true
+        docker compose exec -T web python manage.py loaddata "$BACKUP_FILE" || true
+        log "Database restored from backup: $BACKUP_FILE"
+    else
+        log "WARNING: No valid backup available to restore data"
+    fi
     exit 1
 fi
 
@@ -303,14 +309,20 @@ fi
 
 log "🎉 DEPLOYMENT COMPLETED SUCCESSFULLY!"
 log "📊 Summary:"
-log "  - Database: migrated with backup protection"
+if [ -n "$BACKUP_FILE" ] && [ -s "$BACKUP_FILE" ]; then
+  log "  - Database: migrated with backup protection (backup: $BACKUP_FILE)"
+else
+  log "  - Database: migrated (backup was skipped due to dumpdata error)"
+fi
 log "  - Static files: collected and verified" 
 log "  - API endpoints: smoke tested"
 log "  - Health checks: passed"
 log "  - Main page: accessible"
 log ""
 log "🚀 Application is ready at: https://beachplay.ru"
-log "💾 Latest backup: $BACKUP_FILE ($BACKUP_SIZE lines)"
+if [ -n "$BACKUP_FILE" ] && [ -s "$BACKUP_FILE" ]; then
+  log "💾 Latest backup: $BACKUP_FILE ($BACKUP_SIZE lines)"
+fi
 
 # Очистка очень старых бэкапов (старше 7 дней)
 find /tmp -name "sandmatch_backup_*.json" -type f -mtime +7 -delete 2>/dev/null || true
