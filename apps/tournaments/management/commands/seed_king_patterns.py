@@ -38,7 +38,7 @@ class Command(BaseCommand):
         # A+D vs B+C
         # D+B vs E+A
         pattern, created = SchedulePattern.objects.get_or_create(
-            name="Кинг 5 участников",
+            name="Кастомный Кинг на 5 участников",
             tournament_system=SchedulePattern.TournamentSystem.KING,
             participants_count=5,
             defaults={
@@ -103,12 +103,12 @@ class Command(BaseCommand):
         # E+A vs D+B
         # C+F vs A+B
         pattern, created = SchedulePattern.objects.get_or_create(
-            name="Кинг 6 участников",
+            name="Кастомный Кинг на 6 участников",
             tournament_system=SchedulePattern.TournamentSystem.KING,
             participants_count=6,
             defaults={
                 'pattern_type': SchedulePattern.PatternType.CUSTOM,
-                'description': 'Кастомное расписание для 6 участников. 8 туров, все играют одинаковое количество матчей.',
+                'description': 'Кастомное расписание для 6 участников, 8 туров.',
                 'is_system': False,
                 'custom_schedule': {
                     'rounds': [
@@ -192,12 +192,12 @@ class Command(BaseCommand):
         # E+C vs F+B
         # G+A vs D+E
         pattern, created = SchedulePattern.objects.get_or_create(
-            name="Кинг 7 участников",
+            name="Кастомный Кинг на 7 участников",
             tournament_system=SchedulePattern.TournamentSystem.KING,
             participants_count=7,
             defaults={
                 'pattern_type': SchedulePattern.PatternType.CUSTOM,
-                'description': 'Кастомное расписание для 7 участников. 11 туров, каждый игрок отдыхает несколько раз.',
+                'description': 'Кастомное расписание для 7 участников, 11 туров.',
                 'is_system': False,
                 'custom_schedule': {
                     'rounds': [

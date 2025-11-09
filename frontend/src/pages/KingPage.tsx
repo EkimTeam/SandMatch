@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import api, { tournamentApi, Tournament, KingScheduleResponse, KingCalculationMode, Ruleset } from '../services/api';
+import api, { tournamentApi, schedulePatternApi, SchedulePattern, Tournament, KingScheduleResponse, KingCalculationMode, Ruleset } from '../services/api';
 import { ParticipantPickerModal } from '../components/ParticipantPickerModal';
 import { MatchScoreModal } from '../components/MatchScoreModal';
+import SchedulePatternModal from '../components/SchedulePatternModal';
 import { computeKingGroupRanking } from '../utils/kingRanking';
 
 export const KingPage: React.FC = () => {
@@ -28,6 +29,9 @@ export const KingPage: React.FC = () => {
   }>(null);
   const exportRef = useRef<HTMLDivElement | null>(null);
   const [rulesets, setRulesets] = useState<Ruleset[]>([]);
+  const [schedulePatternModal, setSchedulePatternModal] = useState<{ groupName: string; participantsCount: number; currentPatternId?: number | null } | null>(null);
+  // Все паттерны Кинг (кэш) и быстрый доступ по id
+  const [kingPatternsById, setKingPatternsById] = useState<Record<number, SchedulePattern>>({});
 
   // Загрузка данных турнира
   useEffect(() => {
@@ -49,6 +53,21 @@ export const KingPage: React.FC = () => {
         setRulesets(list);
       } catch (e) {
         console.error('Failed to load rulesets:', e);
+      }
+    };
+    load();
+  }, []);
+
+  // Загрузка всех шаблонов расписания (для предпросмотра и сопоставления по id)
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const all = await schedulePatternApi.getAll();
+        const map: Record<number, SchedulePattern> = {};
+        (all || []).forEach(p => { if (p && typeof p.id === 'number') map[p.id] = p; });
+        setKingPatternsById(map);
+      } catch (e) {
+        console.warn('Не удалось загрузить шаблоны расписаний для предпросмотра:', e);
       }
     };
     load();
@@ -292,16 +311,42 @@ export const KingPage: React.FC = () => {
         </div>
       )}
 
+      {/* Модалка выбора формата расписания (Кинг) */}
+      {schedulePatternModal && (
+        <SchedulePatternModal
+          isOpen={true}
+          onClose={() => setSchedulePatternModal(null)}
+          groupName={schedulePatternModal.groupName}
+          participantsCount={schedulePatternModal.participantsCount}
+          currentPatternId={schedulePatternModal.currentPatternId}
+          tournamentId={tournament.id}
+          tournamentSystem={'king'}
+          onSuccess={async () => {
+            await loadTournament();
+            await loadSchedule();
+            setSchedulePatternModal(null);
+          }}
+        />
+      )}
+
       {/* Таблица и расписание */}
       {tournament.status === 'created' && (
         <div>
           {Array.from({ length: tournament.groups_count || 1 }, (_, gi) => {
             const groupIndex = gi + 1;
-            const totalParticipants = tournament.planned_participants || 0;
-            const participantsInGroup = Math.ceil(totalParticipants / (tournament.groups_count || 1));
-            
+            const totalParticipants = tournament.planned_participants || tournament.participants_count || 0;
             // Получаем участников для этой группы (используем поле group_index из API)
             const groupParticipants = (tournament.participants as any[] | undefined)?.filter((p: any) => p.group_index === groupIndex) || [];
+            // Если участников уже распределили — используем фактическое количество
+            // Иначе распределяем планово: первые (total % groups) групп получают на 1 больше
+            const plannedSize = (() => {
+              const g = Math.max(1, tournament.groups_count || 1);
+              const base = Math.floor(totalParticipants / g);
+              const rem = totalParticipants % g;
+              return groupIndex <= rem ? base + 1 : base;
+            })();
+            // Важно: количество строк таблицы фиксируем по плану, чтобы можно было добавлять участников по местам
+            const participantsInGroup = plannedSize;
             
             return (
               <div key={groupIndex} style={{ marginBottom: 22 }}>
@@ -360,96 +405,228 @@ export const KingPage: React.FC = () => {
                   </table>
                 </div>
 
-                {/* Расписание игр (до фиксации: только текстовый список + кнопка) */}
-                <div style={{ marginTop: 20 }}>
-                  <div className="text-sm mt-3" data-export-exclude="true" style={{ minWidth: 260 }}>
-                    <div className="font-medium mb-1">Порядок игр:</div>
-                    {(() => {
-                      // Генерируем расписание King на основе количества участников
-                      const numParticipants = participantsInGroup;
-                      if (numParticipants < 4) {
-                        return <div className="text-gray-500">Недостаточно участников для генерации расписания (минимум 4)</div>;
-                      }
-                      
-                      // Генерация матчей King по алгоритму из KingTournament.py
-                      const generateKingMatches = (n: number): { round: number; matches: [number[], number[]][]; resting: number[] }[] => {
-                        const rounds: { round: number; matches: [number[], number[]][]; resting: number[] }[] = [];
-                        
-                        if (n === 4) {
-                          // 4 игрока - 3 раунда
-                          const matches: [number[], number[]][] = [
-                            [[0, 1], [2, 3]],
-                            [[0, 2], [1, 3]],
-                            [[0, 3], [1, 2]]
-                          ];
-                          matches.forEach((match, i) => {
-                            rounds.push({ round: i + 1, matches: [match], resting: [] });
-                          });
-                        } else if (n === 5) {
-                          // 5 игроков - 5 раундов
-                          const roundsConfig: [number[], number[], number[]][] = [
-                            [[0, 1], [2, 3], [4]],
-                            [[0, 2], [3, 4], [1]],
-                            [[0, 3], [1, 4], [2]],
-                            [[0, 4], [1, 2], [3]],
-                            [[1, 3], [2, 4], [0]]
-                          ];
-                          roundsConfig.forEach(([team1, team2, rest], i) => {
-                            rounds.push({ round: i + 1, matches: [[team1, team2]], resting: rest });
-                          });
-                        } else if (n === 6) {
-                          // 6 игроков - 8 раундов
-                          const roundsConfig: [number[], number[], number[]][] = [
-                            [[0, 1], [2, 3], [4, 5]],
-                            [[1, 5], [3, 4], [0, 2]],
-                            [[0, 2], [4, 5], [1, 3]],
-                            [[2, 4], [1, 3], [0, 5]],
-                            [[0, 4], [2, 5], [1, 3]],
-                            [[0, 3], [1, 4], [2, 5]],
-                            [[3, 5], [2, 4], [0, 1]],
-                            [[0, 5], [1, 2], [3, 4]]
-                          ];
-                          roundsConfig.forEach(([team1, team2, rest], i) => {
-                            rounds.push({ round: i + 1, matches: [[team1, team2]], resting: rest });
-                          });
-                        } else {
-                          // Для 7+ игроков - упрощенная генерация
-                          // TODO: Реализовать полный алгоритм из KingTournament.py
-                          return rounds;
+                {/* Порядок игр (до фиксации): из сохранённого паттерна или системный фолбэк */}
+                <div className="text-sm mt-3" data-export-exclude="true" style={{ minWidth: 260 }}>
+                  <div className="font-medium mb-1">Порядок игр:</div>
+                  {(() => {
+                    const numParticipants = participantsInGroup;
+                    const groupName = `Группа ${groupIndex}`;
+                    // Считываем выбранный паттерн из БД
+                    let currentPatternId: number | null = null;
+                    const raw = (tournament as any)?.group_schedule_patterns;
+                    if (raw) {
+                      try {
+                        const obj = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                        const nbspName = groupName.replace(' ', '\u00A0');
+                        const val = obj?.[groupName] ?? obj?.[nbspName];
+                        if (val != null && val !== '') currentPatternId = Number(val);
+                      } catch (_) {}
+                    }
+
+                    const selectedPattern = (currentPatternId && kingPatternsById[currentPatternId]) ? kingPatternsById[currentPatternId] : null;
+                    const isCustom = (selectedPattern as any)?.pattern_type === 'custom';
+                    const isPatternValid = (() => {
+                      if (!selectedPattern) return false;
+                      const pc: any = (selectedPattern as any).participants_count;
+                      if (isCustom) return Number(pc) === numParticipants;
+                      const pcn = pc == null ? null : Number(pc);
+                      return pcn == null || pcn === 0 || pcn === numParticipants; // системный
+                    })();
+
+                    // Вычисление базы индексации (0/1) по минимальному индексу во всех парах
+                    const detectIndexBase = (roundsData: any[]): 0 | 1 => {
+                      let minVal: number | null = null;
+                      for (const r of roundsData) {
+                        const source = Array.isArray(r?.pairs) ? r.pairs : (Array.isArray(r?.matches) ? r.matches : []);
+                        for (const pair of source) {
+                          const candidates: any[] = [];
+                          if (Array.isArray(pair)) {
+                            candidates.push(pair[0], pair[1]);
+                          } else if (pair && typeof pair === 'object') {
+                            candidates.push(pair.team1 ?? pair.left ?? pair.a, pair.team2 ?? pair.right ?? pair.b);
+                          }
+                          for (const side of candidates) {
+                            const arr = Array.isArray(side) ? side : [side];
+                            for (const v of arr) {
+                              const n = Number(v);
+                              if (Number.isFinite(n)) {
+                                if (minVal === null || n < minVal) minVal = n;
+                              }
+                            }
+                          }
                         }
-                        
-                        return rounds;
-                      };
-                      
-                      const kingSchedule = generateKingMatches(numParticipants);
-                      
-                      if (kingSchedule.length === 0) {
-                        return <div className="text-gray-500">Расписание для {numParticipants} участников пока не реализовано</div>;
                       }
-                      
+                      return minVal === 1 ? 1 : 0;
+                    };
+
+                    const renderPatternRounds = (pattern: SchedulePattern) => {
+                      let cs: any = (pattern as any).custom_schedule;
+                      if (!cs) return null;
+                      if (typeof cs === 'string') { try { cs = JSON.parse(cs); } catch { cs = {}; } }
+                      const rounds = Array.isArray(cs?.rounds) ? cs.rounds : [];
+                      if (rounds.length === 0) return null;
+                      const indexBase = detectIndexBase(rounds);
+                      const toLetter = (idx: number) => {
+                        const i = Number(idx);
+                        if (!Number.isFinite(i)) return '';
+                        const code = indexBase === 0 ? (65 + i) : (64 + i);
+                        return String.fromCharCode(code);
+                      };
+                      const formatSide = (side: any) => Array.isArray(side) ? side.map((v) => toLetter(v)).join('+') : toLetter(side);
                       return (
                         <div className="flex flex-col gap-1">
-                          {kingSchedule.map((roundData) => (
-                            <div key={roundData.round} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                              <span>Тур {roundData.round}:</span>
+                          {rounds.map((round: any, idx: number) => {
+                            const source = Array.isArray(round.pairs) ? round.pairs : (Array.isArray(round.matches) ? round.matches : []);
+                            const label = `Тур ${round.round ?? (idx + 1)}:`;
+                            return (
+                              <div key={idx} className="grid grid-cols-[auto_1fr] gap-x-2">
+                                {source.map((pair: any, mi: number) => {
+                                  let a = pair?.[0]; let b = pair?.[1];
+                                  if (a == null && b == null && pair && typeof pair === 'object') {
+                                    a = pair.team1 ?? pair.left ?? pair.a ?? null;
+                                    b = pair.team2 ?? pair.right ?? pair.b ?? null;
+                                  }
+                                  const left = formatSide(a);
+                                  const right = formatSide(b);
+                                  return (
+                                    <React.Fragment key={mi}>
+                                      <span className={mi === 0 ? '' : 'opacity-0 select-none'}>{label}</span>
+                                      <span>{left} vs {right}</span>
+                                    </React.Fragment>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    };
+
+                    if (isPatternValid && selectedPattern && isCustom) {
+                      return renderPatternRounds(selectedPattern);
+                    }
+
+                    // Фолбэк: локальный системный генератор
+                    if (numParticipants < 4) {
+                      return <div className="text-gray-500">Недостаточно участников для генерации расписания (минимум 4)</div>;
+                    }
+                    const generateKingMatches = (n: number): { round: number; matches: [number[], number[]][]; resting: number[] }[] => {
+                      const result: { round: number; matches: [number[], number[]][]; resting: number[] }[] = [];
+                      if (n < 4) return result;
+                      // Специальные случаи 4/5/6 (согласованы с backend для читаемости)
+                      if (n === 4) {
+                        const base: [number[], number[]][] = [
+                          [[0, 1], [2, 3]],
+                          [[0, 2], [1, 3]],
+                          [[0, 3], [1, 2]]
+                        ];
+                        base.forEach((m, i) => result.push({ round: i + 1, matches: [m], resting: [] }));
+                        return result;
+                      }
+                      if (n === 5) {
+                        const cfg: [number[], number[], number[]][] = [
+                          [[0, 1], [2, 3], [4]],
+                          [[0, 2], [3, 4], [1]],
+                          [[0, 3], [1, 4], [2]],
+                          [[0, 4], [1, 2], [3]],
+                          [[1, 3], [2, 4], [0]]
+                        ];
+                        cfg.forEach(([t1, t2, rest], i) => result.push({ round: i + 1, matches: [[t1, t2]], resting: rest }));
+                        return result;
+                      }
+                      if (n === 6) {
+                        const cfg: [number[], number[], number[]][] = [
+                          [[0, 1], [2, 3], [4, 5]],
+                          [[1, 5], [3, 4], [0, 2]],
+                          [[0, 2], [4, 5], [1, 3]],
+                          [[2, 4], [1, 3], [0, 5]],
+                          [[0, 4], [2, 5], [1, 3]],
+                          [[0, 3], [1, 4], [2, 5]],
+                          [[3, 5], [2, 4], [0, 1]],
+                          [[0, 5], [1, 2], [3, 4]]
+                        ];
+                        cfg.forEach(([t1, t2, rest], i) => result.push({ round: i + 1, matches: [[t1, t2]], resting: rest }));
+                        return result;
+                      }
+                      // Общий случай: round-robin пары -> объединяем каждые 2 пары в матч 2x2
+                      const generateEvenRR = (m: number): Array<Array<[number, number]>> => {
+                        const rounds: Array<Array<[number, number]>> = [];
+                        const players = Array.from({ length: m }, (_, i) => i);
+                        let arr = players.slice();
+                        for (let r = 0; r < m - 1; r++) {
+                          const pairs: Array<[number, number]> = [];
+                          for (let i = 0; i < m / 2; i++) {
+                            pairs.push([arr[i], arr[m - 1 - i]]);
+                          }
+                          rounds.push(pairs);
+                          // поворот (первый фиксирован)
+                          arr = [arr[0], arr[m - 1], ...arr.slice(1, m - 1)];
+                        }
+                        return rounds;
+                      };
+                      const generateOddRR = (m: number): Array<Array<[number, number]>> => {
+                        const rounds: Array<Array<[number, number]>> = [];
+                        let arr = Array.from({ length: m }, (_, i) => i);
+                        for (let r = 0; r < m; r++) {
+                          const extended = arr.concat([null as unknown as number]);
+                          const pairs: Array<[number, number]> = [];
+                          for (let i = 0; i < Math.floor(extended.length / 2); i++) {
+                            const a = extended[i];
+                            const b = extended[extended.length - 1 - i];
+                            if (a !== null && b !== null) pairs.push([a, b]);
+                          }
+                          rounds.push(pairs);
+                          // циклический сдвиг
+                          arr = [arr[arr.length - 1], ...arr.slice(0, arr.length - 1)];
+                        }
+                        return rounds;
+                      };
+
+                      const rr = (n % 2 === 0) ? generateEvenRR(n) : generateOddRR(n);
+                      rr.forEach((pairs, rIdx) => {
+                        const matches: [number[], number[]][] = [];
+                        const used = new Set<number>();
+                        for (let i = 0; i + 1 < pairs.length; i += 2) {
+                          const t1 = [pairs[i][0], pairs[i][1]];
+                          const t2 = [pairs[i + 1][0], pairs[i + 1][1]];
+                          matches.push([t1, t2]);
+                          used.add(t1[0]); used.add(t1[1]); used.add(t2[0]); used.add(t2[1]);
+                        }
+                        const all = new Set(Array.from({ length: n }, (_, i) => i));
+                        const resting = Array.from([...all].filter(x => !used.has(x)));
+                        result.push({ round: rIdx + 1, matches, resting });
+                      });
+                      return result;
+                    };
+
+                    const kingSchedule = generateKingMatches(numParticipants);
+                    return (
+                      <div className="flex flex-col gap-1">
+                        {kingSchedule.map((roundData) => {
+                          const label = `Тур ${roundData.round}:`;
+                          return (
+                            <div key={roundData.round} className="grid grid-cols-[auto_1fr] gap-x-2">
                               {roundData.matches.map((match, mi) => {
                                 const [team1, team2] = match;
                                 const team1Letters = team1.map(p => String.fromCharCode(65 + p)).join('+');
                                 const team2Letters = team2.map(p => String.fromCharCode(65 + p)).join('+');
                                 return (
-                                  <span key={mi}>
-                                    {team1Letters} vs {team2Letters}
-                                  </span>
+                                  <React.Fragment key={mi}>
+                                    <span className={mi === 0 ? '' : 'opacity-0 select-none'}>{label}</span>
+                                    <span>{team1Letters} vs {team2Letters}</span>
+                                  </React.Fragment>
                                 );
                               })}
                             </div>
-                          ))}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                  
-                  {/* Кнопка выбора формата расписания */}
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* Кнопка выбора формата расписания */}
+                <div className="mt-2" data-export-exclude="true">
                   {!completed && !effectiveLocked && (
                     <button
                       onClick={() => {
@@ -463,19 +640,16 @@ export const KingPage: React.FC = () => {
                               const nbspName = groupName.replace(' ', '\u00A0');
                               const val = parsed?.[groupName] ?? parsed?.[nbspName];
                               if (val != null && val !== '') currentPatternId = Number(val);
-                            } catch (_) {
-                              // ignore parse error
-                            }
+                            } catch (_) { /* ignore */ }
                           } else if (typeof raw === 'object') {
                             const nbspName = groupName.replace(' ', '\u00A0');
                             const val = raw?.[groupName] ?? raw?.[nbspName];
                             if (val != null && val !== '') currentPatternId = Number(val);
                           }
                         }
-                        // TODO: Открыть модалку выбора формата расписания
-                        console.log('Open schedule pattern modal', { groupName, participantsInGroup, currentPatternId });
+                        setSchedulePatternModal({ groupName, participantsCount: participantsInGroup, currentPatternId });
                       }}
-                      className="mt-2 px-3 py-1.5 text-sm text-white bg-green-600 rounded hover:bg-green-700 transition-colors"
+                      className="px-3 py-1.5 text-sm text-white bg-green-600 rounded hover:bg-green-700 transition-colors"
                     >
                       Выбрать формат<br/>расписания
                     </button>
@@ -856,16 +1030,19 @@ export const KingPage: React.FC = () => {
               <div>
                 <h3 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: 12 }}>Расписание игр</h3>
                 {(() => {
-                  // Построим карту: playerId -> буква строки (A..)
+                  // Построим карту: playerId -> буква строки (A..). Нормализуем ключи к Number
                   const playerToLetter = new Map<number, string>();
                   (groupData.participants || []).forEach((pt: any) => {
                     const letter = String.fromCharCode(64 + (pt.row_index || 0));
                     const team: any = pt.team || {};
-                    if (team.player_1) playerToLetter.set(team.player_1, letter);
-                    if (team.player_2) playerToLetter.set(team.player_2, letter);
+                    const p1 = team.player_1 ?? team.player1_id;
+                    const p2 = team.player_2 ?? team.player2_id;
+                    if (p1 != null) playerToLetter.set(Number(p1), letter);
+                    if (p2 != null) playerToLetter.set(Number(p2), letter);
                     if (Array.isArray(team.players)) {
                       team.players.forEach((pl: any) => {
-                        if (pl?.id) playerToLetter.set(pl.id, letter);
+                        const pid = pl?.id ?? pl?.player_id;
+                        if (pid != null) playerToLetter.set(Number(pid), letter);
                       });
                     }
                   });
@@ -874,35 +1051,80 @@ export const KingPage: React.FC = () => {
 
                   return (
                     <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                      {/* Левая колонка: текстовые строки по алгоритму (A+B vs C+D) */}
+                      {/* Левая колонка: текстовые строки A+B vs C+D по алгоритму индексов (как в Created) */}
                       <div style={{ minWidth: 260 }}>
                         {(() => {
                           const n = (groupData.participants || []).length;
-                          const gen = (cnt: number): { round: number; matches: [number[], number[]][] }[] => {
+                          const toLetter = (i: number) => String.fromCharCode(65 + i); // 0->A
+                          const generateEvenRR = (m: number): Array<Array<[number, number]>> => {
+                            const rounds: Array<Array<[number, number]>> = [];
+                            const players = Array.from({ length: m }, (_, i) => i);
+                            let arr = players.slice();
+                            for (let r = 0; r < m - 1; r++) {
+                              const pairs: Array<[number, number]> = [];
+                              for (let i = 0; i < m / 2; i++) pairs.push([arr[i], arr[m - 1 - i]]);
+                              rounds.push(pairs);
+                              arr = [arr[0], arr[m - 1], ...arr.slice(1, m - 1)];
+                            }
+                            return rounds;
+                          };
+                          const generateOddRR = (m: number): Array<Array<[number, number]>> => {
+                            const rounds: Array<Array<[number, number]>> = [];
+                            let arr = Array.from({ length: m }, (_, i) => i);
+                            for (let r = 0; r < m; r++) {
+                              const extended = arr.concat([null as unknown as number]);
+                              const pairs: Array<[number, number]> = [];
+                              for (let i = 0; i < Math.floor(extended.length / 2); i++) {
+                                const a = extended[i]; const b = extended[extended.length - 1 - i];
+                                if (a !== null && b !== null) pairs.push([a, b]);
+                              }
+                              rounds.push(pairs);
+                              arr = [arr[arr.length - 1], ...arr.slice(0, arr.length - 1)];
+                            }
+                            return rounds;
+                          };
+                          const build = (cnt: number): { round: number; matches: [number[], number[]][] }[] => {
                             const res: { round: number; matches: [number[], number[]][] }[] = [];
                             if (cnt === 4) {
                               const cfg: [number[], number[]][] = [[[0,1],[2,3]], [[0,2],[1,3]], [[0,3],[1,2]]];
                               cfg.forEach((m,i)=>res.push({ round: i+1, matches: [m] }));
-                            } else if (cnt === 5) {
+                              return res;
+                            }
+                            if (cnt === 5) {
                               const cfg: [number[], number[], number[]][] = [[[0,1],[2,3],[4]], [[0,2],[3,4],[1]], [[0,3],[1,4],[2]], [[0,4],[1,2],[3]], [[1,3],[2,4],[0]]];
                               cfg.forEach(([a,b],i)=>res.push({ round: i+1, matches: [[a,b]] }));
-                            } else if (cnt === 6) {
+                              return res;
+                            }
+                            if (cnt === 6) {
                               const cfg: [number[], number[], number[]][] = [[[0,1],[2,3],[4,5]], [[1,5],[3,4],[0,2]], [[0,2],[4,5],[1,3]], [[2,4],[1,3],[0,5]], [[0,4],[2,5],[1,3]], [[0,3],[1,4],[2,5]], [[3,5],[2,4],[0,1]], [[0,5],[1,2],[3,4]]];
                               cfg.forEach(([a,b],i)=>res.push({ round: i+1, matches: [[a,b]] }));
+                              return res;
                             }
+                            const rr = (cnt % 2 === 0) ? generateEvenRR(cnt) : generateOddRR(cnt);
+                            rr.forEach((pairs, rIdx) => {
+                              const matches: [number[], number[]][] = [];
+                              for (let i = 0; i + 1 < pairs.length; i += 2) {
+                                matches.push([[pairs[i][0], pairs[i][1]], [pairs[i+1][0], pairs[i+1][1]]]);
+                              }
+                              res.push({ round: rIdx + 1, matches });
+                            });
                             return res;
                           };
-                          const rounds = gen(n);
-                          return rounds.map(r => (
-                            <div key={r.round} className="text-sm" style={{ marginBottom: 8 }}>
-                              <span className="font-medium">Тур {r.round}:</span>{' '}
-                              {r.matches.map((m, mi) => {
-                                const t1 = m[0].map(x => String.fromCharCode(65 + x)).join('+');
-                                const t2 = m[1].map(x => String.fromCharCode(65 + x)).join('+');
-                                return <span key={mi} style={{ marginRight: 8 }}>{t1} vs {t2}</span>;
-                              })}
+                          const rounds = build(n);
+                          return (
+                            <div className="flex flex-col gap-1">
+                              {rounds.map((r) => (
+                                <div key={r.round} className="grid grid-cols-[auto_1fr] gap-x-8">
+                                  {r.matches.map((m, mi) => (
+                                    <React.Fragment key={mi}>
+                                      <span className={mi === 0 ? 'font-medium' : 'opacity-0 select-none'}>{`Тур ${r.round}:`}</span>
+                                      <span className="text-sm">{m[0].map(toLetter).join('+')} vs {m[1].map(toLetter).join('+')}</span>
+                                    </React.Fragment>
+                                  ))}
+                                </div>
+                              ))}
                             </div>
-                          ));
+                          );
                         })()}
                       </div>
 
