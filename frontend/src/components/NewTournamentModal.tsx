@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import './NewTournamentModal.css';
+import { schedulePatternApi, SchedulePattern, tournamentApi } from '../services/api';
 
 interface SetFormat {
   id: number;
@@ -13,7 +14,7 @@ interface Ruleset {
 
 interface NewTournamentModalProps {
   setFormats: SetFormat[];
-  rulesets: Ruleset[];
+  rulesets: Ruleset[]; // fallback, если локальная загрузка не сработала
   onSubmit: (data: any) => void;
   onClose: () => void;
 }
@@ -24,7 +25,12 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
   onSubmit,
   onClose,
 }) => {
-  const defaultRulesetId = rulesets.find(r => r.name.includes('ITF'))?.id || rulesets[0]?.id || '';
+  // Дефолт для круговой по заданной строке, затем fallback на (ITF), затем на первый
+  const RR_DEFAULT_NAME = '(ITF): победы > личные встречи > разница сетов между всеми > личные встречи > разница геймов между всеми > личные встречи';
+  const KING_DEFAULT_NAME = 'победы > разница геймов между всеми > разница геймов между собой > личные встречи';
+  const defaultRulesetId = (rulesets.find(r => r.name === RR_DEFAULT_NAME)?.id)
+    || (rulesets.find(r => r.name.includes('ITF'))?.id)
+    || rulesets[0]?.id || '';
 
   const [formData, setFormData] = useState({
     name: '',
@@ -37,9 +43,15 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
     participants: '',
     ko_participants: '',
     brackets_count: 1,
+    schedule_pattern_id: '',
   });
 
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
+  const [schedulePatterns, setSchedulePatterns] = useState<SchedulePattern[]>([]);
+  const [loadingPatterns, setLoadingPatterns] = useState(false);
+  // Локально загруженные регламенты по выбранной системе
+  const [localRulesets, setLocalRulesets] = useState<Ruleset[]>([]);
+  const effectiveRulesets = (localRulesets && localRulesets.length > 0) ? localRulesets : rulesets;
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -72,6 +84,17 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
       } else if (participants > 512) {
         newErrors.ko_participants = 'Количество участников не может превышать 512';
       }
+    } else if (formData.system === 'king') {
+      const participants = parseInt(formData.participants || '0', 10);
+      const groups = parseInt(formData.groups_count.toString(), 10);
+      if (participants && groups) {
+        const perGroup = Math.ceil(participants / groups);
+        if (perGroup < 4) {
+          newErrors.participants = 'Для Кинг должно быть минимум 4 участника в группе';
+        } else if (perGroup > 16) {
+          newErrors.participants = 'Для Кинг должно быть максимум 16 участников в группе';
+        }
+      }
     }
 
     setErrors(newErrors);
@@ -90,23 +113,112 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
       participants: formData.participants ? Number(formData.participants) : undefined,
       ko_participants: formData.ko_participants ? Number(formData.ko_participants) : undefined,
       brackets_count: 1, // Всегда 1 сетка
+      schedule_pattern_id: formData.schedule_pattern_id ? Number(formData.schedule_pattern_id) : undefined,
     };
     onSubmit(payload);
   };
 
   const isRoundRobin = formData.system === 'round_robin';
   const isKnockout = formData.system === 'knockout';
+  const isKing = formData.system === 'king';
+
+  // Загрузка шаблонов расписания для круговой системы и Кинг
+  useEffect(() => {
+    if (formData.system === 'round_robin') {
+      loadSchedulePatterns('round_robin');
+    } else if (formData.system === 'king') {
+      loadSchedulePatterns('king');
+    }
+  }, [formData.system]);
+
+  // Автоматический выбор "Индивидуальный" для Кинг
+  useEffect(() => {
+    if (formData.system === 'king' && formData.participant_mode !== 'singles') {
+      setFormData(prev => ({ ...prev, participant_mode: 'singles' }));
+    }
+  }, [formData.system]);
+
+  // Автоматический выбор регламента для Кинг
+  useEffect(() => {
+    if (formData.system === 'king') {
+      const desired = (localRulesets.find(r => r.name === KING_DEFAULT_NAME)?.id)
+        || (effectiveRulesets.find(r => r.name === KING_DEFAULT_NAME)?.id)
+        || formData.ruleset_id;
+      if (desired && formData.ruleset_id !== desired) {
+        setFormData(prev => ({ ...prev, ruleset_id: desired }));
+      }
+    } else if (formData.system === 'round_robin') {
+      const desired = (localRulesets.find(r => r.name === RR_DEFAULT_NAME)?.id)
+        || (effectiveRulesets.find(r => r.name === RR_DEFAULT_NAME)?.id)
+        || (effectiveRulesets.find(r => r.name.includes('ITF'))?.id)
+        || formData.ruleset_id;
+      if (desired && formData.ruleset_id !== desired) {
+        setFormData(prev => ({ ...prev, ruleset_id: desired }));
+      }
+    }
+  }, [formData.system, localRulesets]);
+
+  const loadSchedulePatterns = async (system: 'round_robin' | 'king') => {
+    setLoadingPatterns(true);
+    try {
+      const patterns = await schedulePatternApi.getAll();
+      const filteredPatterns = patterns
+        .filter(p => p.tournament_system === system)
+        .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+      setSchedulePatterns(filteredPatterns);
+      
+      // Автоматически выбираем шаблон по умолчанию
+      if (system === 'round_robin') {
+        const bergerPattern = filteredPatterns.find(p => p.name === 'Алгоритм Бергера');
+        if (bergerPattern && !formData.schedule_pattern_id) {
+          setFormData(prev => ({ ...prev, schedule_pattern_id: bergerPattern.id.toString() }));
+        }
+      } else if (system === 'king') {
+        const balancedPattern = filteredPatterns.find(p => p.name === 'Балансированный Американо');
+        if (balancedPattern) {
+          setFormData(prev => ({ ...prev, schedule_pattern_id: balancedPattern.id.toString() }));
+        }
+      }
+    } catch (error) {
+      console.error('Ошибка загрузки шаблонов расписания:', error);
+    } finally {
+      setLoadingPatterns(false);
+    }
+  };
 
   // Обновляем дефолтные значения при поступлении справочников
   useEffect(() => {
     const sf = setFormats[0]?.id;
-    const rs = rulesets.find(r => r.name.includes('ITF'))?.id || rulesets[0]?.id;
+    const rs = (rulesets.find(r => r.name === RR_DEFAULT_NAME)?.id)
+      || (rulesets.find(r => r.name.includes('ITF'))?.id)
+      || rulesets[0]?.id;
     setFormData(prev => ({
       ...prev,
       set_format_id: prev.set_format_id || (sf ?? ''),
       ruleset_id: prev.ruleset_id || (rs ?? ''),
     }));
   }, [setFormats, rulesets]);
+
+  // Загрузка регламентов по системе (round_robin | king)
+  useEffect(() => {
+    const load = async () => {
+      try {
+        if (isRoundRobin) {
+          const list = await tournamentApi.getRulesets('round_robin');
+          setLocalRulesets(list);
+        } else if (isKing) {
+          const list = await tournamentApi.getRulesets('king');
+          setLocalRulesets(list);
+        } else {
+          setLocalRulesets([]);
+        }
+      } catch (e) {
+        setLocalRulesets([]);
+      }
+    };
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.system]);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -151,8 +263,8 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
                   <input type="radio" name="participant_mode" value="singles" checked={formData.participant_mode === 'singles'} onChange={handleChange} />
                   <span>Индивидуальный</span>
                 </label>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  <input type="radio" name="participant_mode" value="doubles" checked={formData.participant_mode === 'doubles'} onChange={handleChange} />
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: isKing ? 0.5 : 1 }}>
+                  <input type="radio" name="participant_mode" value="doubles" checked={formData.participant_mode === 'doubles'} onChange={handleChange} disabled={isKing} />
                   <span>Парный</span>
                 </label>
               </div>
@@ -180,9 +292,9 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
                   <input type="radio" name="system" value="knockout" checked={formData.system === 'knockout'} onChange={handleChange} />
                   <span>Олимпийская</span>
                 </label>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: 0.6 }} title="Скоро">
-                  <input type="radio" name="system" value="mixed" disabled />
-                  <span>Американо</span>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <input type="radio" name="system" value="king" checked={formData.system === 'king'} onChange={handleChange} />
+                  <span>Кинг</span>
                 </label>
               </div>
             </div>
@@ -216,13 +328,28 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
                   />
                 </div>
                 <div className="form-row">
-                  <label>Порядок игр</label>
-                  <div className="muted">выбирается/генерируется (скоро)</div>
+                  <label htmlFor="schedule_pattern_id">Порядок игр</label>
+                  {loadingPatterns ? (
+                    <div className="muted">Загрузка шаблонов...</div>
+                  ) : (
+                    <select 
+                      id="schedule_pattern_id" 
+                      name="schedule_pattern_id" 
+                      value={formData.schedule_pattern_id} 
+                      onChange={handleChange}
+                    >
+                      {schedulePatterns.map(pattern => (
+                        <option key={pattern.id} value={pattern.id}>
+                          {pattern.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
                 <div className="form-row">
                   <label htmlFor="ruleset_id">Регламент</label>
                   <select id="ruleset_id" name="ruleset_id" value={formData.ruleset_id} onChange={handleChange}>
-                    {rulesets.map(ruleset => (
+                    {effectiveRulesets.map(ruleset => (
                       <option key={ruleset.id} value={ruleset.id}>
                         {ruleset.name}
                       </option>
@@ -249,6 +376,67 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
                   {errors.ko_participants && <div className="error">{errors.ko_participants}</div>}
                 </div>
                 {/* Поле "Число сеток" скрыто, всегда = 1 */}
+              </div>
+            )}
+
+            {isKing && (
+              <div id="king-fields">
+                <div className="form-row">
+                  <label htmlFor="participants">Число участников</label>
+                  <input
+                    type="number"
+                    id="participants"
+                    name="participants"
+                    min={4}
+                    step={1}
+                    placeholder="Например, 8"
+                    value={formData.participants}
+                    onChange={handleChange}
+                  />
+                  {errors.participants && <div className="error">{errors.participants}</div>}
+                  <div className="muted" style={{ fontSize: '0.85rem', marginTop: '4px' }}>От 4 до 16 участников в группе</div>
+                </div>
+                <div className="form-row">
+                  <label htmlFor="groups_count">Число групп</label>
+                  <input
+                    type="number"
+                    id="groups_count"
+                    name="groups_count"
+                    min={1}
+                    step={1}
+                    value={formData.groups_count}
+                    onChange={handleChange}
+                  />
+                </div>
+                <div className="form-row">
+                  <label htmlFor="schedule_pattern_id">Порядок игр</label>
+                  {loadingPatterns ? (
+                    <div className="muted">Загрузка шаблонов...</div>
+                  ) : (
+                    <select 
+                      id="schedule_pattern_id" 
+                      name="schedule_pattern_id" 
+                      value={formData.schedule_pattern_id} 
+                      onChange={handleChange}
+                    >
+                      {schedulePatterns.map(pattern => (
+                        <option key={pattern.id} value={pattern.id}>
+                          {pattern.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                <div className="form-row">
+                  <label htmlFor="ruleset_id">Регламент</label>
+                  <select id="ruleset_id" name="ruleset_id" value={formData.ruleset_id} onChange={handleChange}>
+                    {effectiveRulesets.map(ruleset => (
+                      <option key={ruleset.id} value={ruleset.id}>
+                        {ruleset.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             )}
           </div>

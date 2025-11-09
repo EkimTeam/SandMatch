@@ -2,7 +2,7 @@ from rest_framework import serializers
 from apps.players.models import Player
 from apps.teams.models import Team
 from apps.matches.models import Match, MatchSet
-from .models import Tournament, TournamentEntry, SetFormat
+from .models import Tournament, TournamentEntry, SetFormat, SchedulePattern, Ruleset
 
 
 class PlayerSerializer(serializers.ModelSerializer):
@@ -174,6 +174,9 @@ class TournamentSerializer(serializers.ModelSerializer):
     get_participant_mode_display = serializers.SerializerMethodField()
     planned_participants = serializers.IntegerField(read_only=True)
     used_player_ids = serializers.SerializerMethodField()
+    group_schedule_patterns = serializers.SerializerMethodField()
+    king_calculation_mode = serializers.CharField(read_only=True)
+    ruleset = serializers.SerializerMethodField()
 
     class Meta:
         model = Tournament
@@ -188,6 +191,8 @@ class TournamentSerializer(serializers.ModelSerializer):
             "get_participant_mode_display",
             "planned_participants",
             "used_player_ids",
+            "group_schedule_patterns",
+            "king_calculation_mode",
             "tournament_type",
             "status",
             "set_format",
@@ -196,6 +201,7 @@ class TournamentSerializer(serializers.ModelSerializer):
             "participants_count",
             "created_at",
             "updated_at",
+            "ruleset",
         ]
 
     def get_participants_count(self, obj: Tournament) -> int:
@@ -225,6 +231,20 @@ class TournamentSerializer(serializers.ModelSerializer):
                     ids.add(e.team.player_2_id)
         return sorted(ids)
 
+    def get_group_schedule_patterns(self, obj: Tournament):
+        # Гарантируем, что фронтенд получает объект (dict), а не строку
+        try:
+            val = obj.group_schedule_patterns
+            if not val:
+                return {}
+            if isinstance(val, dict):
+                return val
+            # На всякий случай: если пришла строка — попробуем распарсить
+            import json
+            return json.loads(val) if isinstance(val, str) else {}
+        except Exception:
+            return {}
+
     def get_set_format(self, obj: Tournament):
         try:
             sf: SetFormat = obj.set_format
@@ -239,3 +259,39 @@ class TournamentSerializer(serializers.ModelSerializer):
             }
         except Exception:
             return None
+
+    def get_ruleset(self, obj: Tournament):
+        try:
+            rs: Ruleset = obj.ruleset
+            return {
+                "id": rs.id,
+                "name": rs.name,
+                "ordering_priority": rs.ordering_priority,
+            }
+        except Exception:
+            return None
+
+
+class SchedulePatternSerializer(serializers.ModelSerializer):
+    """Сериализатор для шаблонов расписания"""
+    
+    pattern_type_display = serializers.CharField(source='get_pattern_type_display', read_only=True)
+    tournament_system_display = serializers.CharField(source='get_tournament_system_display', read_only=True)
+    
+    class Meta:
+        model = SchedulePattern
+        fields = [
+            'id',
+            'name',
+            'pattern_type',
+            'pattern_type_display',
+            'tournament_system',
+            'tournament_system_display',
+            'description',
+            'participants_count',
+            'custom_schedule',
+            'is_system',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']

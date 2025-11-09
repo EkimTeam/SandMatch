@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { formatDate } from '../services/date';
-import api, { matchApi, tournamentApi } from '../services/api';
+import api, { matchApi, tournamentApi, Ruleset as ApiRuleset } from '../services/api';
+import { getAccessToken } from '../services/auth';
 import { ParticipantPickerModal } from '../components/ParticipantPickerModal';
 import { MatchScoreModal } from '../components/MatchScoreModal';
 import FreeFormatScoreModal from '../components/FreeFormatScoreModal';
+import SchedulePatternModal from '../components/SchedulePatternModal';
 import html2canvas from 'html2canvas';
 
 // Константы цветов для подсветки ячеек
@@ -99,11 +101,67 @@ export const TournamentDetailPage: React.FC = () => {
   // Расписание по группам: { [groupIndex]: [ [a,b], [c,d] ][] } — туры, каждый тур: массив пар [a,b]
   const [schedule, setSchedule] = useState<Record<number, [number, number][][]>>({});
   const [scheduleLoaded, setScheduleLoaded] = useState(false);
+
+  // Универсальный поиск матча по паре ID команд в группе: учитывает разные формы сериализации
+  const findGroupMatch = useCallback((groupIdx: number, teamAId?: number | null, teamBId?: number | null) => {
+    if (!t || !teamAId || !teamBId) return undefined as any;
+    const roundName = `Группа ${groupIdx}`;
+    const matches = (t.matches || []);
+    const sameTeams = (mm: any, a: number, b: number) => {
+      const raw1 = (mm.team_1 && typeof mm.team_1 === 'object') ? mm.team_1.id : (mm.team_1_id ?? null);
+      const raw2 = (mm.team_2 && typeof mm.team_2 === 'object') ? mm.team_2.id : (mm.team_2_id ?? null);
+      const t1 = raw1 != null ? Number(raw1) : null;
+      const t2 = raw2 != null ? Number(raw2) : null;
+      const A = a != null ? Number(a) : null;
+      const B = b != null ? Number(b) : null;
+      return (t1 === A && t2 === B) || (t1 === B && t2 === A);
+    };
+    // Сначала ищем строго по группе
+    const byGroup = matches.find((mm: any) => {
+      const stage = (mm.stage || '').toString().toLowerCase();
+      const inGroup = (mm.group_index === groupIdx) || (mm.round_name === roundName) || (mm.round_name === String(roundName));
+      return stage === 'group' && inGroup && sameTeams(mm, teamAId, teamBId);
+    });
+    if (byGroup) return byGroup;
+    // Фолбэк 1: если сериализатор не отдал group_index/round_name — ищем только по stage и парам
+    const byStageOnly = matches.find((mm: any) => {
+      const stage = (mm.stage || '').toString().toLowerCase();
+      return stage === 'group' && sameTeams(mm, teamAId, teamBId);
+    });
+    if (byStageOnly) return byStageOnly;
+    // Фолбэк 2: ищем по парам без каких-либо доп. условий (на случай нераскрытого stage)
+    return matches.find((mm: any) => sameTeams(mm, teamAId, teamBId));
+  }, [t]);
+
+  const fetchGroupSchedule = useCallback(async (tournamentId?: string | number) => {
+    const tid = tournamentId ?? id;
+    if (!tid) return;
+    try {
+      const resp = await fetch(`/api/tournaments/${tid}/group_schedule/`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      if (data && data.ok && data.groups) {
+        const mapped: Record<number, [number, number][][]> = {};
+        for (const [key, rounds] of Object.entries<any>(data.groups)) {
+          mapped[Number(key)] = rounds as [number, number][][];
+        }
+        setSchedule(mapped);
+        setScheduleLoaded(true);
+      }
+    } catch (e) {
+      console.error('Не удалось загрузить расписание групп:', e);
+    }
+  }, [id]);
   // Данные групп с бэкенда: { [group_index]: { stats: { [team_id]: {...} }, placements: { [team_id]: place } } }
   const [groupStats, setGroupStats] = useState<Record<number, { stats: Record<number, { wins: number; sets_won: number; sets_lost: number; sets_drawn?: number; games_won: number; games_lost: number }>; placements: Record<number, number> }>>({});
   const exportRef = useRef<HTMLDivElement | null>(null);
   // Состояние для hover эффекта на расписании
   const [hoveredMatch, setHoveredMatch] = useState<{ groupIdx: number; row1: number; row2: number } | null>(null);
+  // Модальное окно выбора формата расписания
+  const [schedulePatternModal, setSchedulePatternModal] = useState<{ groupName: string; participantsCount: number; currentPatternId?: number | null } | null>(null);
+  // Регламенты для круговой системы
+  const [rrRulesets, setRrRulesets] = useState<ApiRuleset[]>([]);
+  const [savingRrRuleset, setSavingRrRuleset] = useState(false);
 
   // Динамическая загрузка html2canvas с CDN
   const ensureHtml2Canvas = async (): Promise<any> => {
@@ -193,6 +251,17 @@ export const TournamentDetailPage: React.FC = () => {
       const resp = await fetch(`/api/tournaments/${id}/`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
+      
+      // Редирект на правильную страницу в зависимости от системы турнира
+      if (data.system === 'king') {
+        nav(`/tournaments/${id}/king`);
+        return;
+      }
+      if (data.system === 'knockout') {
+        nav(`/tournaments/${id}/knockout`);
+        return;
+      }
+      
       setT(data);
       setShowTech(Array.from({ length: data.groups_count || 1 }).map(() => false));
       // Определить состояние фиксации на основе статуса турнира
@@ -216,8 +285,7 @@ export const TournamentDetailPage: React.FC = () => {
     if (!t) return [];
     const aId = g.entries[rI]?.team?.id;
     const bId = g.entries[cIdx - 1]?.team?.id;
-    const m = (t.matches || []).find((mm: any) => mm.stage === 'group' && mm.group_index === g.idx &&
-      ((mm.team_1?.id === aId && mm.team_2?.id === bId) || (mm.team_1?.id === bId && mm.team_2?.id === aId)));
+    const m = findGroupMatch(g.idx, aId, bId);
     if (!m) return [];
     const sets: any[] = (m as any).sets || [];
     if (m.status === 'live' && sets.length === 0) return [];
@@ -447,8 +515,7 @@ export const TournamentDetailPage: React.FC = () => {
       const aId = g.entries[rI]?.team?.id;
       const bId = g.entries[cIdx - 1]?.team?.id;
       if (!t) return '';
-      const m = (t.matches || []).find((mm: any) => mm.stage === 'group' && mm.group_index === g.idx &&
-        ((mm.team_1?.id === aId && mm.team_2?.id === bId) || (mm.team_1?.id === bId && mm.team_2?.id === aId)));
+      const m = findGroupMatch(g.idx, aId, bId);
       if (!m) return '';
       const sets: any[] = (m as any).sets || [];
       
@@ -566,35 +633,37 @@ export const TournamentDetailPage: React.FC = () => {
   useEffect(() => {
     (async () => {
       await reload();
-      // Подгружаем агрегаты групп после первичной загрузки турнира
       await refreshGroupStats();
+      await fetchGroupSchedule();
     })();
-  }, [id]);
+  }, [fetchGroupSchedule]);
 
-  // Загрузка расписания только один раз при открытии страницы турнира
+  // Загрузка регламентов для круговой системы (только для отображения селекта)
   useEffect(() => {
-    (async () => {
-      if (!id || scheduleLoaded) return;
+    const loadRulesets = async () => {
       try {
-        const resp = await fetch(`/api/tournaments/${id}/group_schedule/`);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const data = await resp.json();
-        if (data && data.ok && data.groups) {
-          const norm: Record<number, [number, number][][]> = {};
-          Object.keys(data.groups).forEach(k => {
-            const gi = Number(k);
-            const tours = (data.groups[k] || []) as number[][];
-            norm[gi] = (tours as unknown as [number, number][][]);
-          });
-          setSchedule(norm);
-        }
+        const list = await tournamentApi.getRulesets('round_robin');
+        setRrRulesets(list);
       } catch (e) {
-        console.error('Ошибка загрузки расписания групп:', e);
-      } finally {
-        setScheduleLoaded(true);
+        console.warn('Не удалось загрузить регламенты RR:', e);
       }
-    })();
-  }, [id, scheduleLoaded]);
+    };
+    loadRulesets();
+  }, []);
+
+  const handleRrRulesetChange = async (rulesetId: number) => {
+    if (!t) return;
+    try {
+      setSavingRrRuleset(true);
+      await tournamentApi.setRuleset(t.id, rulesetId);
+      await reload();
+      await refreshGroupStats();
+    } catch (e: any) {
+      alert(e?.response?.data?.error || 'Ошибка при изменении регламента');
+    } finally {
+      setSavingRrRuleset(false);
+    }
+  };
 
   // Группы: равномерное распределение существующих участников по group_index,
   // если group_index не задан — распределим по порядку.
@@ -655,10 +724,14 @@ export const TournamentDetailPage: React.FC = () => {
       const m = (t.matches || []).find((m: any) => m.stage === 'group' && m.group_index === groupIdx &&
         ((m.team_1?.id === aTeamId && m.team_2?.id === bTeamId) || (m.team_1?.id === bTeamId && m.team_2?.id === aTeamId))
       );
-      const isLive = m?.status === 'live';
+      if (!m?.id) {
+        alert('Матч ещё не создан. Сначала зафиксируйте участников.');
+        return;
+      }
+      const isLive = m.status === 'live';
       const matchTeam1Id = (m as any)?.team_1?.id ?? (m as any)?.team_1_id ?? null;
       const matchTeam2Id = (m as any)?.team_2?.id ?? (m as any)?.team_2_id ?? null;
-      setScoreDialog({ group: groupIdx, a: rowIdx, b: colIdx, matchId: m?.id, isLive, matchTeam1Id, matchTeam2Id });
+      setScoreDialog({ group: groupIdx, a: rowIdx, b: colIdx, matchId: m.id, isLive, matchTeam1Id, matchTeam2Id });
     }
   };
 
@@ -1244,8 +1317,7 @@ export const TournamentDetailPage: React.FC = () => {
                               // - ячейка победителя (winner vs loser): более светлый зелёный (#f3fdf3)
                               const aId = g.entries[rI]?.team?.id;
                               const bId = g.entries[cIdx - 1]?.team?.id;
-                              const m = (t.matches || []).find((mm: any) => mm.stage === 'group' && mm.group_index === g.idx &&
-                                ((mm.team_1?.id === aId && mm.team_2?.id === bId) || (mm.team_1?.id === bId && mm.team_2?.id === aId)));
+                              const m = findGroupMatch(g.idx, aId, bId);
                               if (!m) return 'transparent';
                               if (m.status === 'live') return MATCH_COLORS.LIVE;
                               // Подсветка победной ячейки только для завершённых матчей с наличием победителя
@@ -1307,11 +1379,7 @@ export const TournamentDetailPage: React.FC = () => {
                       // Найти матч для этой пары
                       const team1 = g.entries[pair[0] - 1]?.team;
                       const team2 = g.entries[pair[1] - 1]?.team;
-                      const m = (t.matches || []).find((mm: any) => 
-                        mm.stage === 'group' && mm.group_index === g.idx &&
-                        ((mm.team_1?.id === team1?.id && mm.team_2?.id === team2?.id) || 
-                         (mm.team_1?.id === team2?.id && mm.team_2?.id === team1?.id))
-                      );
+                      const m = findGroupMatch(g.idx, team1?.id, team2?.id);
                       const isCompleted = m?.status === 'completed';
                       const isLive = m?.status === 'live';
                       
@@ -1330,14 +1398,14 @@ export const TournamentDetailPage: React.FC = () => {
                           onMouseLeave={() => setHoveredMatch(null)}
                           onClick={() => {
                             if (effectiveLocked && !completed && team1?.id && team2?.id) {
-                              // Открыть диалог как при клике на ячейку
+                              if (!m?.id) { alert('Матч ещё не создан. Сначала зафиксируйте участников.'); return; }
                               const matchTeam1Id = (m as any)?.team_1?.id ?? (m as any)?.team_1_id ?? null;
                               const matchTeam2Id = (m as any)?.team_2?.id ?? (m as any)?.team_2_id ?? null;
                               setScoreDialog({ 
                                 group: g.idx, 
                                 a: pair[0], 
                                 b: pair[1], 
-                                matchId: m?.id, 
+                                matchId: m.id, 
                                 isLive: isLive,
                                 matchTeam1Id,
                                 matchTeam2Id
@@ -1355,6 +1423,44 @@ export const TournamentDetailPage: React.FC = () => {
             ) : (
               <div className="text-gray-500">Нет данных о расписании</div>
             )}
+            
+            {/* Кнопка выбора формата расписания */}
+            {!completed && !effectiveLocked && (
+              <button
+                onClick={() => {
+                  // Используем плановый размер группы (число строк)
+                  const participantsCount = g.rows.length;
+                  const groupName = `Группа ${g.idx}`;
+                  // Получаем текущий выбранный шаблон для группы (с учётом того, что group_schedule_patterns может быть строкой JSON)
+                  let currentPatternId: number | null = null;
+                  const raw = (t as any)?.group_schedule_patterns;
+                  if (raw) {
+                    if (typeof raw === 'string') {
+                      try {
+                        const parsed = JSON.parse(raw);
+                        const nbspName = groupName.replace(' ', '\u00A0');
+                        const val = parsed?.[groupName] ?? parsed?.[nbspName];
+                        if (val != null && val !== '') currentPatternId = Number(val);
+                      } catch (_) {
+                        // ignore parse error
+                      }
+                    } else if (typeof raw === 'object') {
+                      const nbspName = groupName.replace(' ', '\u00A0');
+                      const val = raw?.[groupName] ?? raw?.[nbspName];
+                      if (val != null && val !== '') currentPatternId = Number(val);
+                    }
+                  }
+                  setSchedulePatternModal({
+                    groupName,
+                    participantsCount,
+                    currentPatternId
+                  });
+                }}
+                className="mt-2 px-3 py-1.5 text-sm text-white bg-green-600 rounded hover:bg-green-700 transition-colors"
+              >
+                Выбрать формат расписания
+              </button>
+            )}
           </div>
         </div>
       ))}
@@ -1365,6 +1471,31 @@ export const TournamentDetailPage: React.FC = () => {
           {/* TODO: как появиться сайт вставить сюда URL */}
         </div>
       </div>
+
+      {/* Регламент (круговая): селект вверху страницы, не попадает в экспорт */}
+      {t?.system === 'round_robin' && (
+        <div className="mb-4 flex items-center gap-3 flex-wrap" data-export-exclude="true">
+          <span className="font-semibold">Регламент:</span>
+          <div className="flex-1 min-w-[240px]" style={{ maxWidth: '100%' }}>
+            <select
+              className="w-full border rounded px-2 py-1 text-sm"
+              value={(t as any)?.ruleset?.id || ''}
+              disabled={!getAccessToken() || savingRrRuleset}
+              onChange={(e) => {
+                const val = Number(e.target.value);
+                if (!Number.isNaN(val)) handleRrRulesetChange(val);
+              }}
+            >
+              {(!rrRulesets || rrRulesets.length === 0) && (
+                <option value="">Загрузка…</option>
+              )}
+              {rrRulesets.map((rs) => (
+                <option key={rs.id} value={rs.id}>{rs.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
 
       {/* Модалка выбора участника */}
       {pickerOpen && (
@@ -1377,6 +1508,23 @@ export const TournamentDetailPage: React.FC = () => {
           isDoubles={t.participant_mode === 'doubles'}
           usedPlayerIds={Array.from(distinctPlayerIds)}
           onSaved={reload}
+        />
+      )}
+
+      {/* Модалка выбора формата расписания */}
+      {schedulePatternModal && (
+        <SchedulePatternModal
+          isOpen={true}
+          onClose={() => setSchedulePatternModal(null)}
+          groupName={schedulePatternModal.groupName}
+          participantsCount={schedulePatternModal.participantsCount}
+          currentPatternId={schedulePatternModal.currentPatternId}
+          tournamentId={t.id}
+          onSuccess={async () => {
+            await reload();
+            await fetchGroupSchedule();
+            setSchedulePatternModal(null);
+          }}
         />
       )}
 

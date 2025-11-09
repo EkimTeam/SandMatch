@@ -12,7 +12,7 @@ from django.utils.decorators import method_decorator
 from django.db import transaction
 from typing import Optional
 
-from .models import Tournament, TournamentEntry, SetFormat, Ruleset, KnockoutBracket, DrawPosition
+from .models import Tournament, TournamentEntry, SetFormat, Ruleset, KnockoutBracket, DrawPosition, SchedulePattern
 from apps.teams.models import Team
 from apps.matches.models import Match, MatchSet
 from apps.players.models import Player
@@ -21,6 +21,7 @@ from .serializers import (
     ParticipantSerializer,
     MatchSerializer,
     PlayerSerializer,
+    SchedulePatternSerializer,
 )
 from apps.tournaments.services.knockout import (
     validate_bracket_size,
@@ -29,13 +30,18 @@ from apps.tournaments.services.knockout import (
     seed_participants,
     advance_winner,
 )
+from apps.tournaments.services.round_robin import (
+    generate_matches_for_group,
+    persist_generated_matches,
+    generate_round_robin_matches,
+)
 
 
 @method_decorator(csrf_exempt, name='dispatch')
 class TournamentViewSet(viewsets.ModelViewSet):
     queryset = Tournament.objects.all().order_by("-created_at")
     serializer_class = TournamentSerializer
-    permission_classes = [IsAdminOrReadOnly]
+    permission_classes = [AllowAny]
 
     def destroy(self, request, *args, **kwargs):
         """Переопределяем стандартное удаление для корректной обработки олимпийских турниров."""
@@ -85,6 +91,24 @@ class TournamentViewSet(viewsets.ModelViewSet):
             tournament.delete()
         
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="set_ruleset", permission_classes=[IsAuthenticated])
+    def set_ruleset(self, request, pk=None):
+        """Установить регламент турнира (ruleset_id)."""
+        tournament = self.get_object()
+        data = request.data or {}
+        try:
+            ruleset_id = int(data.get("ruleset_id"))
+        except Exception:
+            return Response({"ok": False, "error": "Некорректный ruleset_id"}, status=400)
+        try:
+            rs = Ruleset.objects.get(pk=ruleset_id)
+        except Ruleset.DoesNotExist:
+            return Response({"ok": False, "error": "Регламент не найден"}, status=404)
+        tournament.ruleset = rs
+        tournament.save(update_fields=["ruleset"])
+        return Response({"ok": True})
 
     @action(detail=True, methods=["post"])
     def save_participants(self, request, pk=None):
@@ -488,9 +512,9 @@ class TournamentViewSet(viewsets.ModelViewSet):
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=["get"], url_path="group_schedule", permission_classes=[AllowAny])
     def group_schedule(self, request, pk=None):
-        """Сформировать расписание круговых матчей по группам на основе planned_participants.
+        """Сформировать расписание круговых матчей по группам на основе group_schedule_patterns.
         Возвращает для каждой группы массив туров, каждый тур — пары позиций (индексы 1..N).
-        Расписание зависит только от планового размера групп и не привязано к фактическим участникам.
+        Использует выбранные шаблоны расписания для каждой группы.
         """
         tournament: Tournament = self.get_object()
         if tournament.system != Tournament.System.ROUND_ROBIN:
@@ -503,44 +527,74 @@ class TournamentViewSet(viewsets.ModelViewSet):
         remainder = planned_total % groups_count
         sizes = [base + (1 if i < remainder else 0) for i in range(groups_count)]
 
-        # локальный генератор пар по алгоритму round-robin
-        def round_robin_indices(n: int):
-            ids = list(range(1, n + 1))
-            if n < 2:
-                return []
-            # добавим BYE при нечетном
-            bye = None
-            if n % 2 != 0:
-                ids.append(bye)
-            fixed = ids[0]
-            rotating = ids[1:]
-            rounds = []
-            total = len(ids)
-            for r in range(total - 1):
-                pairs = []
-                if fixed is not None and rotating[-1] is not None:
-                    pairs.append((fixed, rotating[-1]) if r % 2 == 0 else (rotating[-1], fixed))
-                for i in range((total - 2) // 2):
-                    a = rotating[i]
-                    b = rotating[total - 3 - i]
-                    if a is None or b is None:
-                        continue
-                    pairs.append((a, b) if ((r + i) % 2 == 0) else (b, a))
-                rounds.append(pairs)
-                rotating = [rotating[-1]] + rotating[:-1]
-            return rounds
-
         schedule = {}
+        import json
+        # Безопасно разбираем group_schedule_patterns (совместимость со старыми турнирами)
+        patterns = tournament.group_schedule_patterns
+        if not patterns:
+            patterns = {}
+        elif isinstance(patterns, str):
+            try:
+                patterns = json.loads(patterns) or {}
+            except Exception:
+                patterns = {}
+
         for gi, size in enumerate(sizes, start=1):
-            schedule[str(gi)] = round_robin_indices(size)
+            group_name = f"Группа {gi}"
+            
+            # Получаем шаблон для этой группы
+            pattern_id = patterns.get(group_name)
+            
+            if pattern_id:
+                try:
+                    pattern = SchedulePattern.objects.get(pk=pattern_id)
+                    
+                    # Генерируем расписание по выбранному шаблону
+                    if pattern.pattern_type == SchedulePattern.PatternType.BERGER:
+                        from apps.tournaments.services.round_robin import _berger_pairings
+                        rounds = _berger_pairings(list(range(1, size + 1)))
+                    elif pattern.pattern_type == SchedulePattern.PatternType.SNAKE:
+                        from apps.tournaments.services.round_robin import _snake_pairings
+                        rounds = _snake_pairings(list(range(1, size + 1)))
+                    elif pattern.pattern_type == SchedulePattern.PatternType.CUSTOM and pattern.custom_schedule:
+                        # Для кастомного шаблона используем его расписание
+                        custom_rounds = pattern.custom_schedule.get('rounds', [])
+                        rounds = []
+                        
+                        # Если участников меньше чем participants_count - фильтруем пары
+                        max_participant = pattern.participants_count
+                        for round_data in custom_rounds:
+                            pairs = []
+                            for pair in round_data.get('pairs', []):
+                                # Пропускаем пары с участником = participants_count при нечетном количестве
+                                if size < max_participant and (pair[0] == max_participant or pair[1] == max_participant):
+                                    continue
+                                pairs.append(tuple(pair))
+                            if pairs:  # Добавляем тур только если в нем есть пары
+                                rounds.append(pairs)
+                    else:
+                        # Fallback на Бергера
+                        from apps.tournaments.services.round_robin import _berger_pairings
+                        rounds = _berger_pairings(list(range(1, size + 1)))
+                        
+                except SchedulePattern.DoesNotExist:
+                    # Если шаблон не найден - используем Бергера
+                    from apps.tournaments.services.round_robin import _berger_pairings
+                    rounds = _berger_pairings(list(range(1, size + 1)))
+            else:
+                # Если шаблон не выбран - используем Бергера по умолчанию
+                from apps.tournaments.services.round_robin import _berger_pairings
+                rounds = _berger_pairings(list(range(1, size + 1)))
+            
+            schedule[str(gi)] = rounds
 
         return Response({"ok": True, "groups": schedule})
 
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="lock_participants", permission_classes=[IsAuthenticated])
     def lock_participants(self, request, pk=None):
-        """Зафиксировать участников: создать/актуализировать матчи в группах по расписанию.
-        Повторный вызов удаляет неактуальные матчи и добавляет недостающие.
+        """Зафиксировать участников: создать матчи в группах по выбранным шаблонам расписания.
+        Использует group_schedule_patterns для определения алгоритма каждой группы.
         """
         tournament: Tournament = self.get_object()
         
@@ -550,133 +604,33 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if tournament.system != Tournament.System.ROUND_ROBIN:
             return Response({"ok": False, "error": "Турнир не круговой системы"}, status=400)
 
-        groups_count = max(1, tournament.groups_count or 1)
-        planned_total = int(tournament.planned_participants or 0)
-        base = planned_total // groups_count
-        remainder = planned_total % groups_count
-        sizes = [base + (1 if i < remainder else 0) for i in range(groups_count)]
+        # Используем новую систему генерации с шаблонами
+        try:
+            # ВАЖНО: сначала удаляем старые "scheduled" матчи, чтобы генератор не считал их существующими
+            Match.objects.filter(
+                tournament=tournament,
+                stage=Match.Stage.GROUP,
+                status=Match.Status.SCHEDULED
+            ).delete()
 
-        # Расписание по индексам позиций (1..N) для каждой группы
-        def rr(n: int):
-            ids = list(range(1, n + 1))
-            if n < 2:
-                return []
-            bye = None
-            if n % 2 != 0:
-                ids.append(bye)
-            fixed = ids[0]
-            rotating = ids[1:]
-            rounds = []
-            total = len(ids)
-            for r in range(total - 1):
-                pairs = []
-                if fixed is not None and rotating[-1] is not None:
-                    pairs.append((fixed, rotating[-1]) if r % 2 == 0 else (rotating[-1], fixed))
-                for i in range((total - 2) // 2):
-                    a = rotating[i]
-                    b = rotating[total - 3 - i]
-                    if a is None or b is None:
-                        continue
-                    pairs.append((a, b) if ((r + i) % 2 == 0) else (b, a))
-                rounds.append(pairs)
-                rotating = [rotating[-1]] + rotating[:-1]
-            return rounds
+            # Теперь генерируем новое расписание, существующие пары не будут блокировать создание
+            generated = generate_round_robin_matches(tournament)
 
-        # Соберём соответствие позиция -> команда по группам
-        entries = TournamentEntry.objects.filter(tournament=tournament)
-        pos_to_team = {gi: {} for gi in range(1, groups_count + 1)}
-        for e in entries:
-            if e.team_id and e.group_index and e.row_index:
-                pos_to_team.setdefault(e.group_index, {})[e.row_index] = e.team_id
-
-        desired_pairs_per_group = {}
-        rounds_per_group = {}
-        for gi, size in enumerate(sizes, start=1):
-            rounds = rr(size)
-            rounds_per_group[gi] = rounds
-            pairs = []  # множество желаемых пар (team_low, team_high, round_index)
-            for r_index, tour_pairs in enumerate(rounds, start=1):
-                k = 1
-                for a_pos, b_pos in tour_pairs:
-                    ta = pos_to_team.get(gi, {}).get(a_pos)
-                    tb = pos_to_team.get(gi, {}).get(b_pos)
-                    if not ta or not tb:
-                        # По условиям UI, фиксация возможна только при полном составе, но на всякий случай пропустим
-                        k += 1
-                        continue
-                    low, high = (ta, tb) if ta < tb else (tb, ta)
-                    pairs.append((low, high, r_index, k))  # k — порядковый номер игры в туре
-                    k += 1
-            desired_pairs_per_group[gi] = pairs
-
-        # Текущие матчи группового этапа
-        existing = Match.objects.filter(tournament=tournament, stage=Match.Stage.GROUP)
-        keep_keys = set()
-        # Удалим неактуальные пары (те, которых больше нет среди желаемых, или команды вышли из группы)
-        for m in existing:
-            gi = m.group_index or 0
-            low = m.team_low_id or min(m.team_1_id, m.team_2_id)
-            high = m.team_high_id or max(m.team_1_id, m.team_2_id)
-            if gi in desired_pairs_per_group:
-                # есть ли такая пара в желаемых для этой группы?
-                if any((low == dlow and high == dhigh) for dlow, dhigh, _r, _k in desired_pairs_per_group[gi]):
-                    keep_keys.add((gi, low, high))
-                    continue
-            # иначе удаляем
-            m.delete()
-
-        # Создадим недостающие матчи и актуализируем поля
-        created = 0
-        for gi, pairs in desired_pairs_per_group.items():
-            round_name = f"Группа {gi}"
-            for low, high, r_index, k in pairs:
-                order_in_round = (r_index - 1) * 100 + k
-                # ВАЖНО: team_1_id / team_2_id должны соответствовать расписанию позиций (a_pos -> ta, b_pos -> tb),
-                # а не упорядоченным low/high. Пары идентифицируем через low/high, но стороны матча фиксируем как ta/tb.
-                # Для этого найдём обратно team_id по позициям в текущем туре r_index/k.
-                # Поскольку выше мы уже вычисляли ta/tb при построении pairs, восстановим их через pos_to_team и rounds_per_group.
-                # rounds_per_group[gi][r_index-1][k-1] содержит пары позиций (a_pos, b_pos)
-                a_pos, b_pos = rounds_per_group[gi][r_index-1][k-1]
-                ta = pos_to_team.get(gi, {}).get(a_pos)
-                tb = pos_to_team.get(gi, {}).get(b_pos)
-                # На случай, если участники уже не на месте (не должно быть при фиксации): fallback к low/high
-                team_1_id, team_2_id = (ta or low), (tb or high)
-                obj, _created = Match.objects.get_or_create(
-                    tournament=tournament,
-                    stage=Match.Stage.GROUP,
-                    group_index=gi,
-                    team_low_id=low,
-                    team_high_id=high,
-                    defaults={
-                        "team_1_id": team_1_id,
-                        "team_2_id": team_2_id,
-                        "round_index": r_index,
-                        "round_name": round_name,
-                        "order_in_round": order_in_round,
-                    },
-                )
-                if _created:
-                    created += 1
-                else:
-                    # обновим на случай изменения порядка
-                    upd = False
-                    if obj.round_index != r_index:
-                        obj.round_index = r_index; upd = True
-                    if obj.round_name != round_name:
-                        obj.round_name = round_name; upd = True
-                    if obj.order_in_round != order_in_round:
-                        obj.order_in_round = order_in_round; upd = True
-                    if obj.team_1_id != team_1_id or obj.team_2_id != team_2_id:
-                        obj.team_1_id = team_1_id; obj.team_2_id = team_2_id; upd = True
-                    if upd:
-                        obj.save(update_fields=["round_index", "round_name", "order_in_round", "team_1", "team_2"])
-
-        # Изменить статус турнира на active при фиксации
-        if tournament.status == Tournament.Status.CREATED:
-            tournament.status = Tournament.Status.ACTIVE
-            tournament.save(update_fields=['status'])
-
-        return Response({"ok": True, "created": created})
+            # Создаем новые матчи
+            created = persist_generated_matches(tournament, generated)
+            
+            # Изменить статус турнира на active при фиксации
+            if tournament.status == Tournament.Status.CREATED:
+                tournament.status = Tournament.Status.ACTIVE
+                tournament.save(update_fields=['status'])
+            
+            return Response({"ok": True, "created": created})
+            
+        except Exception as e:
+            return Response(
+                {"ok": False, "error": f"Ошибка при создании расписания: {str(e)}"}, 
+                status=500
+            )
 
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="unlock_participants", permission_classes=[IsAuthenticated])
@@ -693,6 +647,182 @@ class TournamentViewSet(viewsets.ModelViewSet):
             tournament.save(update_fields=['status'])
         
         return Response({"ok": True})
+
+    # --- ТУРНИРЫ КИНГ ---
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=['post'], url_path='lock_participants_king', permission_classes=[IsAuthenticated])
+    def lock_participants_king(self, request, pk=None):
+        """Фиксация участников для турнира Кинг и генерация матчей"""
+        tournament = self.get_object()
+        
+        if tournament.system != Tournament.System.KING:
+            return Response({'error': 'Не турнир Кинг'}, status=400)
+        
+        if tournament.status == Tournament.Status.COMPLETED:
+            return Response({'error': 'Турнир завершён, изменения запрещены'}, status=400)
+        
+        # Валидация: 4-16 участников в каждой группе
+        groups_count = max(1, tournament.groups_count or 1)
+        for group_idx in range(1, groups_count + 1):
+            entries_count = tournament.entries.filter(group_index=group_idx).count()
+            if not (4 <= entries_count <= 16):
+                return Response({
+                    'error': f'Группа {group_idx}: должно быть от 4 до 16 участников, найдено {entries_count}'
+                }, status=400)
+        
+        try:
+            # Удаляем старые незавершенные матчи
+            Match.objects.filter(
+                tournament=tournament,
+                stage=Match.Stage.GROUP,
+                status=Match.Status.SCHEDULED
+            ).delete()
+            
+            # Генерация и сохранение матчей
+            from apps.tournaments.services.king import generate_king_matches, persist_king_matches
+            generated = generate_king_matches(tournament)
+            created = persist_king_matches(tournament, generated)
+            
+            # Изменить статус турнира на active
+            if tournament.status == Tournament.Status.CREATED:
+                tournament.status = Tournament.Status.ACTIVE
+                tournament.save(update_fields=['status'])
+            
+            return Response({'ok': True, 'created': created})
+            
+        except Exception as e:
+            return Response(
+                {'ok': False, 'error': f'Ошибка при создании расписания: {str(e)}'}, 
+                status=500
+            )
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=['get'], url_path='king_schedule', permission_classes=[AllowAny])
+    def king_schedule(self, request, pk=None):
+        """Получить расписание турнира Кинг для отображения"""
+        tournament = self.get_object()
+        
+        if tournament.system != Tournament.System.KING:
+            return Response({'error': 'Не турнир Кинг'}, status=400)
+        
+        groups_count = max(1, tournament.groups_count or 1)
+        schedule = {}
+        
+        for group_idx in range(1, groups_count + 1):
+            # Получаем участников группы
+            entries = list(
+                tournament.entries.filter(group_index=group_idx)
+                .select_related('team__player_1', 'team__player_2')
+                .order_by('row_index')
+            )
+            
+            # Получаем матчи группы
+            matches = Match.objects.filter(
+                tournament=tournament,
+                stage=Match.Stage.GROUP,
+                group_index=group_idx
+            ).select_related('team_1__player_1', 'team_1__player_2', 'team_2__player_1', 'team_2__player_2', 'winner').prefetch_related('sets').order_by('round_index', 'order_in_round')
+            
+            # Группируем по турам
+            rounds_dict = {}
+            for match in matches:
+                round_num = match.round_index or 1
+                if round_num not in rounds_dict:
+                    rounds_dict[round_num] = []
+                
+                # Определяем игроков в парах
+                team1_players = []
+                team2_players = []
+                
+                if match.team_1 and match.team_1.player_1:
+                    team1_players.append({
+                        'id': match.team_1.player_1.id,
+                        'name': f"{match.team_1.player_1.last_name} {match.team_1.player_1.first_name}",
+                        'display_name': match.team_1.player_1.display_name or match.team_1.player_1.first_name
+                    })
+                if match.team_1 and match.team_1.player_2:
+                    team1_players.append({
+                        'id': match.team_1.player_2.id,
+                        'name': f"{match.team_1.player_2.last_name} {match.team_1.player_2.first_name}",
+                        'display_name': match.team_1.player_2.display_name or match.team_1.player_2.first_name
+                    })
+                
+                if match.team_2 and match.team_2.player_1:
+                    team2_players.append({
+                        'id': match.team_2.player_1.id,
+                        'name': f"{match.team_2.player_1.last_name} {match.team_2.player_1.first_name}",
+                        'display_name': match.team_2.player_1.display_name or match.team_2.player_1.first_name
+                    })
+                if match.team_2 and match.team_2.player_2:
+                    team2_players.append({
+                        'id': match.team_2.player_2.id,
+                        'name': f"{match.team_2.player_2.last_name} {match.team_2.player_2.first_name}",
+                        'display_name': match.team_2.player_2.display_name or match.team_2.player_2.first_name
+                    })
+                
+                # Получить счёт
+                score_str = None
+                if match.status == Match.Status.COMPLETED and match.winner_id:
+                    sets = match.sets.all().order_by('index')
+                    if sets:
+                        score_parts = []
+                        for s in sets:
+                            if s.is_tiebreak_only:
+                                score_parts.append(f"{s.tb_1}:{s.tb_2}TB")
+                            else:
+                                score_parts.append(f"{s.games_1}:{s.games_2}")
+                        score_str = " ".join(score_parts)
+                
+                rounds_dict[round_num].append({
+                    'id': match.id,
+                    'team1_players': team1_players,
+                    'team2_players': team2_players,
+                    'score': score_str,
+                    'status': match.status,
+                })
+            
+            # Формируем итоговый список туров
+            rounds_list = []
+            for round_num in sorted(rounds_dict.keys()):
+                rounds_list.append({
+                    'round': round_num,
+                    'matches': rounds_dict[round_num]
+                })
+            
+            schedule[str(group_idx)] = {
+                'participants': [
+                    {
+                        'id': e.id,
+                        'team_id': e.team_id,
+                        'name': f"{e.team.player_1.last_name} {e.team.player_1.first_name}",
+                        'display_name': e.team.player_1.display_name or e.team.player_1.first_name,
+                        'row_index': e.row_index
+                    }
+                    for e in entries
+                ],
+                'rounds': rounds_list
+            }
+        
+        return Response({'ok': True, 'schedule': schedule})
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=['post'], url_path='set_king_calculation_mode', permission_classes=[IsAuthenticated])
+    def set_king_calculation_mode(self, request, pk=None):
+        """Изменить режим подсчета G-/M+/NO для турнира Кинг"""
+        tournament = self.get_object()
+        
+        if tournament.system != Tournament.System.KING:
+            return Response({'error': 'Не турнир Кинг'}, status=400)
+        
+        mode = request.data.get('mode')
+        
+        if mode not in ['g_minus', 'm_plus', 'no']:
+            return Response({'error': 'Неверный режим. Допустимые: g_minus, m_plus, no'}, status=400)
+        
+        tournament.king_calculation_mode = mode
+        tournament.save(update_fields=['king_calculation_mode'])
+        
+        return Response({'ok': True, 'mode': mode})
 
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="match_start", permission_classes=[IsAuthenticated])
@@ -1392,8 +1522,137 @@ class TournamentViewSet(viewsets.ModelViewSet):
             return Response({'bye_positions': list(bye_positions)})
         except KnockoutBracket.DoesNotExist:
             return Response({'ok': False, 'error': 'Сетка не найдена'}, status=404)
+    
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=['post'], url_path='regenerate_group_schedule', permission_classes=[AllowAny])
+    def regenerate_group_schedule(self, request, pk=None):
+        """POST /api/tournaments/{id}/regenerate_group_schedule/
+        
+        Обновляет шаблон расписания для указанной группы.
+        Если турнир не зафиксирован - только сохраняет выбор в group_schedule_patterns.
+        Если турнир зафиксирован - пересоздает матчи с новым шаблоном.
+        
+        Body: {
+            "group_name": "Группа 1",
+            "pattern_id": 5
+        }
+        """
+        tournament: Tournament = self.get_object()
+        
+        # Блокировка для завершённых турниров
+        if tournament.status == Tournament.Status.COMPLETED:
+            return Response(
+                {'error': 'Турнир завершён, изменения запрещены'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Проверка системы турнира
+        if tournament.system != Tournament.System.ROUND_ROBIN:
+            return Response(
+                {'error': 'Этот endpoint только для круговой системы'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        group_name = request.data.get('group_name')
+        pattern_id = request.data.get('pattern_id')
+        
+        if not group_name:
+            return Response(
+                {'error': 'Параметр group_name обязателен'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not pattern_id:
+            return Response(
+                {'error': 'Параметр pattern_id обязателен'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Получаем шаблон
+        try:
+            pattern = SchedulePattern.objects.get(pk=int(pattern_id))
+        except SchedulePattern.DoesNotExist:
+            return Response(
+                {'error': 'Шаблон расписания не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Проверка системы турнира в шаблоне
+        if pattern.tournament_system != SchedulePattern.TournamentSystem.ROUND_ROBIN:
+            return Response(
+                {'error': 'Шаблон не предназначен для круговой системы'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Получаем количество участников в группе
+        group_index = int(group_name.split()[-1])
+        if tournament.status == Tournament.Status.ACTIVE:
+            # Для активного турнира сверяемся с фактическими участниками
+            participants_count = TournamentEntry.objects.filter(
+                tournament=tournament,
+                group_index=group_index
+            ).count()
+        else:
+            # Для неактивного турнира используем плановый размер группы
+            groups_count = max(1, tournament.groups_count or 1)
+            planned_total = int(tournament.planned_participants or 0)
+            base = planned_total // groups_count
+            remainder = planned_total % groups_count
+            # Индексы групп 1..groups_count, первые 'remainder' групп получают +1
+            participants_count = base + (1 if group_index <= remainder else 0)
+        
+        # Проверка количества участников для кастомных шаблонов (± 1)
+        if pattern.pattern_type == SchedulePattern.PatternType.CUSTOM and pattern.participants_count:
+            if participants_count != pattern.participants_count and participants_count != pattern.participants_count - 1:
+                return Response(
+                    {
+                        'error': f'Шаблон рассчитан на {pattern.participants_count} или {pattern.participants_count - 1} участников, '
+                                f'а в группе {participants_count}'
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        try:
+            with transaction.atomic():
+                # Сохраняем выбор шаблона
+                if not tournament.group_schedule_patterns:
+                    tournament.group_schedule_patterns = {}
+                tournament.group_schedule_patterns[group_name] = pattern_id
+                tournament.save(update_fields=['group_schedule_patterns'])
+                
+                # Если турнир зафиксирован (статус ACTIVE) - пересоздаем матчи
+                if tournament.status == Tournament.Status.ACTIVE:
+                    # Удаляем старые незавершенные матчи группы
+                    deleted_count = Match.objects.filter(
+                        tournament=tournament,
+                        round_name=group_name,
+                        status=Match.Status.SCHEDULED
+                    ).delete()[0]
+                    
+                    # Генерируем новое расписание
+                    generated = generate_matches_for_group(tournament, group_name, pattern)
+                    created_count = persist_generated_matches(tournament, generated)
+                    
+                    return Response({
+                        'ok': True,
+                        'deleted': deleted_count,
+                        'created': created_count,
+                        'pattern': SchedulePatternSerializer(pattern).data
+                    })
+                else:
+                    # Турнир не зафиксирован - только сохраняем выбор
+                    return Response({
+                        'ok': True,
+                        'deleted': 0,
+                        'created': 0,
+                        'pattern': SchedulePatternSerializer(pattern).data
+                    })
+                
         except Exception as e:
-            return Response({'ok': False, 'error': str(e)}, status=500)
+            return Response(
+                {'error': f'Ошибка при обновлении расписания: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="brackets/(?P<bracket_id>[^/.]+)/assign_participant", permission_classes=[IsAuthenticated])
@@ -1958,9 +2217,12 @@ def set_formats_list(request):
 
 @api_view(["GET"])
 def rulesets_list(request):
-    rulesets = Ruleset.objects.all()
+    qs = Ruleset.objects.all()
+    system = request.GET.get("system")
+    if system:
+        qs = qs.filter(tournament_system=system)
     return Response({
-        "rulesets": [{"id": rs.id, "name": rs.name} for rs in rulesets]
+        "rulesets": [{"id": rs.id, "name": rs.name} for rs in qs]
     })
 
 
@@ -2016,3 +2278,44 @@ def tournament_create(request):
         return Response({"ok": False, "error": str(e)}, status=400)
 
     return Response({"ok": True, "redirect": f"/tournaments/{tournament.id}/"})
+
+
+class SchedulePatternViewSet(viewsets.ReadOnlyModelViewSet):
+    """ViewSet для шаблонов расписания (только чтение)"""
+    queryset = SchedulePattern.objects.all()
+    serializer_class = SchedulePatternSerializer
+    permission_classes = [AllowAny]
+    
+    @action(detail=False, methods=['get'])
+    def by_participants(self, request):
+        """GET /api/schedule-patterns/by_participants/?count=4&system=round_robin
+        
+        Возвращает шаблоны для указанного количества участников и системы турнира.
+        """
+        count = request.query_params.get('count')
+        system = request.query_params.get('system', SchedulePattern.TournamentSystem.ROUND_ROBIN)
+        
+        if not count:
+            return Response(
+                {'error': 'Параметр count обязателен'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            count = int(count)
+        except ValueError:
+            return Response(
+                {'error': 'Параметр count должен быть числом'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Системные шаблоны (Berger, Snake) + кастомные для нужного количества
+        patterns = SchedulePattern.objects.filter(
+            tournament_system=system
+        ).filter(
+            Q(is_system=True) | 
+            Q(participants_count=count, pattern_type=SchedulePattern.PatternType.CUSTOM)
+        ).order_by('is_system', 'name')
+        
+        serializer = self.get_serializer(patterns, many=True)
+        return Response(serializer.data)

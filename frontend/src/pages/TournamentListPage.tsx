@@ -105,8 +105,14 @@ export const TournamentListPage: React.FC = () => {
 
   const handleCreateTournament = async (payload: any) => {
     try {
-      const isRR = payload.system === 'round_robin';
-      const url = isRR ? '/tournaments/new_round_robin/' : '/tournaments/new_knockout/';
+      let url = '/tournaments/new_knockout/'; // default
+      if (payload.system === 'round_robin') {
+        url = '/tournaments/new_round_robin/';
+      } else if (payload.system === 'king') {
+        url = '/tournaments/new_king/';
+      } else if (payload.system === 'knockout') {
+        url = '/tournaments/new_knockout/';
+      }
       const { data } = await api.post(url, payload);
       if (!data.ok) throw new Error(data.error || 'Ошибка создания турнира');
       setShowModal(false);
@@ -182,7 +188,13 @@ export const TournamentListPage: React.FC = () => {
                 
                 <div style={{ marginTop: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   <Link
-                    to={t.system === 'round_robin' ? `/tournaments/${t.id}/round_robin` : `/tournaments/${t.id}/knockout`}
+                    to={
+                      t.system === 'round_robin'
+                        ? `/tournaments/${t.id}/round_robin`
+                        : t.system === 'king'
+                          ? `/tournaments/${t.id}/king`
+                          : `/tournaments/${t.id}/knockout`
+                    }
                     className="btn"
                   >
                     Открыть
@@ -201,7 +213,16 @@ export const TournamentListPage: React.FC = () => {
                     <div className="meta">{formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}</div>
                     
                   </div>
-                  <Link to={t.system === 'round_robin' ? `/tournaments/${t.id}/round_robin` : `/tournaments/${t.id}/knockout`} className="btn">Открыть</Link>
+                  <Link
+                    to={
+                      t.system === 'round_robin'
+                        ? `/tournaments/${t.id}/round_robin`
+                        : t.system === 'king'
+                          ? `/tournaments/${t.id}/king`
+                          : `/tournaments/${t.id}/knockout`
+                    }
+                    className="btn"
+                  >Открыть</Link>
                 </div>
               </div>
             ))}
@@ -228,7 +249,16 @@ export const TournamentListPage: React.FC = () => {
                   <h3>{t.name}</h3>
                   <div className="meta">{formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}</div>
                   <div style={{ marginTop: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    <Link to={t.system === 'round_robin' ? `/tournaments/${t.id}/round_robin` : `/tournaments/${t.id}/knockout`} className="btn">Открыть</Link>
+                    <Link
+                      to={
+                        t.system === 'round_robin'
+                          ? `/tournaments/${t.id}/round_robin`
+                          : t.system === 'king'
+                            ? `/tournaments/${t.id}/king`
+                            : `/tournaments/${t.id}/knockout`
+                      }
+                      className="btn"
+                    >Открыть</Link>
                   </div>
                 </div>
               ))}

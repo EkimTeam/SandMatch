@@ -12,6 +12,7 @@ from apps.tournaments.models import Ruleset
 # При необходимости легко расширить список токенов, не меняя схему БД.
 
 PRESETS = [
+    # Круговая система (по умолчанию tournament_system = round_robin)
     {
         "name": "победы > личные встречи > разница сетов между собой > разница геймов между собой > разница сетов между всеми > разница геймов между всеми",
         "ordering_priority": [
@@ -22,6 +23,7 @@ PRESETS = [
             "sets_ratio_all",
             "games_ratio_all",
         ],
+        "tournament_system": Ruleset.TournamentSystem.ROUND_ROBIN,
     },
     {
         "name": "победы > разница сетов между всеми > разница геймов между всеми > разница сетов между собой > разница геймов между собой",
@@ -32,6 +34,7 @@ PRESETS = [
             "sets_ratio_between",
             "games_ratio_between",
         ],
+        "tournament_system": Ruleset.TournamentSystem.ROUND_ROBIN,
     },
     {
         "name": "разница сетов между всеми > разница геймов между всеми > разница сетов между собой > разница геймов между собой",
@@ -41,6 +44,7 @@ PRESETS = [
             "sets_ratio_between",
             "games_ratio_between",
         ],
+        "tournament_system": Ruleset.TournamentSystem.ROUND_ROBIN,
     },
     {
         "name": "разница геймов между всеми > разница геймов между собой",
@@ -48,6 +52,24 @@ PRESETS = [
             "games_ratio_all",
             "games_ratio_between",
         ],
+        "tournament_system": Ruleset.TournamentSystem.ROUND_ROBIN,
+    },
+
+    # Кинг — новые пресеты
+    {
+        "name": "победы > разница геймов между всеми > разница геймов между собой > личные встречи",
+        "ordering_priority": ["wins", "games_ratio_all", "games_ratio_between", "h2"],
+        "tournament_system": Ruleset.TournamentSystem.KING,
+    },
+    {
+        "name": "разница сетов между всеми > разница геймов между всеми > разница сетов между собой > разница геймов между собой > личные встречи",
+        "ordering_priority": ["sets_ratio_all", "games_ratio_all", "sets_ratio_between", "games_ratio_between", "h2"],
+        "tournament_system": Ruleset.TournamentSystem.KING,
+    },
+    {
+        "name": "разница геймов между всеми > разница геймов между собой > личные встречи",
+        "ordering_priority": ["games_ratio_all", "games_ratio_between", "h2"],
+        "tournament_system": Ruleset.TournamentSystem.KING,
     },
 ]
 
@@ -58,8 +80,12 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         created, updated = 0, 0
         for preset in PRESETS:
+            defaults = {
+                "ordering_priority": preset["ordering_priority"],
+                "tournament_system": preset.get("tournament_system", Ruleset.TournamentSystem.ROUND_ROBIN),
+            }
             obj, is_created = Ruleset.objects.update_or_create(
-                name=preset["name"], defaults={"ordering_priority": preset["ordering_priority"]}
+                name=preset["name"], defaults=defaults
             )
             if is_created:
                 created += 1

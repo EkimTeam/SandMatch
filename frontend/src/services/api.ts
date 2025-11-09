@@ -61,6 +61,81 @@ export interface Tournament {
   participants_count: number;
   created_at: string;
   updated_at: string;
+  system?: 'round_robin' | 'knockout' | 'king';
+  king_calculation_mode?: 'g_minus' | 'm_plus' | 'no';
+  groups_count?: number;
+  planned_participants?: number;
+  participant_mode?: 'singles' | 'doubles';
+  set_format_id?: number;
+  ruleset?: { id: number; name: string; ordering_priority?: string[] } | null;
+}
+
+export interface Ruleset {
+  id: number;
+  name: string;
+  ordering_priority?: string[];
+}
+
+// Типы для турниров Кинг
+export type KingCalculationMode = 'g_minus' | 'm_plus' | 'no';
+
+export interface KingPlayer {
+  id: number;
+  name: string;
+  display_name: string;
+}
+
+export interface KingMatch {
+  id: number;
+  team1_players: KingPlayer[];
+  team2_players: KingPlayer[];
+  score: string | null;
+  status: string;
+}
+
+export interface KingRound {
+  round: number;
+  matches: KingMatch[];
+}
+
+export interface KingParticipant {
+  id: number;
+  team_id: number;
+  name: string;
+  display_name: string;
+  row_index: number;
+}
+
+export interface KingGroupSchedule {
+  participants: KingParticipant[];
+  rounds: KingRound[];
+}
+
+export interface KingScheduleResponse {
+  ok: boolean;
+  schedule: {
+    [groupIndex: string]: KingGroupSchedule;
+  };
+}
+
+export interface SchedulePattern {
+  id: number;
+  name: string;
+  pattern_type: 'berger' | 'snake' | 'custom';
+  pattern_type_display: string;
+  tournament_system: 'round_robin' | 'knockout' | 'king';
+  tournament_system_display: string;
+  description: string;
+  participants_count: number | null;
+  custom_schedule: {
+    rounds: Array<{
+      round: number;
+      pairs: Array<[number, number]>;
+    }>;
+  } | null;
+  is_system: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ApiResponse<T> {
@@ -81,6 +156,19 @@ export const tournamentApi = {
   // Получить турнир по ID
   getById: async (id: number): Promise<Tournament> => {
     const response = await api.get<Tournament>(`/tournaments/${id}/`);
+    return response.data;
+  },
+  // Получить список регламентов
+  getRulesets: async (system?: 'round_robin' | 'knockout' | 'king'): Promise<{ id: number; name: string }[]> => {
+    const qs = system ? `?system=${encodeURIComponent(system)}` : '';
+    const response = await api.get<{ rulesets: { id: number; name: string }[] }>(`/rulesets/${qs}`);
+    const list = response.data?.rulesets || [];
+    // Отсортировать по алфавиту
+    return [...list].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  },
+  // Установить регламент турнира
+  setRuleset: async (id: number, rulesetId: number): Promise<{ ok: boolean }> => {
+    const response = await api.post(`/tournaments/${id}/set_ruleset/`, { ruleset_id: rulesetId });
     return response.data;
   },
   // Сохранить ПОЛНЫЙ счёт (все сеты) — для плей-офф
@@ -210,6 +298,33 @@ export const tournamentApi = {
     );
     return response.data;
   },
+
+  // --- МЕТОДЫ ДЛЯ ТУРНИРОВ КИНГ ---
+  
+  // Зафиксировать участников и сгенерировать матчи для турнира Кинг
+  lockParticipantsKing: async (tournamentId: number) => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/lock_participants_king/`);
+    return data;
+  },
+
+  getKingSchedule: async (tournamentId: number): Promise<KingScheduleResponse> => {
+    const { data } = await api.get(`/tournaments/${tournamentId}/king_schedule/`);
+    return data;
+  },
+
+  setKingCalculationMode: async (tournamentId: number, mode: KingCalculationMode) => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/set_king_calculation_mode/`, { mode });
+    return data;
+  },
+
+  complete: async (tournamentId: number) => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/complete/`);
+    return data;
+  },
+
+  delete: async (tournamentId: number) => {
+    await api.delete(`/tournaments/${tournamentId}/`);
+  },
 };
 
 // API методы для игроков
@@ -306,6 +421,47 @@ export const matchApi = {
   resetMatch: async (tournamentId: number, matchId: number): Promise<{ ok: boolean }> => {
     const response = await api.post(`/tournaments/${tournamentId}/match_reset/`, {
       match_id: matchId,
+    });
+    return response.data;
+  },
+};
+
+// API методы для шаблонов расписания
+export const schedulePatternApi = {
+  // Получить все шаблоны
+  getAll: async (): Promise<SchedulePattern[]> => {
+    const response = await api.get<any>('/schedule-patterns/');
+    const data = response.data as any;
+    if (Array.isArray(data)) return data as SchedulePattern[];
+    if (data && Array.isArray(data.results)) return data.results as SchedulePattern[];
+    return [] as SchedulePattern[];
+  },
+
+  // Получить шаблоны по количеству участников
+  getByParticipants: async (count: number, system: string = 'round_robin'): Promise<SchedulePattern[]> => {
+    const response = await api.get<any>('/schedule-patterns/by_participants/', {
+      params: { count, system }
+    });
+    const data = response.data as any;
+    if (Array.isArray(data)) return data as SchedulePattern[];
+    if (data && Array.isArray(data.results)) return data.results as SchedulePattern[];
+    return [] as SchedulePattern[];
+  },
+
+  // Пересоздать расписание группы
+  regenerateGroupSchedule: async (
+    tournamentId: number,
+    groupName: string,
+    patternId: number
+  ): Promise<{
+    ok: boolean;
+    deleted: number;
+    created: number;
+    pattern: SchedulePattern;
+  }> => {
+    const response = await api.post(`/tournaments/${tournamentId}/regenerate_group_schedule/`, {
+      group_name: groupName,
+      pattern_id: patternId,
     });
     return response.data;
   },

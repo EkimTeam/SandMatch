@@ -6,6 +6,7 @@ import { TournamentListPage } from './pages/TournamentListPage';
 import { TournamentDetailPage } from './pages/TournamentDetailPage';
 import { PlayersPage } from './pages/PlayersPage';
 import { KnockoutPage } from './pages/KnockoutPage';
+import { KingPage } from './pages/KingPage';
 import { StatsPage } from './pages/StatsPage';
 import { getAccessToken } from './services/auth';
 
@@ -29,6 +30,7 @@ function App() {
           <Route path="/tournaments/:id/round_robin" element={<RequireAuth><TournamentDetailPage /></RequireAuth>} />
           <Route path="/tournaments/:id" element={<RequireAuth><TournamentDetailPage /></RequireAuth>} />
           <Route path="/tournaments/:id/knockout" element={<RequireAuth><KnockoutPage /></RequireAuth>} />
+          <Route path="/tournaments/:id/king" element={<RequireAuth><KingPage /></RequireAuth>} />
           <Route path="/players" element={<RequireAuth><PlayersPage /></RequireAuth>} />
           <Route path="/stats" element={<RequireAuth><StatsPage /></RequireAuth>} />
           <Route path="*" element={<Navigate to="/" replace />} />

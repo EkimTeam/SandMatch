@@ -79,6 +79,14 @@ def create_tournament(request: HttpRequest):
         if ko_participants <= brackets_count * 2:
             return JsonResponse({"ok": False, "error": "Слишком мало участников для такого количества сеток. Уменьшите число сеток или увеличьте количество участников."}, status=400)
 
+    # Кинг
+    if system == Tournament.System.KING and planned_participants and groups_count:
+        per_group = planned_participants // groups_count
+        if per_group < 4:
+            return JsonResponse({"ok": False, "error": "Для Кинг должно быть минимум 4 участника в группе"}, status=400)
+        if per_group > 16:
+            return JsonResponse({"ok": False, "error": "Для Кинг должно быть максимум 16 участников в группе"}, status=400)
+
     t = Tournament.objects.create(
         name=name,
         date=date,
