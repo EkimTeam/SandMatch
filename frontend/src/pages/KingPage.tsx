@@ -32,6 +32,25 @@ export const KingPage: React.FC = () => {
   const [schedulePatternModal, setSchedulePatternModal] = useState<{ groupName: string; participantsCount: number; currentPatternId?: number | null } | null>(null);
   // Все паттерны Кинг (кэш) и быстрый доступ по id
   const [kingPatternsById, setKingPatternsById] = useState<Record<number, SchedulePattern>>({});
+  // Подсказка к режимам подсчета (mobile-friendly)
+  const [showCalcTip, setShowCalcTip] = useState(false);
+  const calcTipRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent | TouchEvent) => {
+      if (!showCalcTip) return;
+      const el = calcTipRef.current;
+      if (el && e.target instanceof Node && !el.contains(e.target)) {
+        setShowCalcTip(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('touchstart', onDocClick);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('touchstart', onDocClick);
+    };
+  }, [showCalcTip]);
 
   // Загрузка данных турнира
   useEffect(() => {
@@ -280,12 +299,46 @@ export const KingPage: React.FC = () => {
             <span>NO</span>
           </label>
           {(() => {
-            const tip = "При разном количестве сыгранных матчей:\n"+
-              "'G-' — не учитывает последний матч(и), которые больше минимально сыгранных для игрока матчей.\n"+
-              "'M+' — за несыгранные до максимального количества матч(и) добавляется среднее число геймов.\n"+
-              "'NO' — не учитывает разное количество сыгранных матчей.";
+            const tipLines = [
+              'При разном количестве сыгранных матчей:',
+              "'G-' — не учитывает последний матч(и), которые больше минимально сыгранных для игрока матчей.",
+              "'M+' — за несыгранные до максимального количества матч(и) добавляется среднее число геймов.",
+              "'NO' — не учитывает разное количество сыгранных матчей.",
+            ];
             return (
-              <span title={tip} className="text-gray-500 cursor-help select-none">ℹ️</span>
+              <div className="relative" ref={calcTipRef}
+                   onMouseEnter={() => setShowCalcTip(true)}
+                   onMouseLeave={() => setShowCalcTip(false)}
+              >
+                <button
+                  type="button"
+                  aria-label="Пояснение режима подсчета"
+                  aria-expanded={showCalcTip}
+                  className="text-gray-500 cursor-pointer select-none w-5 h-5 flex items-center justify-center rounded hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  onClick={() => setShowCalcTip(v => !v)}
+                  onFocus={() => setShowCalcTip(true)}
+                  onBlur={(e) => {
+                    // Закрывать, только если фокус ушел вне контейнера
+                    if (calcTipRef.current && !calcTipRef.current.contains(e.relatedTarget as Node)) {
+                      setShowCalcTip(false);
+                    }
+                  }}
+                >
+                  ℹ️
+                </button>
+                {showCalcTip && (
+                  <div
+                    role="dialog"
+                    aria-live="polite"
+                    className="absolute z-20 mt-2 w-80 max-w-[90vw] rounded-md border border-gray-200 bg-white p-3 shadow-lg text-sm leading-snug"
+                    style={{ left: 0 }}
+                  >
+                    {tipLines.map((line, i) => (
+                      <p key={i} className={i === 0 ? 'font-medium mb-1' : 'mb-1'}>{line}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
             );
           })()}
           {/* Регламент: выпадающий список */}
