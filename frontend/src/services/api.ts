@@ -426,6 +426,44 @@ export const matchApi = {
   },
 };
 
+// API методы для рейтинга
+export const ratingApi = {
+  // Получить список лидеров
+  getLeaderboard: async (params?: {
+    search?: string;
+    min_matches?: number;
+    min_tournaments?: number;
+    limit?: number;
+  }): Promise<{ results: any[] }> => {
+    const queryParams = new URLSearchParams();
+    if (params?.search) queryParams.append('search', params.search);
+    if (params?.min_matches) queryParams.append('min_matches', params.min_matches.toString());
+    if (params?.min_tournaments) queryParams.append('min_tournaments', params.min_tournaments.toString());
+    if (params?.limit) queryParams.append('limit', params.limit.toString());
+    
+    const response = await api.get(`/players/ratings/?${queryParams.toString()}`);
+    return response.data;
+  },
+
+  // Получить историю рейтинга игрока
+  getPlayerHistory: async (
+    playerId: number,
+    params?: {
+      from?: string;
+      to?: string;
+      compare_with?: number;
+    }
+  ): Promise<{ history: any[]; compare?: any[] }> => {
+    const queryParams = new URLSearchParams();
+    if (params?.from) queryParams.append('from', params.from);
+    if (params?.to) queryParams.append('to', params.to);
+    if (params?.compare_with) queryParams.append('compare_with', params.compare_with.toString());
+    
+    const response = await api.get(`/players/${playerId}/rating_history/?${queryParams.toString()}`);
+    return response.data;
+  },
+};
+
 // API методы для шаблонов расписания
 export const schedulePatternApi = {
   // Получить все шаблоны

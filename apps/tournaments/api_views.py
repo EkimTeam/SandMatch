@@ -2231,6 +2231,19 @@ def rulesets_list(request):
 @permission_classes([IsAuthenticated])
 def tournament_complete(request, pk: int):
     t = get_object_or_404(Tournament, pk=pk)
+    if t.status == Tournament.Status.COMPLETED:
+        return Response({"ok": False, "error": "Турнир уже завершен"}, status=400)
+    
+    # Расчёт рейтинга при завершении турнира
+    try:
+        from apps.players.services.rating import recalculate_ratings_for_tournament
+        recalculate_ratings_for_tournament(t.id)
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Ошибка расчета рейтинга для турнира {t.id}: {e}")
+        return Response({"ok": False, "error": f"Ошибка расчета рейтинга: {str(e)}"}, status=500)
+    
     t.status = Tournament.Status.COMPLETED
     t.save(update_fields=["status"]) 
     return Response({"ok": True})
@@ -2243,6 +2256,31 @@ def tournament_remove(request, pk: int):
     t = get_object_or_404(Tournament, pk=pk)
     t.delete()
     return Response({"ok": True})
+
+
+@csrf_exempt
+@api_view(["POST", "OPTIONS"])
+@permission_classes([IsAuthenticated])
+def tournament_recalculate_ratings(request, pk: int):
+    """Пересчет рейтинга для завершенного турнира (например, после изменения стартового рейтинга игрока)."""
+    t = get_object_or_404(Tournament, pk=pk)
+    if t.status != Tournament.Status.COMPLETED:
+        return Response({"ok": False, "error": "Можно пересчитать рейтинг только для завершенного турнира"}, status=400)
+    
+    try:
+        from apps.players.services.rating import recalculate_ratings_for_tournament
+        # Удаляем старые записи истории для этого турнира перед пересчетом
+        from apps.players.models import PlayerRatingHistory, PlayerRatingDynamic
+        PlayerRatingHistory.objects.filter(tournament_id=t.id).delete()
+        PlayerRatingDynamic.objects.filter(tournament_id=t.id).delete()
+        
+        recalculate_ratings_for_tournament(t.id)
+        return Response({"ok": True, "message": "Рейтинг пересчитан"})
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Ошибка пересчета рейтинга для турнира {t.id}: {e}")
+        return Response({"ok": False, "error": f"Ошибка пересчета: {str(e)}"}, status=500)
 
 
 @csrf_exempt

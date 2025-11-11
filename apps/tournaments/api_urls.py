@@ -22,6 +22,7 @@ urlpatterns = [
     # Управляющие действия без CSRF
     path('tournaments/<int:pk>/complete/', api_views.tournament_complete, name='api_tournament_complete'),
     path('tournaments/<int:pk>/remove/', api_views.tournament_remove, name='api_tournament_remove'),
+    path('tournaments/<int:pk>/recalculate_ratings/', api_views.tournament_recalculate_ratings, name='api_tournament_recalculate_ratings'),
 
     # роутер DRF
     path('', include(router.urls)),

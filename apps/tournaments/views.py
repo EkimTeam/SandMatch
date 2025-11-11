@@ -296,12 +296,23 @@ def complete_tournament(request: HttpRequest, pk: int):
     t = get_object_or_404(Tournament, pk=pk)
     if t.status == Tournament.Status.COMPLETED:
         return HttpResponseBadRequest("tournament is completed")
-    if t.status == Tournament.Status.COMPLETED:
-        return HttpResponseBadRequest("tournament is completed")
     # TODO: проверить, что все матчи сыграны; пока пропускаем проверку
-    # TODO: обсчёт рейтинга
+    
+    # Расчёт рейтинга при завершении турнира
+    try:
+        from apps.players.services.rating import recalculate_ratings_for_tournament
+        recalculate_ratings_for_tournament(t.id)
+    except Exception as e:
+        # Логируем ошибку, но не блокируем завершение турнира
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Ошибка расчета рейтинга для турнира {t.id}: {e}")
+    
     t.status = Tournament.Status.COMPLETED
     t.save(update_fields=["status"])
+    
+    if request.headers.get("x-requested-with") == "XMLHttpRequest" or request.content_type == "application/json":
+        return JsonResponse({"ok": True})
     return redirect("tournament_detail", pk=t.id)
 
 

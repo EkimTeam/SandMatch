@@ -73,3 +73,29 @@ class PlayerRatingHistory(models.Model):
 
     def __str__(self) -> str:
         return f"{self.player} → {self.value} ({self.created_at:%Y-%m-%d})"
+
+
+class PlayerRatingDynamic(models.Model):
+    """
+    Динамика рейтинга игрока по турнирам (агрегированный итог по каждому турниру).
+    """
+    player = models.ForeignKey(Player, on_delete=models.CASCADE, related_name="rating_dynamic")
+    tournament = models.ForeignKey("tournaments.Tournament", on_delete=models.CASCADE, related_name="player_rating_dynamics")
+    rating_before = models.IntegerField()
+    rating_after = models.IntegerField()
+    total_change = models.IntegerField()
+    matches_count = models.IntegerField(default=0)
+    calculated_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [("player", "tournament")]
+        indexes = [
+            models.Index(fields=["player", "calculated_at"]),
+            models.Index(fields=["tournament"]),
+        ]
+        ordering = ["player_id", "tournament_id"]
+        verbose_name = "Динамика рейтинга игрока (турнир)"
+        verbose_name_plural = "Динамики рейтинга игроков (турнир)"
+
+    def __str__(self) -> str:
+        return f"{self.player} @ {self.tournament}: {self.rating_before} → {self.rating_after} ({self.total_change:+d})"
