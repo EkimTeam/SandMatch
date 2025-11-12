@@ -60,6 +60,16 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                 Игроки
               </Link>
               <Link 
+                to="/rating" 
+                className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+                  isActive('/rating') 
+                    ? 'bg-primary-100 text-primary-700' 
+                    : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                Рейтинг
+              </Link>
+              <Link 
                 to="/stats" 
                 className={`px-3 py-2 rounded-lg text-sm transition-colors ${
                   isActive('/stats') 

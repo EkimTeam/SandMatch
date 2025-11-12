@@ -492,3 +492,31 @@ api.interceptors.response.use(
 );
 
 export default api;
+
+// --- Rating API ---
+export const ratingApi = {
+  leaderboard: async (params?: { hard?: boolean; medium?: boolean; tiebreak_only?: boolean }): Promise<{ results: Array<{
+    id: number;
+    display_name: string;
+    last_name: string;
+    current_rating: number;
+    tournaments_count: number;
+    matches_count: number;
+    last5: Array<{ match_id: number; tournament_id: number; result: 'W'|'L'|'U' }>;
+  }> }> => {
+    const q: string[] = [];
+    if (params?.hard) q.push('hard=1');
+    if (params?.medium) q.push('medium=1');
+    if (params?.tiebreak_only) q.push('tiebreak_only=1');
+    const qs = q.length ? `?${q.join('&')}` : '';
+    const { data } = await api.get(`/rating/leaderboard/${qs}`);
+    return data;
+  },
+  playerHistory: async (playerId: number): Promise<{
+    player_id: number;
+    history: Array<{ tournament_id: number; tournament_date: string; rating_before: number; rating_after: number; total_change: number; matches_count: number }>;
+  }> => {
+    const { data } = await api.get(`/rating/player/${playerId}/history/`);
+    return data;
+  },
+};

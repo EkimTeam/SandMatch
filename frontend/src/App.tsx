@@ -8,6 +8,7 @@ import { PlayersPage } from './pages/PlayersPage';
 import { KnockoutPage } from './pages/KnockoutPage';
 import { KingPage } from './pages/KingPage';
 import { StatsPage } from './pages/StatsPage';
+import { RatingPage } from './pages/RatingPage';
 import { getAccessToken } from './services/auth';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -32,6 +33,7 @@ function App() {
           <Route path="/tournaments/:id/knockout" element={<RequireAuth><KnockoutPage /></RequireAuth>} />
           <Route path="/tournaments/:id/king" element={<RequireAuth><KingPage /></RequireAuth>} />
           <Route path="/players" element={<RequireAuth><PlayersPage /></RequireAuth>} />
+          <Route path="/rating" element={<RequireAuth><RatingPage /></RequireAuth>} />
           <Route path="/stats" element={<RequireAuth><StatsPage /></RequireAuth>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

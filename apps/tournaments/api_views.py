@@ -456,6 +456,14 @@ class TournamentViewSet(viewsets.ModelViewSet):
         tournament = self.get_object()
         tournament.status = Tournament.Status.COMPLETED
         tournament.save(update_fields=["status"])
+        # Триггер пересчета рейтинга после завершения турнира
+        try:
+            from apps.players.services.rating_service import compute_ratings_for_tournament
+            compute_ratings_for_tournament(tournament.id)
+        except Exception as e:
+            # Логируем, но не роняем ответ клиенту
+            import logging
+            logging.getLogger(__name__).exception("Rating recompute failed for tournament %s: %s", tournament.id, e)
         return Response({"ok": True})
 
     @method_decorator(csrf_exempt)
