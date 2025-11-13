@@ -495,19 +495,25 @@ export default api;
 
 // --- Rating API ---
 export const ratingApi = {
-  leaderboard: async (params?: { hard?: boolean; medium?: boolean; tiebreak_only?: boolean }): Promise<{ results: Array<{
+  leaderboard: async (params?: { hard?: boolean; medium?: boolean; tiebreak_only?: boolean; q?: string; page?: number; page_size?: number }): Promise<{ results: Array<{
     id: number;
+    first_name?: string;
     display_name: string;
     last_name: string;
     current_rating: number;
     tournaments_count: number;
     matches_count: number;
+    winrate?: number;
+    rank?: number;
     last5: Array<{ match_id: number; tournament_id: number; result: 'W'|'L'|'U' }>;
-  }> }> => {
+  }>, page: number, page_size: number, total: number, total_pages: number }> => {
     const q: string[] = [];
     if (params?.hard) q.push('hard=1');
     if (params?.medium) q.push('medium=1');
     if (params?.tiebreak_only) q.push('tiebreak_only=1');
+    if (params?.q) q.push(`q=${encodeURIComponent(params.q)}`);
+    if (params?.page) q.push(`page=${params.page}`);
+    if (params?.page_size) q.push(`page_size=${params.page_size}`);
     const qs = q.length ? `?${q.join('&')}` : '';
     const { data } = await api.get(`/rating/leaderboard/${qs}`);
     return data;
@@ -519,4 +525,12 @@ export const ratingApi = {
     const { data } = await api.get(`/rating/player/${playerId}/history/`);
     return data;
   },
+  summaryStats: async (params?: { from?: string; to?: string }): Promise<any> => {
+    const qs: string[] = [];
+    if (params?.from) qs.push(`from=${encodeURIComponent(params.from)}`);
+    if (params?.to) qs.push(`to=${encodeURIComponent(params.to)}`);
+    const s = qs.length ? `?${qs.join('&')}` : '';
+    const { data } = await api.get(`/rating/stats/summary/${s}`);
+    return data;
+  }
 };
