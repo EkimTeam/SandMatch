@@ -1,5 +1,5 @@
 from django.urls import path
-from .api_rating import leaderboard, player_history, player_briefs, h2h, player_relations, player_top_wins
+from .api_rating import leaderboard, player_history, player_briefs, h2h, player_relations, player_top_wins, player_match_deltas
 from .api_stats import summary_stats
 
 urlpatterns = [
@@ -9,5 +9,6 @@ urlpatterns = [
     path('h2h/', h2h, name='rating_h2h'),
     path('player/<int:player_id>/relations/', player_relations, name='rating_player_relations'),
     path('player/<int:player_id>/top_wins/', player_top_wins, name='rating_player_top_wins'),
+    path('player/<int:player_id>/match_deltas/', player_match_deltas, name='rating_player_match_deltas'),
     path('stats/summary/', summary_stats, name='stats_summary'),
 ]
