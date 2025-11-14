@@ -118,7 +118,7 @@ def _last5_badges(player_id: int, hard: bool, medium: bool, tbo: bool) -> List[D
         Match.objects
         .filter(_match_base_q(player_id, hard, medium, tbo), status=Match.Status.COMPLETED)
         .select_related('tournament', 'team_1', 'team_2')
-        .order_by('-id')[:5]
+        .order_by('-tournament__date', '-finished_at', '-id')[:5]
     )
     result: List[Dict[str, Any]] = []
     for m in qs:
