@@ -104,6 +104,7 @@ export const TournamentFiltersModal: React.FC<TournamentFiltersModalProps> = ({
             <option value="">Все</option>
             <option value="round_robin">Круговая</option>
             <option value="knockout">Олимпийская</option>
+            <option value="king">Кинг</option>
           </select>
         </div>
 

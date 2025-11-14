@@ -244,7 +244,13 @@ docker compose exec web python manage.py createsuperuser
 docker compose exec web python manage.py seed_rulesets        # пресеты регламентов
 docker compose exec web python manage.py generate_round_robin <tournament_id>  # генерация расписания (круговая)
 docker compose exec web python manage.py reset_presets        # пересоздать пресеты форматов и регламентов
+ 
+# Рейтинг (см. также docs/RATING.md)
+docker compose exec web python manage.py cleanup_tournament_rating <tournament_id> [--dry-run]
+docker compose exec web python manage.py recompute_tournament_rating <tournament_id> [--set-start]
 ```
+
+Подробнее о методике и инструментах рейтинга: см. docs/RATING.md.
 
 ## Стек
 

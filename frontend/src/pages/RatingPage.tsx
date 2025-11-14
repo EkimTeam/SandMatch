@@ -250,49 +250,7 @@ export const RatingPage: React.FC = () => {
         </div>
       </div>
 
-      {/* График истории рейтинга */}
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between flex-wrap gap-3">
-          <div className="font-semibold">История по турнирам</div>
-          <div className="flex items-center gap-3 text-sm">
-            <label className="flex items-center gap-2">
-              <span>От</span>
-              <input type="date" className="border rounded px-2 py-1" value={fromDate} onChange={e=>setFromDate(e.target.value)} />
-            </label>
-            <label className="flex items-center gap-2">
-              <span>До</span>
-              <input type="date" className="border rounded px-2 py-1" value={toDate} onChange={e=>setToDate(e.target.value)} />
-            </label>
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={asDelta} onChange={e=>setAsDelta(e.target.checked)} />
-              <span>Дельта</span>
-            </label>
-            <label className="flex items-center gap-2">
-              <span>Сравнить (ID)</span>
-              <input type="number" className="border rounded px-2 py-1 w-24" value={comparePlayerId ?? ''} onChange={e=>setComparePlayerId(e.target.value ? Number(e.target.value) : null)} />
-            </label>
-          </div>
-        </div>
-        <div className="p-4" style={{height: 360}}>
-          {selectedPlayerId ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} domain={yAxis.domain} ticks={yAxis.ticks} />
-                <ReTooltip formatter={(val: any) => (typeof val === 'number' ? Math.round(val) : val)} />
-                <Legend />
-                <Line type="monotone" dataKey="A" name={`Рейтинг ${selectedName}${asDelta ? ' (Δ)' : ''}`} stroke="#2563eb" strokeWidth={2} dot={{ r: 3 }} />
-                {comparePlayerId && (
-                  <Line type="monotone" dataKey="B" name={`Рейтинг ${compareName}${asDelta ? ' (Δ)' : ''}`} stroke="#16a34a" strokeWidth={2} dot={{ r: 3 }} />
-                )}
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="text-center text-gray-500">Выберите игрока из таблицы, чтобы увидеть график</div>
-          )}
-        </div>
-      </div>
+      {/* График убран по требованию. Оставляем только таблицу лидеров */}
     </div>
   );
 };

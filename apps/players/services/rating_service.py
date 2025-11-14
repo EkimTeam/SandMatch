@@ -23,6 +23,7 @@ def _expected(team_rating: float, opponent_rating: float) -> float:
 
 
 def _team_rating(p1: float, p2: Optional[float]) -> float:
+    # Для одиночных матчей используем рейтинг игрока как средний рейтинг пары
     return (p1 + (p2 if p2 is not None else p1)) / 2.0
 
 
@@ -77,19 +78,41 @@ def compute_ratings_for_tournament(tournament_id: int, k_factor: float = 32.0) -
     players_map: Dict[int, Player] = Player.objects.in_bulk(player_ids)
     # Текущие рейтинги на вход турнира
     ratings_before: Dict[int, float] = {pid: float(p.current_rating or 0.0) for pid, p in players_map.items()}
-    # Накопленные изменения по игрокам за турнир
-    delta_by_player: Dict[int, float] = {pid: 0.0 for pid in player_ids}
-    # Пер-матч журнал для агрегирования истории
-    per_match_records: Dict[int, List[Tuple[int, float, float]]] = {pid: [] for pid in player_ids}
+    # Накопленные изменения по игрокам за турнир (int)
+    delta_by_player: Dict[int, int] = {pid: 0 for pid in player_ids}
+    # Пер-матч журнал для записи истории: (match_id, change:int, fmt:float, opp_team_rating:float)
+    per_match_records: Dict[int, List[Tuple[int, int, float, float]]] = {pid: [] for pid in player_ids}
 
     for m in matches:
-        if not m.winner_id or not m.team_1 or not m.team_2:
+        # Форматный множитель по сетам
+        fmt = _format_modifier(m.id)
+
+        # Если определить победителя нельзя или не хватает команд — пишем нулевые дельты
+        if not m.team_1 or not m.team_2 or not m.winner_id:
+            t1_p1 = getattr(m.team_1, 'player_1_id', None) if m.team_1 else None
+            t1_p2 = getattr(m.team_1, 'player_2_id', None) if m.team_1 else None
+            t2_p1 = getattr(m.team_2, 'player_1_id', None) if m.team_2 else None
+            t2_p2 = getattr(m.team_2, 'player_2_id', None) if m.team_2 else None
+            # Рассчитаем рейтинги команд на вход турнира для заполнения meta
+            t1_r1 = ratings_before.get(t1_p1, 0.0) if t1_p1 else 0.0
+            t1_r2 = ratings_before.get(t1_p2, t1_r1) if t1_p1 else 0.0
+            t2_r1 = ratings_before.get(t2_p1, 0.0) if t2_p1 else 0.0
+            t2_r2 = ratings_before.get(t2_p2, t2_r1) if t2_p1 else 0.0
+            team1_rating = _team_rating(t1_r1, t1_p2 and t1_r2 if t1_p1 else None)
+            team2_rating = _team_rating(t2_r1, t2_p2 and t2_r2 if t2_p1 else None)
+            for pid in filter(None, [t1_p1, t1_p2]):
+                per_match_records[pid].append((m.id, 0, fmt, team2_rating))
+            for pid in filter(None, [t2_p1, t2_p2]):
+                per_match_records[pid].append((m.id, 0, fmt, team1_rating))
             continue
         t1_p1 = getattr(m.team_1, 'player_1_id', None)
         t1_p2 = getattr(m.team_1, 'player_2_id', None)
         t2_p1 = getattr(m.team_2, 'player_1_id', None)
         t2_p2 = getattr(m.team_2, 'player_2_id', None)
         if not t1_p1 or not t2_p1:
+            # Один из игроков отсутствует — трактуем как 0-дельты
+            for pid in filter(None, [t1_p1, t1_p2, t2_p1, t2_p2]):
+                per_match_records[pid].append((m.id, 0, fmt, 0.0))
             continue
 
         # Рейтинги игроков на начало турнира (без применения промежуточных изменений)
@@ -102,57 +125,67 @@ def compute_ratings_for_tournament(tournament_id: int, k_factor: float = 32.0) -
 
         actual1 = 1.0 if (m.winner_id == getattr(m, 'team_1_id', None) or m.winner_id == getattr(m.team_1, 'id', None)) else 0.0
         actual2 = 1.0 - actual1
-        fmt = _format_modifier(m.id)
         reason_base = f"K={k_factor};FMT={fmt:.2f}"
 
         # Изменение для игроков команды 1
         exp1 = _expected(team1_rating, team2_rating)
-        change1 = k_factor * fmt * (actual1 - exp1)
+        change1 = int(round(k_factor * fmt * (actual1 - exp1)))
         for pid in filter(None, [t1_p1, t1_p2]):
-            delta_by_player[pid] = delta_by_player.get(pid, 0.0) + change1
-            # Запомним per-match запись (match_id, delta, fmt) для последующей записи
-            per_match_records[pid].append((m.id, change1, fmt))
+            delta_by_player[pid] = int(delta_by_player.get(pid, 0)) + change1
+            # Запомним per-match запись (match_id, delta:int, fmt, opp_team_rating)
+            per_match_records[pid].append((m.id, change1, fmt, team2_rating))
 
         # Изменение для игроков команды 2
         exp2 = _expected(team2_rating, team1_rating)
-        change2 = k_factor * fmt * (actual2 - exp2)
+        change2 = int(round(k_factor * fmt * (actual2 - exp2)))
         for pid in filter(None, [t2_p1, t2_p2]):
-            delta_by_player[pid] = delta_by_player.get(pid, 0.0) + change2
-            per_match_records[pid].append((m.id, change2, fmt))
+            delta_by_player[pid] = int(delta_by_player.get(pid, 0)) + change2
+            per_match_records[pid].append((m.id, change2, fmt, team1_rating))
 
     # Применяем изменения: обновляем current_rating и пишем историю
     total_matches_by_player: Dict[int, int] = {pid: len(per_match_records.get(pid, [])) for pid in player_ids}
     for pid, player in players_map.items():
         before = ratings_before.get(pid, 0.0)
-        total_delta = delta_by_player.get(pid, 0.0)
-        after = before + total_delta
-        # Обновляем текущий рейтинг округлённо до int (по модели IntegerField)
-        player.current_rating = int(round(after))
+        total_delta = int(delta_by_player.get(pid, 0))
+        after = int(round(before + total_delta))
+        if after < 1:
+            after = 1
+        # Обновляем текущий рейтинг
+        player.current_rating = after
         player.save(update_fields=["current_rating"])
 
-        # Пер-матч история: значение = rating_after после конкретного матча в рамках турнира
-        rolling = before
-        for match_id, dlt, fmt in per_match_records.get(pid, []):
-            rolling += dlt
+        # Пер-матч история: value = дельта за ЭТОТ матч (int, со знаком)
+        for match_id, dlt, fmt_val, _opp_team_rating in per_match_records.get(pid, []):
             PlayerRatingHistory.objects.create(
                 player_id=pid,
-                value=int(round(rolling)),
+                value=int(dlt),
                 tournament_id=tournament_id,
                 match_id=match_id,
-                reason=f"fmt={fmt:.2f}"
+                reason=f"fmt={fmt_val:.2f}"
             )
 
         # Агрегат по турниру
+        # Сохраняем meta: список матчей с деталями
+        meta = []
+        for match_id, dlt, fmt_val, opp_team_rating in per_match_records.get(pid, []):
+            meta.append({
+                'match_id': match_id,
+                'change': int(dlt),
+                'opponent_team_rating': float(opp_team_rating),
+                'format_modifier': float(fmt_val),
+                'datetime': tournament_date.isoformat() if tournament_date else None,
+            })
+
         PlayerRatingDynamic.objects.update_or_create(
             player_id=pid,
             tournament_id=tournament_id,
             defaults={
                 'tournament_date': tournament_date,
-                'rating_before': before,
-                'rating_after': after,
-                'total_change': total_delta,
+                'rating_before': float(before),
+                'rating_after': float(after),
+                'total_change': float(total_delta),
                 'matches_count': total_matches_by_player.get(pid, 0),
-                'meta': None,
+                'meta': meta,
             }
         )
 

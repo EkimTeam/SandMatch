@@ -532,5 +532,26 @@ export const ratingApi = {
     const s = qs.length ? `?${qs.join('&')}` : '';
     const { data } = await api.get(`/rating/stats/summary/${s}`);
     return data;
+  },
+  playerBriefs: async (ids: number[]): Promise<{ results: Array<{ id: number; current_rating: number; last_delta: number; rank?: number }> }> => {
+    const qs = ids.length ? `?ids=${ids.join(',')}` : '';
+    const { data } = await api.get(`/rating/players/briefs/${qs}`);
+    return data;
+  },
+  playerMatchDeltas: async (playerId: number): Promise<{ player_id: number; matches: Array<{ match_id: number; tournament_id: number; tournament_name: string; tournament_date: string; delta: number; opponent?: string; partner?: string; score?: string; team1: (number|null)[]; team2: (number|null)[] }> }> => {
+    const { data } = await api.get(`/rating/player/${playerId}/match_deltas/`);
+    return data;
+  },
+  h2h: async (a: number, b: number): Promise<{ a: number; b: number; matches: Array<{ match_id: number; tournament_id: number; tournament_name: string; tournament_date: string; team1: (number|null)[]; team2: (number|null)[]; score: string; delta_for_a: number; team1_avg_before: number | null; team2_avg_before: number | null }> }> => {
+    const { data } = await api.get(`/rating/h2h/?a=${a}&b=${b}`);
+    return data;
+  },
+  playerRelations: async (playerId: number): Promise<{ player_id: number; opponents: number[]; partners: Array<{ id: number; count: number }> }> => {
+    const { data } = await api.get(`/rating/player/${playerId}/relations/`);
+    return data;
+  },
+  playerTopWins: async (playerId: number): Promise<{ player_id: number; wins: Array<{ match_id: number; tournament_id: number; tournament_name: string; tournament_date: string; delta: number; opponent: string; partner: string; score: string }> }> => {
+    const { data } = await api.get(`/rating/player/${playerId}/top_wins/`);
+    return data;
   }
 };

@@ -13,6 +13,7 @@ from django.db import transaction
 from typing import Optional
 
 from .models import Tournament, TournamentEntry, SetFormat, Ruleset, KnockoutBracket, DrawPosition, SchedulePattern
+from apps.players.services import rating_service
 from apps.teams.models import Team
 from apps.matches.models import Match, MatchSet
 from apps.players.models import Player
@@ -2156,7 +2157,7 @@ def tournament_list(request):
         active_qs = active_qs.filter(name__icontains=name_filter)
         history_qs = history_qs.filter(name__icontains=name_filter)
     
-    if system_filter in ['round_robin', 'knockout']:
+    if system_filter in ['round_robin', 'knockout', 'king']:
         active_qs = active_qs.filter(system=system_filter)
         history_qs = history_qs.filter(system=system_filter)
     
@@ -2238,9 +2239,55 @@ def rulesets_list(request):
 @api_view(["POST", "OPTIONS"])
 @permission_classes([IsAuthenticated])
 def tournament_complete(request, pk: int):
+    """Завершить турнир и выполнить расчёт рейтинга по его матчам.
+
+    Дополнительно: если у участвующих игроков стартовый рейтинг = 0, установить его по методике:
+    - Если в названии турнира есть 'HARD' (без учёта регистра) → 1100
+    - Если в названии турнира есть 'MEDIUM' → 900
+    - Иначе → 1000
+    """
     t = get_object_or_404(Tournament, pk=pk)
-    t.status = Tournament.Status.COMPLETED
-    t.save(update_fields=["status"]) 
+    # Защита от повторного завершения и двойного расчёта
+    if t.status == Tournament.Status.COMPLETED:
+        return Response({"ok": False, "error": "Турнир уже завершён"}, status=400)
+    from apps.players.models import PlayerRatingDynamic
+    if PlayerRatingDynamic.objects.filter(tournament_id=t.id).exists():
+        return Response({"ok": False, "error": "Рейтинг для этого турнира уже рассчитан"}, status=400)
+    with transaction.atomic():
+        # Установим стартовые рейтинги новым игрокам (current_rating == 0), участвовавшим в турнире
+        name_lc = (t.name or '').lower()
+        if 'hard' in name_lc:
+            start_rating = 1100
+        elif 'medium' in name_lc:
+            start_rating = 900
+        else:
+            start_rating = 1000
+
+        # Соберём игроков из завершённых матчей турнира
+        from apps.matches.models import Match
+        matches = (
+            Match.objects
+            .filter(tournament_id=t.id, status=Match.Status.COMPLETED)
+            .select_related('team_1', 'team_2')
+        )
+        player_ids: set[int] = set()
+        for m in matches:
+            for pid in [getattr(m.team_1, 'player_1_id', None), getattr(m.team_1, 'player_2_id', None),
+                        getattr(m.team_2, 'player_1_id', None), getattr(m.team_2, 'player_2_id', None)]:
+                if pid:
+                    player_ids.add(pid)
+
+        if player_ids:
+            from apps.players.models import Player
+            Player.objects.filter(id__in=player_ids, current_rating=0).update(current_rating=start_rating)
+
+        # Выполним расчёт рейтинга по турниру
+        rating_service.compute_ratings_for_tournament(t.id)
+
+        # Переведём турнир в статус COMPLETED
+        t.status = Tournament.Status.COMPLETED
+        t.save(update_fields=["status"]) 
+
     return Response({"ok": True})
 
 
