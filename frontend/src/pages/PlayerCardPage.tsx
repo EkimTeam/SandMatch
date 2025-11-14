@@ -99,6 +99,14 @@ export const PlayerCardPage: React.FC = () => {
     }
   };
 
+  const renderDelta = (v: any) => {
+    const val = Number(v) || 0;
+    const color = val > 0 ? 'text-green-600' : val < 0 ? 'text-red-600' : 'text-gray-600';
+    const arrow = val > 0 ? '▲' : val < 0 ? '▼' : '•';
+    const sign = val > 0 ? '+' : '';
+    return <span className={`font-semibold ${color}`}>{arrow} {sign}{Math.round(val)}</span>;
+  };
+
   // Ось Y — ручной domain/ticks с шагом 50
   const yAxis = useMemo(() => {
     const vals = chartData.map(p => p.value).filter((v) => typeof v === 'number') as number[];
@@ -268,7 +276,7 @@ export const PlayerCardPage: React.FC = () => {
                 <tr key={i}>
                   <td className="px-3 py-2 text-blue-600 hover:underline cursor-pointer" onClick={()=>navigate(`/tournaments/${r.tournament_id}`)}>{r.tournament__name}</td>
                   <td className="px-3 py-2">{new Date(r.tournament_date).toLocaleDateString('ru-RU')}</td>
-                  <td className="px-3 py-2 text-right">{Math.round(r.total_change)}</td>
+                  <td className="px-3 py-2 text-right">{renderDelta(r.total_change)}</td>
                   <td className="px-3 py-2 text-right">{r.matches_count}</td>
                 </tr>
               ))}
@@ -296,7 +304,7 @@ export const PlayerCardPage: React.FC = () => {
                 <tr key={i}>
                   <td className="px-3 py-2 text-blue-600 hover:underline cursor-pointer" onClick={()=>navigate(`/tournaments/${m.tournament_id}`)}>{m.tournament_name}</td>
                   <td className="px-3 py-2">{m.tournament_date ? new Date(m.tournament_date).toLocaleDateString('ru-RU') : ''}</td>
-                  <td className="px-3 py-2 text-right">{Math.round(m.delta)}</td>
+                  <td className="px-3 py-2 text-right">{renderDelta(m.delta)}</td>
                   <td className="px-3 py-2">{m.opponent}</td>
                   <td className="px-3 py-2">{m.partner}</td>
                 </tr>
