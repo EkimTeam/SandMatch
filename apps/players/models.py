@@ -73,3 +73,47 @@ class PlayerRatingHistory(models.Model):
 
     def __str__(self) -> str:
         return f"{self.player} → {self.value} ({self.created_at:%Y-%m-%d})"
+
+
+class PlayerRatingDynamic(models.Model):
+    """Динамика рейтинга игрока по турнирам (агрегация per tournament).
+
+    Поля:
+    - player: игрок
+    - tournament: турнир (может быть null для служебных записей)
+    - tournament_date: дата проведения турнира (для ускорения графиков)
+    - rating_before: рейтинг до турнира
+    - rating_after: рейтинг после турнира
+    - total_change: изменение за турнир
+    - matches_count: количество матчей, учтённых в расчёте
+    - meta: произвольные метаданные (JSON), например типы турниров/примечания
+    """
+
+    player = models.ForeignKey(Player, on_delete=models.CASCADE, related_name="rating_dynamic")
+    tournament = models.ForeignKey(
+        "tournaments.Tournament", on_delete=models.SET_NULL, blank=True, null=True, related_name="rating_dynamic"
+    )
+    tournament_date = models.DateField(blank=True, null=True)
+
+    rating_before = models.FloatField()
+    rating_after = models.FloatField()
+    total_change = models.FloatField()
+    matches_count = models.PositiveIntegerField(default=0)
+
+    meta = models.JSONField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Динамика рейтинга игрока (по турнирам)"
+        verbose_name_plural = "Динамика рейтингов игроков (по турнирам)"
+        ordering = ["player", "tournament_date", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["player", "tournament"], name="uniq_player_tournament_dynamic"),
+        ]
+        indexes = [
+            models.Index(fields=["player", "tournament_date"]),
+            models.Index(fields=["tournament_date"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.player} Δ{self.total_change:+.1f} ({self.tournament_date})"

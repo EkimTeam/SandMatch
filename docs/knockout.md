@@ -68,22 +68,54 @@
 
 ## API/URLs (DRF)
 
-- `POST /tournaments/new/` — дополнить веткой `system='knockout'` (см. существующий эндпоинт).
-- `POST /tournaments/<id>/generate/knockout/` — ручная генерация сетки. Тело: `{ brackets_count, participants[], seeds{}, has_third_place }`.
-- `GET /tournaments/<id>/brackets/<bid>/draw/` — сериализация сетки для фронта (используется в React):
-  ```json
-  {
-    "tournament": {"id":1, "name":"..."},
-    "brackets": [
-      {"id":1, "size":16, "has_third_place":true,
-       "rounds":[{"index":1,"name":"1-й круг","matches":[{...}]}],
-       "third_place": {"id":321, ...} }
-    ]
-  }
-  ```
-- `POST /tournaments/<id>/match_save_score_full/` — ввод полного счёта (все сеты) и автопродвижение победителя (используется в React модалкой ввода счёта).
+- Создание турнира олимпиской системы:
+  - `POST /api/tournaments/new_knockout/`
+  - Тело:
+    ```json
+    {
+      "name": "Кубок Осени",
+      "date": "2025-10-10",
+      "system": "knockout",
+      "participant_mode": "singles" | "doubles",
+      "set_format_id": 1,
+      "ruleset_id": 1,
+      "brackets_count": 1
+    }
+    ```
 
-Безопасность: транзакции; при вводе результата — `SELECT ... FOR UPDATE` по строке матча, чтобы избежать гонок.
+- Создание сетки для турнира (если ещё не создана):
+  - `POST /api/tournaments/<id>/create_knockout_bracket/`
+  - Тело: `{ "size": 16, "has_third_place": true }`
+  - Ответ: `{ ok, bracket: { id, index, size, has_third_place }, matches_created }`
+
+- Посев участников в сетку автоматически:
+  - `POST /api/tournaments/<id>/seed_bracket/`
+  - Тело: `{ "bracket_id": <id> }`
+  - Ответ: `{ ok: true }`
+
+- Получение данных для отрисовки сетки (со связями между матчами):
+  - `GET /api/tournaments/<id>/brackets/<bid>/draw/`
+  - Возвращает структуру раундов и матчей с информацией о соединениях.
+
+- Сохранение полного счёта матча (все сеты):
+  - `POST /api/tournaments/<id>/match_save_score_full/`
+  - Тело:
+    ```json
+    {
+      "match_id": 123,
+      "sets": [
+        { "index": 1, "games_1": 6, "games_2": 4 },
+        { "index": 2, "games_1": 7, "games_2": 6, "tb_1": 7, "tb_2": 5 }
+      ]
+    }
+    ```
+  - При сохранении победитель автоматически продвигается в следующий раунд.
+
+- Завершить турнир (и запустить расчёт рейтинга):
+  - `POST /api/tournaments/<id>/complete/`
+  - Идемпотентно: повторный вызов заблокирован, если расчёт уже выполнен.
+
+Безопасность: все изменяющие действия — в транзакциях; при записи счёта по матчу используется блокировка строки (`SELECT ... FOR UPDATE`).
 
 ## Фронтенд (SPA)
 

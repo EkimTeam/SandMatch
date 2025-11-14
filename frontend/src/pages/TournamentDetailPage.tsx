@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { formatDate } from '../services/date';
-import api, { matchApi, tournamentApi, Ruleset as ApiRuleset } from '../services/api';
+import api, { matchApi, tournamentApi, Ruleset as ApiRuleset, ratingApi } from '../services/api';
 import { getAccessToken } from '../services/auth';
 import { ParticipantPickerModal } from '../components/ParticipantPickerModal';
 import { MatchScoreModal } from '../components/MatchScoreModal';
@@ -152,6 +152,38 @@ export const TournamentDetailPage: React.FC = () => {
       console.error('Не удалось загрузить расписание групп:', e);
     }
   }, [id]);
+
+  // Карта рейтингов игроков: playerId -> current_rating
+  const [playerRatings, setPlayerRatings] = useState<Map<number, number>>(new Map());
+
+  // Загрузка рейтингов всех игроков, участвующих в турнире
+  useEffect(() => {
+    const loadRatings = async () => {
+      try {
+        if (!t || !t.participants) return;
+        const ids = new Set<number>();
+        for (const p of t.participants) {
+          const team: any = p.team || {};
+          const p1 = team.player_1 && typeof team.player_1 === 'object' ? team.player_1.id : (typeof team.player_1 === 'number' ? team.player_1 : null);
+          const p2 = team.player_2 && typeof team.player_2 === 'object' ? team.player_2.id : (typeof team.player_2 === 'number' ? team.player_2 : null);
+          if (typeof p1 === 'number') ids.add(p1);
+          if (typeof p2 === 'number') ids.add(p2);
+        }
+        if (ids.size === 0) { setPlayerRatings(new Map()); return; }
+        const resp = await ratingApi.playerBriefs(Array.from(ids));
+        const map = new Map<number, number>();
+        for (const it of (resp.results || [])) {
+          if (typeof it.id === 'number' && typeof it.current_rating === 'number') {
+            map.set(it.id, it.current_rating);
+          }
+        }
+        setPlayerRatings(map);
+      } catch (e) {
+        setPlayerRatings(new Map());
+      }
+    };
+    loadRatings();
+  }, [t]);
   // Данные групп с бэкенда: { [group_index]: { stats: { [team_id]: {...} }, placements: { [team_id]: place } } }
   const [groupStats, setGroupStats] = useState<Record<number, { stats: Record<number, { wins: number; sets_won: number; sets_lost: number; sets_drawn?: number; games_won: number; games_lost: number }>; placements: Record<number, number> }>>({});
   const exportRef = useRef<HTMLDivElement | null>(null);
@@ -1291,9 +1323,38 @@ export const TournamentDetailPage: React.FC = () => {
                       onClick={() => !effectiveLocked && !completed && handleCellClick('participant', g.idx, rIdx)}
                       title={g.entries[rI]?.team?.full_name || g.entries[rI]?.team?.display_name || g.entries[rI]?.team?.name || ''}
                     >
-                      {showFullName
-                        ? (g.entries[rI]?.team?.full_name || '—')
-                        : (g.entries[rI]?.team?.display_name || g.entries[rI]?.team?.name || '—')}
+                      {(() => {
+                        const team: any = g.entries[rI]?.team || {};
+                        const name = showFullName ? (team.full_name || '—') : (team.display_name || team.name || '—');
+                        // Получим рейтинги по id игроков
+                        const id1 = team.player_1 && typeof team.player_1 === 'object' ? team.player_1.id : (typeof team.player_1 === 'number' ? team.player_1 : null);
+                        const id2 = team.player_2 && typeof team.player_2 === 'object' ? team.player_2.id : (typeof team.player_2 === 'number' ? team.player_2 : null);
+                        const r1 = (typeof id1 === 'number' && playerRatings.has(id1)) ? playerRatings.get(id1)! : (typeof team?.player_1 === 'object' && typeof team.player_1?.rating === 'number' ? team.player_1.rating : null);
+                        const r2 = (typeof id2 === 'number' && playerRatings.has(id2)) ? playerRatings.get(id2)! : (typeof team?.player_2 === 'object' && typeof team.player_2?.rating === 'number' ? team.player_2.rating : null);
+                        let rating: number | null = null;
+                        if (typeof r1 === 'number' && typeof r2 === 'number') {
+                          rating = Math.round((r1 + r2) / 2);
+                        } else if (typeof r1 === 'number') {
+                          rating = Math.round(r1);
+                        } else if (typeof r2 === 'number') {
+                          rating = Math.round(r2);
+                        } else if (typeof team.rating === 'number') {
+                          rating = Math.round(team.rating);
+                        } else if (typeof team.rating_sum === 'number') {
+                          const cnt = (team.player_1 ? 1 : 0) + (team.player_2 ? 1 : 0);
+                          rating = cnt > 0 ? Math.round(team.rating_sum / cnt) : Math.round(team.rating_sum);
+                        }
+                        return (
+                          <>
+                            <span>{name}</span>
+                            {typeof rating === 'number' && (
+                              <span style={{ marginLeft: 6, fontSize: 10, opacity: 0.75 }}>
+                                {rating} <span style={{ fontSize: 9 }}>BP</span>
+                              </span>
+                            )}
+                          </>
+                        );
+                      })()}
                     </td>
                     {g.cols.map((cIdx) => (
                       rIdx === cIdx ? (
