@@ -114,12 +114,15 @@ def _partner_name(m: Match, player_id: int) -> str:
 
 
 def _last5_badges(player_id: int, hard: bool, medium: bool, tbo: bool) -> List[Dict[str, Any]]:
-    qs = (
+    qs = list(
         Match.objects
         .filter(_match_base_q(player_id, hard, medium, tbo), status=Match.Status.COMPLETED)
         .select_related('tournament', 'team_1', 'team_2')
         .order_by('-tournament__date', '-finished_at', '-id')[:5]
     )
+    # Вернём в порядке от более старой игры к более новой,
+    # чтобы крайний правый кружок был самой последней игрой
+    qs.reverse()
     result: List[Dict[str, Any]] = []
     for m in qs:
         # Для завершённых матчей winner_id гарантирован
