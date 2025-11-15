@@ -538,7 +538,7 @@ export const ratingApi = {
     const { data } = await api.get(`/rating/players/briefs/${qs}`);
     return data;
   },
-  playerMatchDeltas: async (playerId: number): Promise<{ player_id: number; matches: Array<{ match_id: number; tournament_id: number; tournament_name: string; tournament_date: string; delta: number; opponent?: string; partner?: string; score?: string; team1: (number|null)[]; team2: (number|null)[] }> }> => {
+  playerMatchDeltas: async (playerId: number): Promise<{ player_id: number; matches: Array<{ match_id: number; tournament_id: number; tournament_name: string; tournament_date: string; tournament_system?: string; participant_mode?: string; finished_at?: string; delta: number; opponent?: string; partner?: string; score?: string; team1: (number|null)[]; team2: (number|null)[]; team1_avg_before?: number | null; team2_avg_before?: number | null }> }> => {
     const { data } = await api.get(`/rating/player/${playerId}/match_deltas/`);
     return data;
   },

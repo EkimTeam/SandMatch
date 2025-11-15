@@ -182,8 +182,15 @@ export const PlayerCardPage: React.FC = () => {
       const team2: Array<number|null> = Array.isArray(m.team2) ? m.team2 : [];
       const playerInTeam1 = team1.includes(playerId);
       const leftName = playerInTeam1 ? (m.partner ? `${playerFullName} + ${m.partner}` : playerFullName) : (m.partner ? `${playerFullName} + ${m.partner}` : playerFullName);
-      const rightName = m.opponent || '';
+      const rightName = (() => {
+        const base = m.opponent || '';
+        const oppCount = (playerInTeam1 ? team2 : team1).filter((x: any) => !!x).length;
+        if (oppCount > 1) return base.replace(' vs ', ' + ');
+        return base;
+      })();
       const score = playerInTeam1 ? (m.score || '') : flipScore(m.score || '');
+      const left_rating = playerInTeam1 ? (m.team1_avg_before ?? null) : (m.team2_avg_before ?? null);
+      const right_rating = playerInTeam1 ? (m.team2_avg_before ?? null) : (m.team1_avg_before ?? null);
       map[tid].matches.push({
         match_id: m.match_id,
         left: leftName,
@@ -191,6 +198,8 @@ export const PlayerCardPage: React.FC = () => {
         score,
         delta: Number(m.delta || 0),
         finished_at: m.finished_at || '',
+        left_rating,
+        right_rating,
       });
     }
     // Отсортируем матчи внутри каждого турнира по finished_at, затем по match_id (по возрастанию)
@@ -211,7 +220,7 @@ export const PlayerCardPage: React.FC = () => {
       tournament_system: string;
       participant_mode: string;
       total_delta: number;
-      matches: Array<{ match_id: number; left: string; right: string; score: string; delta: number; finished_at?: string }>;
+      matches: Array<{ match_id: number; left: string; right: string; score: string; delta: number; finished_at?: string; left_rating?: number | null; right_rating?: number | null }>;
     }>;
   }, [matchDeltas, playerFullName, playerId]);
 
@@ -380,7 +389,7 @@ export const PlayerCardPage: React.FC = () => {
                   <td className="px-3 py-2 text-blue-600 hover:underline cursor-pointer" onClick={()=>navigate(`/tournaments/${m.tournament_id}`)}>{m.tournament_name}</td>
                   <td className="px-3 py-2">{m.tournament_date ? new Date(m.tournament_date).toLocaleDateString('ru-RU') : ''}</td>
                   <td className="px-3 py-2 text-right">{renderDelta(m.delta)}</td>
-                  <td className="px-3 py-2">{m.opponent}</td>
+                  <td className="px-3 py-2">{(m.opponent || '').replace(' vs ', ' + ')}</td>
                   <td className="px-3 py-2">{m.partner}</td>
                 </tr>
               ))}
@@ -459,9 +468,9 @@ export const PlayerCardPage: React.FC = () => {
                   <tbody>
                     {t.matches.map((m) => (
                       <tr key={m.match_id}>
-                        <td className="px-3 py-2">{m.left}</td>
+                        <td className="px-3 py-2">{m.left} {typeof m.left_rating === 'number' ? (<span className="text-xs text-gray-600">— {Math.round(m.left_rating)} <span className="opacity-70">BP</span></span>) : null}</td>
                         <td className="px-3 py-2 text-center whitespace-nowrap">{m.score}</td>
-                        <td className="px-3 py-2">{m.right}</td>
+                        <td className="px-3 py-2">{m.right} {typeof m.right_rating === 'number' ? (<span className="text-xs text-gray-600">— {Math.round(m.right_rating)} <span className="opacity-70">BP</span></span>) : null}</td>
                         <td className="px-3 py-2 text-right">{renderDelta(m.delta)}</td>
                       </tr>
                     ))}
