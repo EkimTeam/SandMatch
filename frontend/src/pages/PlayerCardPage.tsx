@@ -50,7 +50,9 @@ export const PlayerCardPage: React.FC = () => {
         setLoading(false);
       }
     };
-    if (!isNaN(playerId)) load();
+    if (!isNaN(playerId)) {
+      load();
+    }
   }, [playerId]);
 
   const filteredHistory = useMemo(() => {
@@ -99,6 +101,17 @@ export const PlayerCardPage: React.FC = () => {
     }
   };
 
+  const renderDelta = (v: any) => {
+    const val = Number(v) || 0;
+    const color = val > 0 ? 'text-green-600' : val < 0 ? 'text-red-600' : 'text-gray-600';
+    const arrow = val > 0 ? '▲' : val < 0 ? '▼' : '•';
+    const sign = val > 0 ? '+' : '';
+    return <span className={`font-semibold ${color}`}>{arrow} {sign}{Math.round(val)}</span>;
+  };
+
+  const systemLabel = (s: string) => s === 'round_robin' ? 'круговой' : s === 'knockout' ? 'олимпийка' : s === 'king' ? 'кинг' : s || '';
+  const modeLabel = (m: string) => m === 'singles' ? 'индивидуальный' : m === 'doubles' ? 'парный' : m || '';
+
   // Ось Y — ручной domain/ticks с шагом 50
   const yAxis = useMemo(() => {
     const vals = chartData.map(p => p.value).filter((v) => typeof v === 'number') as number[];
@@ -135,6 +148,85 @@ export const PlayerCardPage: React.FC = () => {
 
   // topWins теперь приходит с backend через ratingApi.playerTopWins
 
+
+  const playerFullName = useMemo(() => player ? `${player.last_name} ${player.first_name}` : `Игрок #${playerId}`, [player, playerId]);
+
+  const flipScore = (score: string) => {
+    try {
+      if (!score) return score;
+      return score.replace(/(\d+):(\d+)/g, (_: any, a: string, b: string) => `${b}:${a}`);
+    } catch {
+      return score;
+    }
+  };
+
+  // Группируем матчи по турнирам и считаем суммарную дельту; сортируем по дате турнира (новые первыми)
+  const tournamentsPlayed = useMemo(() => {
+    const map: Record<string, any> = {};
+    for (const m of matchDeltas) {
+      const tid = m.tournament_id;
+      if (!tid) continue;
+      if (!map[tid]) {
+        map[tid] = {
+          tournament_id: tid,
+          tournament_name: m.tournament_name,
+          tournament_date: m.tournament_date || '',
+          tournament_system: m.tournament_system || '',
+          participant_mode: m.participant_mode || '',
+          total_delta: 0,
+          matches: [] as any[],
+        };
+      }
+      map[tid].total_delta += Number(m.delta || 0);
+      const team1: Array<number|null> = Array.isArray(m.team1) ? m.team1 : [];
+      const team2: Array<number|null> = Array.isArray(m.team2) ? m.team2 : [];
+      const playerInTeam1 = team1.includes(playerId);
+      const leftName = playerInTeam1 ? (m.partner ? `${playerFullName} + ${m.partner}` : playerFullName) : (m.partner ? `${playerFullName} + ${m.partner}` : playerFullName);
+      const rightName = (() => {
+        const base = m.opponent || '';
+        const oppCount = (playerInTeam1 ? team2 : team1).filter((x: any) => !!x).length;
+        if (oppCount > 1) return base.replace(' vs ', ' + ');
+        return base;
+      })();
+      const score = playerInTeam1 ? (m.score || '') : flipScore(m.score || '');
+      const left_rating = playerInTeam1 ? (m.team1_avg_before ?? null) : (m.team2_avg_before ?? null);
+      const right_rating = playerInTeam1 ? (m.team2_avg_before ?? null) : (m.team1_avg_before ?? null);
+      map[tid].matches.push({
+        match_id: m.match_id,
+        left: leftName,
+        right: rightName,
+        score,
+        delta: Number(m.delta || 0),
+        finished_at: m.finished_at || '',
+        left_rating,
+        right_rating,
+      });
+    }
+    // Отсортируем матчи внутри каждого турнира по finished_at, затем по match_id (по возрастанию)
+    Object.values(map).forEach((t: any) => {
+      t.matches.sort((a: any, b: any) => {
+        const ta = a.finished_at ? new Date(a.finished_at).getTime() : 0;
+        const tb = b.finished_at ? new Date(b.finished_at).getTime() : 0;
+        if (ta !== tb) return ta - tb;
+        return (a.match_id || 0) - (b.match_id || 0);
+      });
+    });
+    let list = Object.values(map);
+    list.sort((a: any, b: any) => new Date(b.tournament_date || 0).getTime() - new Date(a.tournament_date || 0).getTime());
+    return list as Array<{
+      tournament_id: number;
+      tournament_name: string;
+      tournament_date: string;
+      tournament_system: string;
+      participant_mode: string;
+      total_delta: number;
+      matches: Array<{ match_id: number; left: string; right: string; score: string; delta: number; finished_at?: string; left_rating?: number | null; right_rating?: number | null }>;
+    }>;
+  }, [matchDeltas, playerFullName, playerId]);
+
+  const [tpVisible, setTpVisible] = useState(5);
+  const shownTournaments = useMemo(() => tournamentsPlayed.slice(0, tpVisible), [tournamentsPlayed, tpVisible]);
+  const canLoadMoreTP = tpVisible < tournamentsPlayed.length;
 
   const onSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -268,7 +360,7 @@ export const PlayerCardPage: React.FC = () => {
                 <tr key={i}>
                   <td className="px-3 py-2 text-blue-600 hover:underline cursor-pointer" onClick={()=>navigate(`/tournaments/${r.tournament_id}`)}>{r.tournament__name}</td>
                   <td className="px-3 py-2">{new Date(r.tournament_date).toLocaleDateString('ru-RU')}</td>
-                  <td className="px-3 py-2 text-right">{Math.round(r.total_change)}</td>
+                  <td className="px-3 py-2 text-right">{renderDelta(r.total_change)}</td>
                   <td className="px-3 py-2 text-right">{r.matches_count}</td>
                 </tr>
               ))}
@@ -296,8 +388,8 @@ export const PlayerCardPage: React.FC = () => {
                 <tr key={i}>
                   <td className="px-3 py-2 text-blue-600 hover:underline cursor-pointer" onClick={()=>navigate(`/tournaments/${m.tournament_id}`)}>{m.tournament_name}</td>
                   <td className="px-3 py-2">{m.tournament_date ? new Date(m.tournament_date).toLocaleDateString('ru-RU') : ''}</td>
-                  <td className="px-3 py-2 text-right">{Math.round(m.delta)}</td>
-                  <td className="px-3 py-2">{m.opponent}</td>
+                  <td className="px-3 py-2 text-right">{renderDelta(m.delta)}</td>
+                  <td className="px-3 py-2">{(m.opponent || '').replace(' vs ', ' + ')}</td>
                   <td className="px-3 py-2">{m.partner}</td>
                 </tr>
               ))}
@@ -343,6 +435,59 @@ export const PlayerCardPage: React.FC = () => {
             ))}
           </ul>
         </details>
+      </div>
+
+      {/* Сыгранные турниры */}
+      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-200 font-semibold">Сыгранные турниры</div>
+        <div className="divide-y">
+          {shownTournaments.map((t) => (
+            <details key={t.tournament_id} className="p-4">
+              <summary className="cursor-pointer select-none flex items-center justify-between gap-3">
+                <div className="flex items-center gap-4 flex-wrap">
+                  <span className="text-blue-600 hover:underline cursor-pointer" onClick={() => navigate(`/tournaments/${t.tournament_id}`)}>{t.tournament_name}</span>
+                  <span className="text-sm text-gray-600">{t.tournament_date ? new Date(t.tournament_date).toLocaleDateString('ru-RU') : ''}</span>
+                  <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-700">Тип: {systemLabel(t.tournament_system)}</span>
+                  <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-700">Формат: {modeLabel(t.participant_mode)}</span>
+                  <span className="text-xs text-gray-500">▶ нажмите, чтобы раскрыть</span>
+                </div>
+                <div>
+                  {renderDelta(t.total_delta)}
+                </div>
+              </summary>
+              <div className="mt-3 overflow-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 text-gray-600">
+                      <th className="px-3 py-2 text-left">Участник 1</th>
+                      <th className="px-3 py-2 text-center">Счёт</th>
+                      <th className="px-3 py-2 text-left">Участник 2</th>
+                      <th className="px-3 py-2 text-right">Δ (матч)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {t.matches.map((m) => (
+                      <tr key={m.match_id}>
+                        <td className="px-3 py-2">{m.left} {typeof m.left_rating === 'number' ? (<span className="text-xs text-gray-600">— {Math.round(m.left_rating)} <span className="opacity-70">BP</span></span>) : null}</td>
+                        <td className="px-3 py-2 text-center whitespace-nowrap">{m.score}</td>
+                        <td className="px-3 py-2">{m.right} {typeof m.right_rating === 'number' ? (<span className="text-xs text-gray-600">— {Math.round(m.right_rating)} <span className="opacity-70">BP</span></span>) : null}</td>
+                        <td className="px-3 py-2 text-right">{renderDelta(m.delta)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          ))}
+          {shownTournaments.length === 0 && (
+            <div className="p-4 text-center text-gray-500">Нет данных</div>
+          )}
+        </div>
+        {canLoadMoreTP && (
+          <div className="p-3 border-t border-gray-200 text-center">
+            <button className="inline-flex items-center px-3 py-1.5 border rounded hover:bg-gray-50" onClick={() => setTpVisible(v => v + 5)}>Загрузить ещё</button>
+          </div>
+        )}
       </div>
     </div>
   );

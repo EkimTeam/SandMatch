@@ -27,7 +27,7 @@ export const PlayersH2HPage: React.FC = () => {
   const teamToLabel = (ids: (number|null)[]) => {
     const filtered = (ids || []).filter(Boolean) as number[];
     if (filtered.length === 0) return '';
-    return filtered.map(pid => idToName.get(pid) || `#${pid}`).join(' vs ');
+    return filtered.map(pid => idToName.get(pid) || `#${pid}`).join(' + ');
   };
 
   useEffect(() => {
