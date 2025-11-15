@@ -309,6 +309,20 @@ def player_match_deltas(request: HttpRequest, player_id: int) -> JsonResponse:
             ids = [pid for pid in ids if pid and pid != player_id]
             partner_id = ids[0] if ids else None
         score = _match_score_str(m.id)
+        # Средние рейтинги до турнира для каждой команды
+        def avg_before(tid: int, ids: list[int | None]) -> float | None:
+            valid_ids = [pid for pid in ids if pid]
+            if not valid_ids:
+                return None
+            dyn = list(PlayerRatingDynamic.objects.filter(player_id__in=valid_ids, tournament_id=tid).values_list('rating_before', flat=True))
+            vals = [float(x) for x in dyn if x is not None]
+            if not vals:
+                return None
+            return sum(vals) / len(vals)
+        team1_ids = [getattr(m.team_1, 'player_1_id', None), getattr(m.team_1, 'player_2_id', None)] if m.team_1 else []
+        team2_ids = [getattr(m.team_2, 'player_1_id', None), getattr(m.team_2, 'player_2_id', None)] if m.team_2 else []
+        team1_avg = avg_before(m.tournament_id, team1_ids)
+        team2_avg = avg_before(m.tournament_id, team2_ids)
         result.append({
             'match_id': match_id,
             'tournament_id': m.tournament_id,
@@ -325,6 +339,8 @@ def player_match_deltas(request: HttpRequest, player_id: int) -> JsonResponse:
             'score': score,
             'team1': [getattr(m.team_1, 'player_1_id', None), getattr(m.team_1, 'player_2_id', None)],
             'team2': [getattr(m.team_2, 'player_1_id', None), getattr(m.team_2, 'player_2_id', None)],
+            'team1_avg_before': team1_avg,
+            'team2_avg_before': team2_avg,
         })
     return JsonResponse({'player_id': player_id, 'matches': result})
 
