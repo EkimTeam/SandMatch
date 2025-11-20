@@ -68,6 +68,11 @@ export interface Tournament {
   participant_mode?: 'singles' | 'doubles';
   set_format_id?: number;
   ruleset?: { id: number; name: string; ordering_priority?: string[] } | null;
+  organizer_name?: string;
+  can_delete?: boolean;
+  date?: string;
+  get_system_display?: string;
+  get_participant_mode_display?: string;
 }
 
 export interface Ruleset {
@@ -144,6 +149,98 @@ export interface ApiResponse<T> {
   next?: string | null;
   previous?: string | null;
 }
+
+export interface UserMe {
+  id: number;
+  username: string;
+  email: string | null;
+  first_name: string;
+  last_name: string;
+  is_staff: boolean;
+  is_superuser: boolean;
+  role: 'ADMIN' | 'ORGANIZER' | 'REFEREE' | 'REGISTERED' | null;
+  player_id: number | null;
+  telegram_id: number | null;
+  telegram_username: string | null;
+}
+
+export interface AdminUserItem {
+  id: number;
+  username: string;
+  first_name: string;
+  last_name: string;
+  full_name: string;
+  role: 'ADMIN' | 'ORGANIZER' | 'REFEREE' | 'REGISTERED' | null;
+}
+
+export const authApi = {
+  register: async (payload: {
+    username: string;
+    password: string;
+    email?: string;
+    first_name?: string;
+    last_name?: string;
+  }): Promise<{ id: number; username: string; email: string | null; first_name: string; last_name: string; role: string }> => {
+    const { data } = await axios.post('/api/auth/register/', payload, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+    return data;
+  },
+
+  me: async (): Promise<UserMe> => {
+    const { data } = await api.get<UserMe>('/auth/me/');
+    return data;
+  },
+
+  requestPasswordReset: async (email: string): Promise<{ detail: string; uid?: string; token?: string }> => {
+    const { data } = await axios.post('/api/auth/password/reset/', { email }, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+    return data;
+  },
+
+  resetPasswordConfirm: async (payload: { uid: string; token: string; new_password: string }): Promise<{ detail: string }> => {
+    const { data } = await axios.post('/api/auth/password/reset/confirm/', payload, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+    return data;
+  },
+};
+
+export const adminApi = {
+  listUsers: async (params?: { q?: string; offset?: number; limit?: number }): Promise<{ results: AdminUserItem[]; has_more: boolean; total: number }> => {
+    const query: string[] = [];
+    if (params?.q) query.push(`q=${encodeURIComponent(params.q)}`);
+    if (typeof params?.offset === 'number') query.push(`offset=${params.offset}`);
+    if (typeof params?.limit === 'number') query.push(`limit=${params.limit}`);
+    const qs = query.length ? `?${query.join('&')}` : '';
+    const { data } = await api.get(`/auth/users/${qs}`);
+    return data;
+  },
+  setUserRole: async (userId: number, role: 'ADMIN' | 'ORGANIZER' | 'REFEREE' | 'REGISTERED'): Promise<{ ok: boolean; changed: boolean; old_role?: string; new_role?: string }> => {
+    const { data } = await api.post(`/auth/users/${userId}/set_role/`, { role });
+    return data;
+  },
+};
+
+export interface RefereeTournamentItem {
+  id: number;
+  name: string;
+  date: string;
+  system: string;
+  participant_mode: string;
+  status: string;
+  get_system_display: string;
+  get_participant_mode_display: string;
+  organizer_name?: string;
+}
+
+export const refereeApi = {
+  myTournaments: async (): Promise<RefereeTournamentItem[]> => {
+    const { data } = await api.get<{ tournaments: RefereeTournamentItem[] }>('/referee/my_tournaments/');
+    return data.tournaments || [];
+  },
+};
 
 // API методы для турниров
 export const tournamentApi = {
@@ -325,6 +422,13 @@ export const tournamentApi = {
   delete: async (tournamentId: number) => {
     await api.delete(`/tournaments/${tournamentId}/`);
   },
+
+  // Получить существующую сетку плей-офф (read-only)
+  getDefaultBracket: async (tournamentId: number): Promise<{ id: number; index: number; size: number; has_third_place: boolean } | null> => {
+    const { data } = await api.get(`/tournaments/${tournamentId}/default_bracket/`);
+    if (!data?.ok || !data.bracket) return null;
+    return data.bracket;
+  },
 };
 
 // API методы для игроков
@@ -473,6 +577,7 @@ api.interceptors.response.use(
   async (error) => {
     const original = error?.config || {};
     const status = error?.response?.status;
+
     if (status === 401 && !original._retry) {
       original._retry = true;
       try {
@@ -486,6 +591,22 @@ api.interceptors.response.use(
       // Refresh failed — cleanup tokens
       clearTokens();
     }
+
+    // Универсальная обработка 403: редирект на страницу "нет доступа"
+    if (status === 403) {
+      try {
+        const loc = window.location;
+        const nowPath = loc.pathname + loc.search;
+        // Чтобы не зациклиться, если уже на странице /forbidden
+        if (!nowPath.startsWith('/forbidden')) {
+          const next = encodeURIComponent(nowPath || '/');
+          window.location.href = `/forbidden?next=${next}`;
+        }
+      } catch (_) {
+        // ignore
+      }
+    }
+
     console.error('API Error:', error.response?.data || error.message);
     return Promise.reject(error);
   }

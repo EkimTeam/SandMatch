@@ -1,5 +1,5 @@
-from rest_framework.decorators import api_view, permission_classes, authentication_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.db import transaction
 import math
@@ -10,8 +10,7 @@ from .services.knockout import generate_initial_matches, create_bye_positions
 
 
 @api_view(["POST"])
-@permission_classes([AllowAny])
-@authentication_classes([])
+@permission_classes([IsAuthenticated])
 def new_knockout(request):
     """Создать олимпийский турнир по шагам пользователя.
 
@@ -59,6 +58,7 @@ def new_knockout(request):
                 brackets_count=brackets_count,
                 planned_participants=planned_participants,
                 status=Tournament.Status.CREATED,
+                created_by=request.user if request.user.is_authenticated else None,
             )
 
             # размер сетки на одну сетку: ближайшая степень двойки >= ceil(planned_participants / brackets_count)

@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ratingApi } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 type PlayerRow = {
   id: number;
@@ -16,6 +17,7 @@ type PlayerRow = {
 };
 
 export const StatsPage: React.FC = () => {
+  const { user } = useAuth();
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
@@ -75,6 +77,17 @@ export const StatsPage: React.FC = () => {
       </div>
     </div>
   );
+
+  if (user?.role === 'REFEREE') {
+    return (
+      <div className="card">
+        Общая статистика по турнирам недоступна для роли судьи. Используйте
+        {' '}
+        <span className="font-semibold">"Судейство"</span>
+        {' '}для доступа к вашим турнирам и матчам.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

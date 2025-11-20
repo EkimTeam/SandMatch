@@ -1,7 +1,17 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes, authentication_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from apps.accounts.permissions import IsAdminOrReadOnly
+from rest_framework.exceptions import PermissionDenied
+from apps.accounts.permissions import (
+    IsAdminOrReadOnly,
+    IsAdmin,
+    IsAuthenticatedAndRoleIn,
+    IsTournamentCreatorOrAdmin,
+    IsTournamentCreatorOrAdminForDeletion,
+    IsRefereeForTournament,
+    Role,
+    _get_user_role,
+)
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db.models import Q
@@ -11,6 +21,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.db import transaction
 from typing import Optional
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from .models import Tournament, TournamentEntry, SetFormat, Ruleset, KnockoutBracket, DrawPosition, SchedulePattern
 from apps.players.services import rating_service
@@ -42,7 +53,94 @@ from apps.tournaments.services.round_robin import (
 class TournamentViewSet(viewsets.ModelViewSet):
     queryset = Tournament.objects.all().order_by("-created_at")
     serializer_class = TournamentSerializer
+    # Просмотр турниров доступен всем, но completed требуют аутентификации
     permission_classes = [AllowAny]
+    authentication_classes = [JWTAuthentication]
+
+    def get_permissions(self):
+        if self.action == "create":
+            return [IsAuthenticatedAndRoleIn(Role.ADMIN, Role.ORGANIZER)]
+
+        if self.action in {
+            "update",
+            "partial_update",
+            "set_ruleset",
+            "set_participant",
+            "save_participants",
+            "create_knockout_bracket",
+            "seed_bracket",
+            "lock_participants",
+            "unlock_participants",
+            "complete",
+        }:
+            return [IsTournamentCreatorOrAdmin()]
+
+        if self.action in {"destroy", "remove"}:
+            return [IsTournamentCreatorOrAdminForDeletion()]
+
+        if self.action in {
+            "match_start",
+            "match_save_score_full",
+            "match_cancel",
+            "match_delete_score",
+            "match_reset",
+        }:
+            return [IsAuthenticated()]
+
+        return super().get_permissions()
+
+    def perform_create(self, serializer):
+        user = self.request.user if getattr(self.request, "user", None) and self.request.user.is_authenticated else None
+        serializer.save(created_by=user)
+
+    def _ensure_can_view_tournament(self, request, tournament: Tournament) -> None:
+        """Ограничение просмотра турнира для гостей.
+
+        - ANONYMOUS: может смотреть только турниры в статусе CREATED/ACTIVE.
+        - Аутентифицированные пользователи (REGISTERED и выше): без ограничений.
+        """
+
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            if tournament.status == Tournament.Status.COMPLETED:
+                raise PermissionDenied("Authentication required to view completed tournaments")
+            return
+
+        # Аутентифицированный пользователь
+        role = _get_user_role(user)
+        # REGISTERED-пользователь не должен видеть черновики турниров
+        if role == Role.REGISTERED and tournament.status == Tournament.Status.CREATED:
+            raise PermissionDenied("Authentication required to view this tournament")
+
+    def retrieve(self, request, *args, **kwargs):
+        tournament = self.get_object()
+        self._ensure_can_view_tournament(request, tournament)
+        serializer = self.get_serializer(tournament)
+        return Response(serializer.data)
+
+    def _ensure_can_manage_match(self, request, tournament: Tournament) -> None:
+        """Проверка права на матчевые действия.
+
+        Разрешено, если пользователь:
+        - создатель турнира / ADMIN / staff/superuser (IsTournamentCreatorOrAdmin);
+        - или назначенный рефери турнира (IsRefereeForTournament).
+        """
+
+        user = request.user
+        if not user or not user.is_authenticated:
+            raise PermissionDenied("Authentication required")
+
+        # ADMIN / staff / creator
+        creator_perm = IsTournamentCreatorOrAdmin()
+        if creator_perm.has_object_permission(request, self, tournament):
+            return
+
+        # REFEREE для этого турнира
+        referee_perm = IsRefereeForTournament()
+        if referee_perm.has_object_permission(request, self, tournament):
+            return
+
+        raise PermissionDenied("You do not have permission to manage matches for this tournament")
 
     def destroy(self, request, *args, **kwargs):
         """Переопределяем стандартное удаление для корректной обработки олимпийских турниров."""
@@ -152,6 +250,8 @@ class TournamentViewSet(viewsets.ModelViewSet):
         }
         """
         tournament: Tournament = self.get_object()
+
+        self._ensure_can_manage_match(request, tournament)
         data = request.data or {}
         try:
             group_index = int(data.get("group_index"))
@@ -277,6 +377,32 @@ class TournamentViewSet(viewsets.ModelViewSet):
             "matches_created": created,
         })
 
+    @action(detail=True, methods=["get"], url_path="default_bracket", permission_classes=[AllowAny])
+    def default_bracket(self, request, pk=None):
+        """Вернуть первую существующую сетку плей-офф для турнира.
+
+        Используется для read-only просмотра олимпийки пользователями без прав
+        управления структурой (REGISTERED и гости).
+        """
+        tournament: Tournament = self.get_object()
+        self._ensure_can_view_tournament(request, tournament)
+        if tournament.system != Tournament.System.KNOCKOUT:
+            return Response({"ok": False, "error": "Турнир не является олимпийской системой"}, status=400)
+
+        bracket = tournament.knockout_brackets.order_by("id").first()
+        if not bracket:
+            return Response({"ok": False, "error": "Сетка не найдена"}, status=404)
+
+        return Response({
+            "ok": True,
+            "bracket": {
+                "id": bracket.id,
+                "index": bracket.index,
+                "size": bracket.size,
+                "has_third_place": bracket.has_third_place,
+            },
+        })
+
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="seed_bracket", permission_classes=[IsAuthenticated])
     def seed_bracket(self, request, pk=None):
@@ -298,6 +424,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
     def bracket_draw(self, request, pk=None, bracket_id=None):
         """Получить данные для отрисовки сетки с информацией о соединениях (для SVG)."""
         tournament: Tournament = self.get_object()
+        self._ensure_can_view_tournament(request, tournament)
         try:
             bracket = tournament.knockout_brackets.get(id=int(bracket_id))
         except KnockoutBracket.DoesNotExist:
@@ -312,9 +439,15 @@ class TournamentViewSet(viewsets.ModelViewSet):
             # Получить display_name и full_name для игроков
             display_name = name
             full_name = name
+            rating = 0
             
             if team.player_1:
                 p1 = team.player_1
+                # Текущий рейтинг берём по первому игроку
+                try:
+                    rating = int(getattr(p1, "current_rating", 0) or 0)
+                except Exception:
+                    rating = 0
                 if team.player_2:
                     # Пара
                     p2 = team.player_2
@@ -329,7 +462,8 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 "id": team.id, 
                 "name": name,
                 "display_name": display_name,
-                "full_name": full_name
+                "full_name": full_name,
+                "rating": rating,
             }
 
         def serialize_team_by_id(team_id: Optional[int]):
@@ -440,6 +574,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
     def bracket_bye_positions(self, request, pk=None, bracket_id=None):
         """Вернуть список позиций жеребьёвки, помеченных как BYE, для указанной сетки турнира."""
         tournament: Tournament = self.get_object()
+        self._ensure_can_view_tournament(request, tournament)
         try:
             bracket = tournament.knockout_brackets.get(id=int(bracket_id))
         except KnockoutBracket.DoesNotExist:
@@ -526,6 +661,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         Использует выбранные шаблоны расписания для каждой группы.
         """
         tournament: Tournament = self.get_object()
+        self._ensure_can_view_tournament(request, tournament)
         if tournament.system != Tournament.System.ROUND_ROBIN:
             return Response({"ok": False, "error": "Турнир не круговой системы"}, status=400)
 
@@ -710,6 +846,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
     def king_schedule(self, request, pk=None):
         """Получить расписание турнира Кинг для отображения"""
         tournament = self.get_object()
+        self._ensure_can_view_tournament(request, tournament)
         
         if tournament.system != Tournament.System.KING:
             return Response({'error': 'Не турнир Кинг'}, status=400)
@@ -837,6 +974,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="match_start", permission_classes=[IsAuthenticated])
     def match_start(self, request, pk=None):
         tournament: Tournament = self.get_object()
+        self._ensure_can_manage_match(request, tournament)
         match_id = request.data.get("match_id")
         if not match_id:
             return Response({"ok": False, "error": "match_id обязателен"}, status=400)
@@ -972,36 +1110,11 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return Response({"ok": True, "match": MatchSerializer(m).data})
 
     @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["post"], url_path="match_start", permission_classes=[AllowAny], authentication_classes=[])
-    def match_start(self, request, pk=None):
-        """Начать матч (установить статус live и время начала)."""
-        tournament: Tournament = self.get_object()
-        
-        # Блокировка для завершённых турниров
-        if tournament.status == Tournament.Status.COMPLETED:
-            return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
-        match_id = request.data.get("match_id")
-        
-        if not match_id:
-            return Response({"ok": False, "error": "match_id обязателен"}, status=400)
-        
-        try:
-            m = Match.objects.get(id=int(match_id), tournament=tournament)
-        except Match.DoesNotExist:
-            return Response({"ok": False, "error": "Матч не найден"}, status=404)
-        
-        from django.utils import timezone
-        m.started_at = timezone.now()
-        m.status = Match.Status.LIVE
-        m.save(update_fields=["started_at", "status", "updated_at"])
-        
-        return Response({"ok": True, "match": {"id": m.id, "status": m.status}})
-
-    @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="match_cancel", permission_classes=[IsAuthenticated])
     def match_cancel(self, request, pk=None):
         """Отменить матч (вернуть в статус scheduled, очистить время начала)."""
         tournament: Tournament = self.get_object()
+        self._ensure_can_manage_match(request, tournament)
         
         # Блокировка для завершённых турниров
         if tournament.status == Tournament.Status.COMPLETED:
@@ -1027,7 +1140,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
     def match_delete_score(self, request, pk=None):
         """Удалить счет матча (очистить сеты и winner_id) для круговой системы."""
         tournament: Tournament = self.get_object()
-        
+        self._ensure_can_manage_match(request, tournament)
         # Блокировка для завершённых турниров
         if tournament.status == Tournament.Status.COMPLETED:
             return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
@@ -1058,7 +1171,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
     def match_reset(self, request, pk=None):
         """Сбросить результат матча (удалить счёт, победителя, каскадно очистить все последующие раунды)."""
         tournament: Tournament = self.get_object()
-        
+        self._ensure_can_manage_match(request, tournament)
         # Блокировка для завершённых турниров
         if tournament.status == Tournament.Status.COMPLETED:
             return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
@@ -1392,22 +1505,6 @@ class TournamentViewSet(viewsets.ModelViewSet):
         
         return Response({"ok": True, "match": MatchSerializer(m).data})
 
-    @method_decorator(csrf_exempt)
-    @action(detail=True, methods=["post"], url_path="match_cancel", permission_classes=[AllowAny], authentication_classes=[])
-    def match_cancel(self, request, pk=None):
-        tournament: Tournament = self.get_object()
-        match_id = request.data.get("match_id")
-        if not match_id:
-            return Response({"ok": False, "error": "match_id обязателен"}, status=400)
-        try:
-            m = Match.objects.get(id=int(match_id), tournament=tournament)
-        except Match.DoesNotExist:
-            return Response({"ok": False, "error": "Матч не найден"}, status=404)
-        m.started_at = None
-        m.status = Match.Status.SCHEDULED
-        m.save(update_fields=["started_at", "status", "updated_at"])
-        return Response({"ok": True, "match": MatchSerializer(m).data})
-
     @action(detail=True, methods=["get"])
     def group_stats(self, request, pk=None):
         tournament: Tournament = self.get_object()
@@ -1506,10 +1603,19 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     # Одиночка
                     full_name = f"{p1.last_name} {p1.first_name}"
             
+            # Текущий рейтинг: берём рейтинг первого игрока, если он есть
+            rating = 0
+            try:
+                if team.player_1 and hasattr(team.player_1, "current_rating"):
+                    rating = int(team.player_1.current_rating or 0)
+            except Exception:
+                rating = 0
+            
             participants.append({
                 'id': entry.id,
                 'name': full_name,  # Всегда полное ФИО для списка участников
                 'team_id': team.id,
+                'rating': rating,
                 'isInBracket': False
             })
         
@@ -2090,7 +2196,7 @@ class MatchViewSet(viewsets.ModelViewSet):
 
 
 class PlayerListView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     def get(self, request):
         players = Player.objects.all().order_by("last_name", "first_name")
         serializer = PlayerSerializer(players, many=True)
@@ -2098,7 +2204,7 @@ class PlayerListView(APIView):
 
 
 class PlayerSearchView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     def get(self, request):
         query = request.GET.get("q", "")
         if query:
@@ -2133,6 +2239,8 @@ class PlayerCreateView(APIView):
 
 
 @api_view(["GET"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([AllowAny])
 def tournament_list(request):
     """Сводный список турниров: активные и история с пагинацией и фильтрацией."""
     today = timezone.now().date()
@@ -2151,6 +2259,11 @@ def tournament_list(request):
     # Базовые запросы
     active_qs = Tournament.objects.filter(status__in=[Tournament.Status.CREATED, Tournament.Status.ACTIVE])
     history_qs = Tournament.objects.filter(status=Tournament.Status.COMPLETED)
+
+    # Ограничение для гостей: завершённые турниры не показываем (см. ROLES_AND_AUTH_PLAN)
+    user = getattr(request, "user", None)
+    if not user or not user.is_authenticated:
+        history_qs = history_qs.none()
     
     # Применяем фильтры (поиск по имени без учета регистра)
     if name_filter:
@@ -2214,6 +2327,36 @@ def tournament_list(request):
         "history_offset": history_offset,
         "history_limit": history_limit,
     })
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticatedAndRoleIn(Role.REFEREE, Role.ADMIN)])
+def referee_my_tournaments(request):
+    """Список активных турниров, где текущий пользователь назначен рефери.
+
+    Используется для интерфейса судьи: показывает только турниры со статусом ACTIVE,
+    в которых пользователь входит в tournament.referees.
+    """
+
+    user = request.user
+    qs = Tournament.objects.filter(
+        status=Tournament.Status.ACTIVE,
+        referees=user,
+    ).order_by("date", "name")
+
+    def serialize_t(t: Tournament):
+        return {
+            "id": t.id,
+            "name": t.name,
+            "date": t.date.strftime("%Y-%m-%d") if t.date else None,
+            "system": t.system,
+            "participant_mode": t.participant_mode,
+            "status": t.status,
+            "get_system_display": t.get_system_display(),
+            "get_participant_mode_display": t.get_participant_mode_display(),
+        }
+
+    return Response({"tournaments": [serialize_t(t) for t in qs]})
 
 
 @api_view(["GET"])

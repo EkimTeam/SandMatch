@@ -5,6 +5,7 @@ export interface DraggableParticipant {
   name: string;
   teamId?: number; // для существующих команд
   isInBracket: boolean; // находится ли участник в сетке
+  currentRating?: number; // текущий рейтинг игрока (для отображения)
 }
 
 export interface DropSlot {

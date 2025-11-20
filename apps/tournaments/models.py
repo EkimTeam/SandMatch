@@ -264,7 +264,16 @@ class Tournament(models.Model):
     ruleset = models.ForeignKey(Ruleset, on_delete=models.PROTECT)
     planned_participants = models.PositiveIntegerField(
         null=True, blank=True, help_text="Планируемое число участников (для UI)")
-    
+    rating_coefficient = models.FloatField(default=1.0)
+    is_rating_calc = models.BooleanField(default=True)
+    parent_tournament = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="child_tournaments",
+    )
+
     # JSON структура: {"Группа 1": pattern_id, "Группа 2": pattern_id}
     group_schedule_patterns = models.JSONField(
         default=dict,
@@ -282,7 +291,20 @@ class Tournament(models.Model):
         verbose_name="Режим подсчета (Кинг)",
         help_text="Режим компенсации разного количества матчей в турнире Кинг"
     )
-
+    created_by = models.ForeignKey(
+        'auth.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='tournaments_created',
+        verbose_name="Создал",
+    )
+    referees = models.ManyToManyField(
+        'auth.User',
+        blank=True,
+        related_name='tournaments_refereed',
+        verbose_name="Судьи",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

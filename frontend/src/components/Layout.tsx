@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { getAccessToken, clearTokens } from '../services/auth';
+import { useAuth } from '../context/AuthContext';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -9,17 +9,7 @@ interface LayoutProps {
 export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const location = useLocation();
   const navigate = useNavigate();
-  const [token, setToken] = useState<string | null>(null);
-
-  // Track token presence
-  useEffect(() => {
-    setToken(getAccessToken());
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === 'bp_access_token') setToken(getAccessToken());
-    };
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, []);
+  const { user, logout } = useAuth();
 
   const isActive = (path: string) => {
     if (path === '/tournaments' || path === '/') {
@@ -39,67 +29,104 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
             </div>
             
             <nav className="flex items-center gap-3 flex-wrap">
-              <Link 
-                to="/tournaments" 
-                className={`px-3 py-2 rounded-lg text-sm transition-colors ${
-                  isActive('/tournaments') 
-                    ? 'bg-primary-100 text-primary-700' 
-                    : 'text-gray-700 hover:bg-gray-100'
-                }`}
-              >
-                Турниры
-              </Link>
-              <Link 
-                to="/players" 
-                className={`px-3 py-2 rounded-lg text-sm transition-colors ${
-                  isActive('/players') 
-                    ? 'bg-primary-100 text-primary-700' 
-                    : 'text-gray-700 hover:bg-gray-100'
-                }`}
-              >
-                Игроки
-              </Link>
-              <Link 
-                to="/rating" 
-                className={`px-3 py-2 rounded-lg text-sm transition-colors ${
-                  isActive('/rating') 
-                    ? 'bg-primary-100 text-primary-700' 
-                    : 'text-gray-700 hover:bg-gray-100'
-                }`}
-              >
-                Рейтинг
-              </Link>
-              <Link 
-                to="/stats" 
-                className={`px-3 py-2 rounded-lg text-sm transition-colors ${
-                  isActive('/stats') 
-                    ? 'bg-primary-100 text-primary-700' 
-                    : 'text-gray-700 hover:bg-gray-100'
-                }`}
-              >
-                Статистика
-              </Link>
-              {/* Auth controls */}
-              {token ? (
-                <button
-                  onClick={() => {
-                    clearTokens();
-                    setToken(null);
-                    navigate('/login');
-                  }}
-                  className="px-3 py-2 rounded-lg text-sm bg-gray-100 hover:bg-gray-200 text-gray-800"
-                >
-                  Выйти
-                </button>
-              ) : (
+              {/* Для рефери в меню только раздел Судейство */}
+              {user?.role === 'REFEREE' ? (
                 <Link
-                  to="/login"
+                  to="/referee"
                   className={`px-3 py-2 rounded-lg text-sm transition-colors ${
-                    isActive('/login') ? 'bg-primary-100 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
+                    isActive('/referee')
+                      ? 'bg-primary-100 text-primary-700'
+                      : 'text-gray-700 hover:bg-gray-100'
                   }`}
                 >
-                  Войти
+                  Судейство
                 </Link>
+              ) : (
+                <>
+                  {/* Турниры, рейтинг и статистика доступны гостям и авторизованным (кроме рефери) */}
+                  <Link
+                    to="/tournaments"
+                    className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+                      isActive('/tournaments')
+                        ? 'bg-primary-100 text-primary-700'
+                        : 'text-gray-700 hover:bg-gray-100'
+                    }`}
+                  >
+                    Турниры
+                  </Link>
+                  {user && (
+                    <Link
+                      to="/players"
+                      className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+                        isActive('/players')
+                          ? 'bg-primary-100 text-primary-700'
+                          : 'text-gray-700 hover:bg-gray-100'
+                      }`}
+                    >
+                      Игроки
+                    </Link>
+                  )}
+                  <Link
+                    to="/rating"
+                    className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+                      isActive('/rating')
+                        ? 'bg-primary-100 text-primary-700'
+                        : 'text-gray-700 hover:bg-gray-100'
+                    }`}
+                  >
+                    Рейтинг
+                  </Link>
+                  <Link
+                    to="/stats"
+                    className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+                      isActive('/stats')
+                        ? 'bg-primary-100 text-primary-700'
+                        : 'text-gray-700 hover:bg-gray-100'
+                    }`}
+                  >
+                    Статистика
+                  </Link>
+                </>
+              )}
+
+              {/* Auth controls */}
+              {user ? (
+                <>
+                  <span className="text-xs text-gray-600 mr-1">
+                    {user.username}
+                    {user.role && user.role !== 'REGISTERED' && (
+                      <span className="ml-1 text-gray-400">[{user.role}]</span>
+                    )}
+                  </span>
+                  <button
+                    onClick={() => {
+                      logout();
+                      navigate('/login');
+                    }}
+                    className="px-3 py-2 rounded-lg text-sm bg-gray-100 hover:bg-gray-200 text-gray-800"
+                  >
+                    Выйти
+                  </button>
+                </>
+              ) : (
+                <>
+                  <Link
+                    to="/login"
+                    className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+                      isActive('/login') ? 'bg-primary-100 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
+                    }`}
+                  >
+                    Войти
+                  </Link>
+                  <Link
+                    to="/register"
+                    className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+                      isActive('/register') ? 'bg-primary-100 text-primary-700' : 'text-gray-700 hover:bg-gray-100'
+                    }`}
+                  >
+                    Регистрация
+                  </Link>
+                </>
               )}
             </nav>
           </div>

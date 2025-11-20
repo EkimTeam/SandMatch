@@ -45,8 +45,7 @@ export const ParticipantPickerModal: React.FC<Props> = ({ open, onClose, tournam
     // Подтянуть актуальных участников турнира, чтобы заблокировать их для выбора
     (async () => {
       try {
-        const resp = await fetch(`/api/tournaments/${tournamentId}/`);
-        const data = await resp.json();
+        const { data } = await api.get(`/tournaments/${tournamentId}/`);
         const ids = new Set<number>(usedPlayerIds || []);
         (data.participants || []).forEach((p: any) => {
           const team = p.team || {};
@@ -67,8 +66,7 @@ export const ParticipantPickerModal: React.FC<Props> = ({ open, onClose, tournam
   const search = async (field: 'A' | 'B', q: string) => {
     field === 'A' ? setLoadingA(true) : setLoadingB(true);
     try {
-      const resp = await fetch(`/api/players/search/?q=${encodeURIComponent(q || '')}`);
-      const data = await resp.json();
+      const { data } = await api.get('/players/search/', { params: { q: q || '' } });
       const list: Player[] = data.players || [];
       if (field === 'A') setPlayersA(list); else setPlayersB(list);
     } catch (e) {

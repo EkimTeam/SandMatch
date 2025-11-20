@@ -14,6 +14,7 @@ router.register(r'schedule-patterns', api_views.SchedulePatternViewSet, basename
 urlpatterns = [
     # ВАЖНО: кастомные пути выше router.urls, чтобы не конфликтовать с tournaments/<pk>
     path('tournaments/overview/', api_views.tournament_list, name='api_tournaments_overview'),
+    path('referee/my_tournaments/', api_views.referee_my_tournaments, name='api_referee_my_tournaments'),
     path('set-formats/', api_views.set_formats_list, name='api_set_formats'),
     path('rulesets/', api_views.rulesets_list, name='api_rulesets'),
     path('tournaments/new_round_robin/', new_round_robin, name='api_tournament_create_rr'),
