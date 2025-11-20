@@ -1,13 +1,12 @@
-from rest_framework.decorators import api_view, permission_classes, authentication_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
 
 from .models import Tournament, SchedulePattern
 
 @api_view(["POST"])
-@permission_classes([AllowAny])
-@authentication_classes([])
+@permission_classes([IsAuthenticated])
 def new_king(request):
     data = request.data or {}
     required = ["name", "date", "participant_mode", "set_format_id", "ruleset_id"]
@@ -76,6 +75,7 @@ def new_king(request):
             status=Tournament.Status.CREATED,
             group_schedule_patterns=group_schedule_patterns if group_schedule_patterns else None,
             king_calculation_mode='g_minus',  # Режим по умолчанию
+            created_by=request.user if request.user.is_authenticated else None,
         )
     except Exception as e:
         return Response({"ok": False, "error": str(e)}, status=400)

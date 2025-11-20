@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { playerApi, Player, ratingApi } from '../services/api';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 
 export const PlayersPage: React.FC = () => {
+  const { user } = useAuth();
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
   const [briefs, setBriefs] = useState<Record<number, { current_rating: number; last_delta: number }>>({});
@@ -31,6 +33,17 @@ export const PlayersPage: React.FC = () => {
       setLoading(false);
     }
   };
+
+  if (user?.role === 'REFEREE') {
+    return (
+      <div className="card">
+        Страница списка игроков недоступна для роли судьи. Используйте раздел
+        {' '}
+        <span className="font-semibold">"Судейство"</span>
+        {' '}для работы с назначенными вам турнирами.
+      </div>
+    );
+  }
 
   if (loading) {
     return <div className="text-center py-8">Загрузка игроков...</div>;
@@ -88,6 +101,14 @@ export const PlayersPage: React.FC = () => {
         </div>
       ) : (
         <div className="card text-center py-8">Пока нет игроков</div>
+      )}
+
+      {user?.role === 'ADMIN' && (
+        <div className="mt-8 text-center">
+          <Link to="/admin/roles" className="btn btn-outline-secondary">
+            Роли пользователей
+          </Link>
+        </div>
       )}
     </div>
   );

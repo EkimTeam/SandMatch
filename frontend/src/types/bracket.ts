@@ -13,6 +13,7 @@ export interface SimpleTeam {
   name: string;
   display_name?: string;
   full_name?: string;
+  rating?: number;
 }
 
 export interface BracketMatch {

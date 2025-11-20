@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ratingApi } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, Legend, ResponsiveContainer } from 'recharts';
 
 interface LeaderboardRow {
@@ -26,6 +27,7 @@ interface LeaderboardRow {
 }
 
 export const RatingPage: React.FC = () => {
+  const { user } = useAuth();
   const [rows, setRows] = useState<LeaderboardRow[]>([]);
   const [page, setPage] = useState<number>(1);
   const [totalPages, setTotalPages] = useState<number>(1);
@@ -166,6 +168,17 @@ export const RatingPage: React.FC = () => {
     const r = rows.find(x => x.id === comparePlayerId);
     return r ? `${r.display_name} ${r.last_name}`.trim() : `Игрок ${comparePlayerId}`;
   }, [rows, comparePlayerId]);
+
+  if (user?.role === 'REFEREE') {
+    return (
+      <div className="card">
+        Общий рейтинг игроков недоступен для роли судьи. Перейдите в раздел
+        {' '}
+        <span className="font-semibold">"Судейство"</span>
+        {' '}для работы с назначенными вам турнирами.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

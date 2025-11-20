@@ -56,6 +56,7 @@ urlpatterns = [
     # API endpoints
     path("api/", include("apps.tournaments.api_urls")),
     path("api/rating/", include("apps.players.api_urls")),
+    path("api/auth/", include("apps.accounts.api_urls")),
     # Health check
     path("api/health/", health, name="health"),
     # Auth (JWT)

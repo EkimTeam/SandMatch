@@ -80,8 +80,17 @@ export const RoundComponent: React.FC<{
             
             // Для участников из dropSlots тоже применяем getTeamName
             // ВАЖНО: Если m?.team_1 === null (после сброса матча), показываем placeholder
-            const team1Display = m?.team_1 ? getTeamName(m.team_1) : (isFirstRound && canDrop ? 'Свободное место' : placeholderTop);
-            const team2Display = m?.team_2 ? getTeamName(m.team_2) : (isFirstRound && canDrop ? 'Свободное место' : placeholderBottom);
+            // Для позиций BYE в первом раунде отображаем 'BYE' вместо 'Свободное место'
+            const team1Display = m?.team_1
+              ? getTeamName(m.team_1)
+              : (isFirstRound && canDrop
+                  ? (isBye1 ? 'BYE' : 'Свободное место')
+                  : placeholderTop);
+            const team2Display = m?.team_2
+              ? getTeamName(m.team_2)
+              : (isFirstRound && canDrop
+                  ? (isBye2 ? 'BYE' : 'Свободное место')
+                  : placeholderBottom);
             
             // Для тултипов всегда используем full_name
             const team1Tooltip = m?.team_1?.full_name || m?.team_1?.name;
@@ -149,10 +158,16 @@ export const RoundComponent: React.FC<{
                 <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
                   {isFirstRound && <span style={{ marginRight: 6, color: '#6b7280', fontSize: 12 }}>{idx * 2 + 1}.</span>}
                   <span 
-                    style={{ fontWeight: winnerId === m?.team_1?.id ? 600 : 400 }}
+                    style={{ display: 'flex', alignItems: 'baseline', gap: 6, fontWeight: winnerId === m?.team_1?.id ? 600 : 400 }}
                     title={team1Tooltip || undefined}
                   >
-                    {team1Display}
+                    <span>{team1Display}</span>
+                    {typeof (m as any)?.team_1?.rating === 'number' && (
+                      <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 2 }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1 }}>{(m as any).team_1.rating}</span>
+                        <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.7 }}>BP</span>
+                      </span>
+                    )}
                   </span>
                 </div>
                 {canDrop && slot1?.currentParticipant && (
@@ -198,10 +213,16 @@ export const RoundComponent: React.FC<{
                 <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
                   {isFirstRound && <span style={{ marginRight: 6, color: '#6b7280', fontSize: 12 }}>{idx * 2 + 2}.</span>}
                   <span 
-                    style={{ fontWeight: winnerId && m?.team_2?.id === winnerId ? 700 : 400, color: m ? undefined : '#9ca3af' }}
+                    style={{ display: 'flex', alignItems: 'baseline', gap: 6, fontWeight: winnerId && m?.team_2?.id === winnerId ? 700 : 400, color: m ? undefined : '#9ca3af' }}
                     title={team2Tooltip || undefined}
                   >
-                    {team2Display}
+                    <span>{team2Display}</span>
+                    {typeof (m as any)?.team_2?.rating === 'number' && (
+                      <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 2 }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1 }}>{(m as any).team_2.rating}</span>
+                        <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.7 }}>BP</span>
+                      </span>
+                    )}
                   </span>
                 </div>
                 {canDrop && slot2?.currentParticipant && (

@@ -1,15 +1,21 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api, { tournamentApi, schedulePatternApi, SchedulePattern, Tournament, KingScheduleResponse, KingCalculationMode, Ruleset, ratingApi } from '../services/api';
+import { formatDate } from '../services/date';
 import { ParticipantPickerModal } from '../components/ParticipantPickerModal';
 import { MatchScoreModal } from '../components/MatchScoreModal';
 import SchedulePatternModal from '../components/SchedulePatternModal';
 import { computeKingGroupRanking } from '../utils/kingRanking';
+import { useAuth } from '../context/AuthContext';
 
 export const KingPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const tournamentId = parseInt(id || '0', 10);
+  const { user } = useAuth();
+  const role = user?.role;
+  const canManageTournament = role === 'ADMIN' || role === 'ORGANIZER';
+  const canManageMatches = canManageTournament || role === 'REFEREE';
 
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [schedule, setSchedule] = useState<KingScheduleResponse | null>(null);
@@ -37,6 +43,7 @@ export const KingPage: React.FC = () => {
   const calcTipRef = useRef<HTMLDivElement | null>(null);
   // Карта рейтингов игроков
   const [playerRatings, setPlayerRatings] = useState<Map<number, number>>(new Map());
+  const canDeleteTournament = !!tournament?.can_delete;
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent | TouchEvent) => {
@@ -61,7 +68,7 @@ export const KingPage: React.FC = () => {
 
   // Загрузка расписания
   useEffect(() => {
-    if (tournament && tournament.status === 'active') {
+    if (tournament && (tournament.status === 'active' || tournament.status === 'completed')) {
       loadSchedule();
     }
   }, [tournament]);
@@ -139,8 +146,6 @@ export const KingPage: React.FC = () => {
     try {
       setLoading(true);
       const data = await tournamentApi.getById(tournamentId);
-      console.log('Loaded tournament data:', data);
-      console.log('Participants:', data.participants);
       setTournament(data);
       
       // Проверка, что это действительно турнир Кинг
@@ -159,13 +164,19 @@ export const KingPage: React.FC = () => {
         setCalculationMode(data.king_calculation_mode);
       }
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Ошибка загрузки турнира');
+      const status = err?.response?.status;
+      if (!user && status === 403) {
+        setError('Завершённые турниры доступны только зарегистрированным пользователям. Пожалуйста, войдите в систему.');
+      } else {
+        setError(err.response?.data?.error || 'Ошибка загрузки турнира');
+      }
     } finally {
       setLoading(false);
     }
   };
 
   const handleRulesetChange = async (rulesetId: number) => {
+    if (!canManageTournament) return;
     try {
       const result = await tournamentApi.setRuleset(tournamentId, rulesetId);
       if (result.ok) {
@@ -187,7 +198,7 @@ export const KingPage: React.FC = () => {
   };
 
   const handleLockParticipantsToggle = async (checked: boolean) => {
-    if (!tournament) return;
+    if (!tournament || !canManageTournament) return;
     
     try {
       setSaving(true);
@@ -212,7 +223,7 @@ export const KingPage: React.FC = () => {
   };
 
   const completeTournament = async () => {
-    if (!tournament || !window.confirm('Завершить турнир?')) return;
+    if (!tournament || !canManageTournament || !window.confirm('Завершить турнир?')) return;
     try {
       setSaving(true);
       await tournamentApi.complete(tournamentId);
@@ -225,7 +236,7 @@ export const KingPage: React.FC = () => {
   };
 
   const deleteTournament = async () => {
-    if (!tournament || !window.confirm('Удалить турнир безвозвратно?')) return;
+    if (!tournament || !canDeleteTournament || !window.confirm('Удалить турнир безвозвратно?')) return;
     try {
       setSaving(true);
       await tournamentApi.delete(tournamentId);
@@ -297,18 +308,27 @@ export const KingPage: React.FC = () => {
 
   return (
     <div className="container mx-auto p-4" ref={exportRef}>
-      {/* Заголовок */}
+      {/* Заголовок в стиле круговой системы */}
       <div className="mb-6">
-        <h1 className="text-3xl font-bold mb-2">{tournament.name}</h1>
-        <div className="flex gap-4 text-sm text-gray-600">
-          <span>Система: Кинг</span>
-          <span>Статус: {tournament.status === 'created' ? 'Создан' : tournament.status === 'active' ? 'Активен' : 'Завершён'}</span>
-          <span>Участников: {tournament.participants_count}</span>
+        <h1 className="text-3xl font-bold mb-1">
+          {tournament.name}
+        </h1>
+        <div className="text-sm text-gray-600">
+          {tournament.date ? formatDate(tournament.date) : ''}
+          {(tournament.get_system_display || 'Кинг') ? ` • ${tournament.get_system_display || 'Кинг'}` : ''}
+          {tournament.get_participant_mode_display ? ` • ${tournament.get_participant_mode_display}` : ''}
+          {tournament.organizer_name ? ` • Организатор: ${tournament.organizer_name}` : ''}
+        </div>
+        <div className="text-xs text-gray-500 mt-1">
+          Статус: {tournament.status === 'created' ? 'Создан' : tournament.status === 'active' ? 'Активен' : 'Завершён'}
+          {typeof tournament.participants_count === 'number' ? ` • Участников: ${tournament.participants_count}` : ''}
         </div>
       </div>
 
-      {/* Радиокнопки G- / M+ / NO */}
-      {tournament.status === 'active' && (
+      {/* Радиокнопки G- / M+ / NO и выбор регламента:
+          - при active: можно менять (если есть права);
+          - при completed: показываем для чтения, но не даём менять. */}
+      {(tournament.status === 'active' || tournament.status === 'completed') && (
         <div className="mb-4 flex items-center gap-4 flex-wrap" data-export-exclude="true">
           <span className="font-semibold">Режим подсчета:</span>
           <label className="flex items-center gap-2 cursor-pointer">
@@ -316,6 +336,7 @@ export const KingPage: React.FC = () => {
               type="radio"
               value="g_minus"
               checked={calculationMode === 'g_minus'}
+              disabled={!canManageTournament || completed}
               onChange={(e) => handleCalculationModeChange(e.target.value as KingCalculationMode)}
               className="cursor-pointer"
             />
@@ -326,6 +347,7 @@ export const KingPage: React.FC = () => {
               type="radio"
               value="m_plus"
               checked={calculationMode === 'm_plus'}
+              disabled={!canManageTournament || completed}
               onChange={(e) => handleCalculationModeChange(e.target.value as KingCalculationMode)}
               className="cursor-pointer"
             />
@@ -336,6 +358,7 @@ export const KingPage: React.FC = () => {
               type="radio"
               value="no"
               checked={calculationMode === 'no'}
+              disabled={!canManageTournament || completed}
               onChange={(e) => handleCalculationModeChange(e.target.value as KingCalculationMode)}
               className="cursor-pointer"
             />
@@ -384,12 +407,13 @@ export const KingPage: React.FC = () => {
               </div>
             );
           })()}
-          {/* Регламент: выпадающий список */}
+          {/* Регламент: выпадающий список (при completed только для чтения) */}
           <span className="font-semibold ml-4">Регламент:</span>
           <div className="flex-1 min-w-[240px]" style={{ maxWidth: '100%' }}>
             <select
               className="w-full border rounded px-2 py-1 text-sm"
               value={tournament.ruleset?.id || ''}
+              disabled={!canManageTournament || completed}
               onChange={(e) => {
                 const val = Number(e.target.value);
                 if (!Number.isNaN(val)) handleRulesetChange(val);
@@ -769,7 +793,10 @@ export const KingPage: React.FC = () => {
         </div>
       )}
 
-      {tournament.status === 'active' && schedule && (
+      {/* Таблица результатов и расписание по группам:
+          - показываем и для active, и для completed;
+          - интерактивные действия внутри уже защищены проверками completed. */}
+      {(tournament.status === 'active' || tournament.status === 'completed') && schedule && (
         <div className="space-y-8">
           {Object.entries(schedule.schedule).map(([groupIndex, groupData]) => {
             const rankMap = computeKingGroupRanking(tournament, groupData, groupIndex, calculationMode);
@@ -787,17 +814,19 @@ export const KingPage: React.FC = () => {
                 <button data-export-exclude="true" className={`toggle ${showFullName ? 'active' : ''}`} onClick={() => setShowFullName(v => !v)}>
                   ФИО показать
                 </button>
-                <div style={{ marginLeft: 'auto' }} data-export-exclude="true">
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={effectiveLocked}
-                      disabled={lockDisabled}
-                      onChange={(e) => handleLockParticipantsToggle(e.target.checked)}
-                    />
-                    <span>Зафиксировать участников</span>
-                  </label>
-                </div>
+                {canManageTournament && (
+                  <div style={{ marginLeft: 'auto' }} data-export-exclude="true">
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={effectiveLocked}
+                        disabled={lockDisabled}
+                        onChange={(e) => handleLockParticipantsToggle(e.target.checked)}
+                      />
+                      <span>Зафиксировать участников</span>
+                    </label>
+                  </div>
+                )}
               </div>
 
               {/* Таблица участников с турами */}
@@ -1173,7 +1202,7 @@ export const KingPage: React.FC = () => {
                     }
                   });
 
-                  const canClick = effectiveLocked && !completed;
+                  const canClick = effectiveLocked && !completed && canManageMatches;
 
                   return (
                     <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
@@ -1391,10 +1420,12 @@ export const KingPage: React.FC = () => {
 
       {/* Нижняя панель действий */}
       <div style={{ marginTop: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }} data-export-exclude="true">
-        {!completed && (
+        {canManageTournament && !completed && (
           <button className="btn" onClick={completeTournament} disabled={saving}>Завершить турнир</button>
         )}
-        <button className="btn" onClick={deleteTournament} disabled={saving} style={{ background: '#dc3545', borderColor: '#dc3545' }}>Удалить турнир</button>
+        {canDeleteTournament && (
+          <button className="btn" onClick={deleteTournament} disabled={saving} style={{ background: '#dc3545', borderColor: '#dc3545' }}>Удалить турнир</button>
+        )}
         <button className="btn" onClick={handleShare}>Поделиться</button>
       </div>
     </div>

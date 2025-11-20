@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { formatDate } from '../services/date';
 import api, { matchApi, tournamentApi, Ruleset as ApiRuleset, ratingApi } from '../services/api';
 import { getAccessToken } from '../services/auth';
+import { useAuth } from '../context/AuthContext';
 import { ParticipantPickerModal } from '../components/ParticipantPickerModal';
 import { MatchScoreModal } from '../components/MatchScoreModal';
 import FreeFormatScoreModal from '../components/FreeFormatScoreModal';
@@ -65,6 +66,8 @@ type TournamentDetail = {
   participants: Participant[];
   planned_participants?: number | null;
   matches?: MatchDTO[];
+  organizer_name?: string;
+  can_delete?: boolean;
 };
 
 const toRoman = (num: number) => {
@@ -80,9 +83,14 @@ const toRoman = (num: number) => {
 export const TournamentDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
+  const { user } = useAuth();
+  const role = user?.role;
+  const canManageTournament = role === 'ADMIN' || role === 'ORGANIZER';
+  const canManageMatches = canManageTournament || role === 'REFEREE';
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [t, setT] = useState<TournamentDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [lockParticipants, setLockParticipants] = useState(false);
   const [showTech, setShowTech] = useState<boolean[]>([]); // по группам
   const [showFullName, setShowFullName] = useState(false);
@@ -101,6 +109,7 @@ export const TournamentDetailPage: React.FC = () => {
   // Расписание по группам: { [groupIndex]: [ [a,b], [c,d] ][] } — туры, каждый тур: массив пар [a,b]
   const [schedule, setSchedule] = useState<Record<number, [number, number][][]>>({});
   const [scheduleLoaded, setScheduleLoaded] = useState(false);
+  const canDeleteTournament = !!t?.can_delete;
 
   // Универсальный поиск матча по паре ID команд в группе: учитывает разные формы сериализации
   const findGroupMatch = useCallback((groupIdx: number, teamAId?: number | null, teamBId?: number | null) => {
@@ -137,9 +146,7 @@ export const TournamentDetailPage: React.FC = () => {
     const tid = tournamentId ?? id;
     if (!tid) return;
     try {
-      const resp = await fetch(`/api/tournaments/${tid}/group_schedule/`);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
+      const { data } = await api.get(`/tournaments/${tid}/group_schedule/`);
       if (data && data.ok && data.groups) {
         const mapped: Record<number, [number, number][][]> = {};
         for (const [key, rounds] of Object.entries<any>(data.groups)) {
@@ -215,11 +222,8 @@ export const TournamentDetailPage: React.FC = () => {
   const refreshGroupStats = async () => {
     if (!id) return;
     try {
-      const resp = await fetch(`/api/tournaments/${id}/group_stats/`);
-      if (resp.ok) {
-        const data = await resp.json();
-        setGroupStats(data?.groups || {});
-      }
+      const { data } = await api.get(`/tournaments/${id}/group_stats/`);
+      setGroupStats(data?.groups || {});
     } catch (e) {
       console.warn('Не удалось загрузить агрегаты групп:', e);
     }
@@ -278,11 +282,11 @@ export const TournamentDetailPage: React.FC = () => {
     }
   };
 
-  const reload = async () => {
+  const reload = async (): Promise<boolean> => {
     try {
-      const resp = await fetch(`/api/tournaments/${id}/`);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
+      setLoading(true);
+      setError(null);
+      const { data } = await api.get(`/tournaments/${id}/`);
       
       // Редирект на правильную страницу в зависимости от системы турнира
       if (data.system === 'king') {
@@ -300,8 +304,16 @@ export const TournamentDetailPage: React.FC = () => {
       if (data.status === 'active') {
         setLockParticipants(true);
       }
-    } catch (e) {
-      console.error('Ошибка загрузки турнира:', e);
+      return true;
+    } catch (e: any) {
+      const status = e?.response?.status;
+      if (!user && status === 403) {
+        setError('Завершённые турниры доступны только зарегистрированным пользователям. Пожалуйста, войдите в систему.');
+      } else {
+        console.error('Ошибка загрузки турнира:', e);
+        setError(e?.response?.data?.error || 'Ошибка загрузки турнира');
+      }
+      return false;
     } finally {
       setLoading(false);
     }
@@ -664,7 +676,8 @@ export const TournamentDetailPage: React.FC = () => {
 
   useEffect(() => {
     (async () => {
-      await reload();
+      const ok = await reload();
+      if (!ok) return;
       await refreshGroupStats();
       await fetchGroupSchedule();
     })();
@@ -684,7 +697,7 @@ export const TournamentDetailPage: React.FC = () => {
   }, []);
 
   const handleRrRulesetChange = async (rulesetId: number) => {
-    if (!t) return;
+    if (!t || !canManageTournament) return;
     try {
       setSavingRrRuleset(true);
       await tournamentApi.setRuleset(t.id, rulesetId);
@@ -739,13 +752,16 @@ export const TournamentDetailPage: React.FC = () => {
     setShowTech((prev) => prev.map((v, i) => (i === gi ? !v : v)));
   };
 
-  const handleCellClick = (type: 'participant' | 'score', groupIdx: number, rowIdx: number, colIdx?: number) => {
-    // Блокировка для завершённых турниров
+  const handleCellClick = (groupIdx: number, rowIdx: number, colIdx: number | null, type: 'participant' | 'score') => {
+    if (!t) return;
+    // Блокировка действий при завершённом турнире
     if (t?.status === 'completed') return;
-    
+
     if (type === 'participant') {
+      if (!canManageTournament) return;
       setPickerOpen({ group: groupIdx, row: rowIdx });
     } else {
+      if (!canManageMatches) return;
       if (!t || colIdx == null) return;
       // Найдём матч по парам команд в группе
       const g = groups.find(g => g.idx === groupIdx);
@@ -844,7 +860,7 @@ export const TournamentDetailPage: React.FC = () => {
   };
 
   const deleteTournament = async () => {
-    if (!t) return;
+    if (!t || !canDeleteTournament) return;
     if (!confirm('Удалить турнир без возможности восстановления?')) return;
     setSaving(true);
     try {
@@ -870,11 +886,36 @@ export const TournamentDetailPage: React.FC = () => {
     return ids;
   }, [t]);
 
-  if (loading || !t) {
+  if (loading) {
     return (
       <div>
         <h1 className="text-2xl font-bold mt-0 mb-6">Турнир #{id}</h1>
         <div className="card text-center py-8">Загрузка данных турнира...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div>
+        <h1 className="text-2xl font-bold mt-0 mb-6">Турнир #{id}</h1>
+        <div className="card text-center py-8 text-red-700">
+          <p className="mb-3">{error}</p>
+          {!user && (
+            <p>
+              <a href="/login" className="text-blue-600 hover:underline">Перейти на страницу входа</a>
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (!t) {
+    return (
+      <div>
+        <h1 className="text-2xl font-bold mt-0 mb-6">Турнир #{id}</h1>
+        <div className="card text-center py-8">Турнир не найден</div>
       </div>
     );
   }
@@ -891,25 +932,28 @@ export const TournamentDetailPage: React.FC = () => {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-        <h1 style={{ margin: 0 }}>{t.name} — {formatDate(t.date)}</h1>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <div className="meta">{t.get_system_display} • {t.get_participant_mode_display} • Групп: {t.groups_count}</div>
-        </div>
-      </div>
-
-
       {groups.length === 0 && (
         <div className="card">Пока нет параметров для отображения таблиц. Вернитесь и укажите количество участников и групп.</div>
       )}
 
-      {/* Экспортируемая область (без туров и без нижней панели) */}
       <div ref={exportRef}>
-        {/* Шапка для выгрузки с логотипом */}
+        {/* Шапка для выгрузки с логотипом (и основная шапка страницы) */}
         <div style={{ position: 'relative', padding: '24px 24px 12px 24px', borderBottom: '1px solid #eee', background: '#fff' }}>
           <img src="/static/img/logo.png" alt="BeachPlay" style={{ position: 'absolute', right: 24, top: 24, height: 48 }} />
-          <div style={{ fontSize: 28, fontWeight: 700 }}>{t.name}</div>
-          <div style={{ fontSize: 16, color: '#666' }}>{formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}</div>
+          {/* 1-я строка: имя турнира */}
+          <div style={{ fontSize: 28, fontWeight: 700, marginBottom: 2 }}>{t.name}</div>
+          {/* 2-я строка: дата, система, формат, организатор */}
+          <div style={{ fontSize: 16, color: '#666' }}>
+            {t.date ? formatDate(t.date) : ''}
+            {t.get_system_display ? ` • ${t.get_system_display}` : ''}
+            {t.get_participant_mode_display ? ` • ${t.get_participant_mode_display}` : ''}
+            {t.organizer_name ? ` • Организатор: ${t.organizer_name}` : ''}
+          </div>
+          {/* 3-я строка: статус и число участников */}
+          <div style={{ fontSize: 13, color: '#777', marginTop: 2 }}>
+            Статус: {t.status === 'created' ? 'Создан' : t.status === 'active' ? 'Активен' : 'Завершён'}
+            {typeof t.participants_count === 'number' ? ` • Участников: ${t.participants_count}` : ''}
+          </div>
         </div>
         {/* Модалка ввода счёта - выбор между обычной и свободным форматом */}
         {scoreInput && (t as any)?.set_format?.games_to === 0 && (t as any)?.set_format?.max_sets !== 1 ? (
@@ -1250,7 +1294,7 @@ export const TournamentDetailPage: React.FC = () => {
             <button data-export-exclude="true" className={`toggle ${showFullName ? 'active' : ''}`} onClick={() => setShowFullName(v => !v)}>
               ФИО показать
             </button>
-            {gi === 0 && (
+            {gi === 0 && canManageTournament && (
               <div style={{ marginLeft: 'auto' }} data-export-exclude="true">
                 <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
                   <input
@@ -1320,7 +1364,7 @@ export const TournamentDetailPage: React.FC = () => {
                     <td
                       className={`cell-click${effectiveLocked ? ' locked' : ''}`}
                       style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'left', position: 'sticky', left: 0, background: '#fff', fontWeight: effectiveLocked ? 700 as any : 400 as any }}
-                      onClick={() => !effectiveLocked && !completed && handleCellClick('participant', g.idx, rIdx)}
+                      onClick={() => !effectiveLocked && !completed && handleCellClick(g.idx, rIdx, null, 'participant')}
                       title={g.entries[rI]?.team?.full_name || g.entries[rI]?.team?.display_name || g.entries[rI]?.team?.name || ''}
                     >
                       {(() => {
@@ -1410,7 +1454,7 @@ export const TournamentDetailPage: React.FC = () => {
                               return 'transparent';
                             })()
                           }}
-                          onClick={() => effectiveLocked && !completed && handleCellClick('score', g.idx, rIdx, cIdx)}
+                          onClick={() => effectiveLocked && !completed && handleCellClick(g.idx, rIdx, cIdx, 'score')}
                         >
                           {renderScoreCell(g, rIdx, cIdx, rI)}
                         </td>
@@ -1452,13 +1496,13 @@ export const TournamentDetailPage: React.FC = () => {
                             background: isLive ? MATCH_COLORS.LIVE : 'transparent',
                             padding: isLive ? '2px 6px' : '0',
                             borderRadius: isLive ? '4px' : '0',
-                            cursor: effectiveLocked && !completed ? 'pointer' : 'default',
+                            cursor: effectiveLocked && !completed && canManageMatches ? 'pointer' : 'default',
                             transition: 'background 0.15s ease'
                           }}
                           onMouseEnter={() => setHoveredMatch({ groupIdx: g.idx, row1: pair[0], row2: pair[1] })}
                           onMouseLeave={() => setHoveredMatch(null)}
                           onClick={() => {
-                            if (effectiveLocked && !completed && team1?.id && team2?.id) {
+                            if (effectiveLocked && !completed && canManageMatches && team1?.id && team2?.id) {
                               if (!m?.id) { alert('Матч ещё не создан. Сначала зафиксируйте участников.'); return; }
                               const matchTeam1Id = (m as any)?.team_1?.id ?? (m as any)?.team_1_id ?? null;
                               const matchTeam2Id = (m as any)?.team_2?.id ?? (m as any)?.team_2_id ?? null;
@@ -1541,7 +1585,7 @@ export const TournamentDetailPage: React.FC = () => {
             <select
               className="w-full border rounded px-2 py-1 text-sm"
               value={(t as any)?.ruleset?.id || ''}
-              disabled={!getAccessToken() || savingRrRuleset}
+              disabled={!canManageTournament || !getAccessToken() || savingRrRuleset || t.status === 'completed'}
               onChange={(e) => {
                 const val = Number(e.target.value);
                 if (!Number.isNaN(val)) handleRrRulesetChange(val);
@@ -1559,7 +1603,7 @@ export const TournamentDetailPage: React.FC = () => {
       )}
 
       {/* Модалка выбора участника */}
-      {pickerOpen && (
+      {canManageTournament && pickerOpen && (
         <ParticipantPickerModal
           open={true}
           onClose={() => setPickerOpen(null)}
@@ -1591,11 +1635,23 @@ export const TournamentDetailPage: React.FC = () => {
 
       {/* Нижняя панель действий (в выгрузку не включаем) */}
       <div style={{ marginTop: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }} data-export-exclude="true">
-        {!completed && (
+        {canManageTournament && !completed && (
           <button className="btn" onClick={completeTournament} disabled={saving}>Завершить турнир</button>
         )}
-        <button className="btn" onClick={deleteTournament} disabled={saving} style={{ background: '#dc3545', borderColor: '#dc3545' }}>Удалить турнир</button>
-        <button className="btn" onClick={handleShare}>Поделиться</button>
+        {canManageTournament && (
+          <button
+            className="btn"
+            onClick={deleteTournament}
+            disabled={saving}
+            style={{ background: '#dc3545', borderColor: '#dc3545' }}
+          >
+            Удалить турнир
+          </button>
+        )}
+        {/* REFEREE по плану не должен пользоваться кнопкой "Поделиться" */}
+        {role !== 'REFEREE' && (
+          <button className="btn" onClick={handleShare}>Поделиться</button>
+        )}
       </div>
     </div>
   );

@@ -65,7 +65,15 @@ export const DraggableParticipantList: React.FC<Props> = ({
             draggable={!participant.isInBracket}
             onDragStart={(e) => handleDragStart(e, participant)}
           >
-            <span className="participant-name">{participant.name}</span>
+            <span className="participant-name" style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+              <span>{participant.name}</span>
+              {typeof participant.currentRating === 'number' && (
+                <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 2 }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1 }}>{participant.currentRating}</span>
+                  <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.7 }}>BP</span>
+                </span>
+              )}
+            </span>
             <div className="participant-actions">
               {participant.isInBracket ? (
                 <span className="in-bracket-badge">В сетке</span>
