@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { playerApi, ratingApi, Player } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, Legend, ResponsiveContainer, LabelList } from 'recharts';
 
 export const PlayerCardPage: React.FC = () => {
   const { id } = useParams();
   const playerId = Number(id);
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [player, setPlayer] = useState<Player | null>(null);
   const [history, setHistory] = useState<any[]>([]);
   const [matchDeltas, setMatchDeltas] = useState<any[]>([]);
@@ -27,17 +29,32 @@ export const PlayerCardPage: React.FC = () => {
     const load = async () => {
       try {
         setLoading(true);
+        setError(null);
         // Получим игрока из списка (упростим до поиска по id)
         const list = await playerApi.getList();
         const p = list.find(x => x.id === playerId) || null;
         setPlayer(p);
+        // Для анонимных пользователей не дергаем защищённые rating-* ручки, только публичный brief
+        const br = await ratingApi.playerBriefs([playerId]);
+        const one = (br.results || [])[0];
+        setBrief(one ? { current_rating: one.current_rating, last_delta: one.last_delta, rank: one.rank } : null);
+
+        if (!user) {
+          const list2 = await playerApi.getList();
+          setPlayersList(list2);
+          setHistory([]);
+          setMatchDeltas([]);
+          setRelations({ opponents: [], partners: [] });
+          setTopWins([]);
+          setError('Подробная история рейтинга доступна только авторизованным пользователям.');
+          setLoading(false);
+          return;
+        }
+
         const h = await ratingApi.playerHistory(playerId);
         setHistory(h.history || []);
         const md = await ratingApi.playerMatchDeltas(playerId);
         setMatchDeltas(md.matches || []);
-        const br = await ratingApi.playerBriefs([playerId]);
-        const one = (br.results || [])[0];
-        setBrief(one ? { current_rating: one.current_rating, last_delta: one.last_delta, rank: one.rank } : null);
         const rel = await ratingApi.playerRelations(playerId);
         setRelations({ opponents: rel.opponents || [], partners: rel.partners || [] });
         const wins = await ratingApi.playerTopWins(playerId);
@@ -45,7 +62,20 @@ export const PlayerCardPage: React.FC = () => {
         const list2 = await playerApi.getList();
         setPlayersList(list2);
       } catch (e: any) {
-        setError(e?.response?.data?.error || 'Не удалось загрузить данные игрока');
+        const status = e?.response?.status;
+        // Для анонимных пользователей подсветим, что нужна авторизация
+        if (!user && status === 401) {
+          setError('Подробная история рейтинга доступна только авторизованным пользователям.');
+        } else if (!user && status === 403) {
+          setError('Доступ к подробной истории рейтинга запрещен.');
+        } else {
+          // Для авторизованных пользователей не показываем спец-сообщение про авторизацию,
+          // а только общую ошибку, если она есть.
+          const msg = e?.response?.data?.error || e?.message;
+          if (msg) {
+            setError(msg);
+          }
+        }
       } finally {
         setLoading(false);
       }
@@ -53,7 +83,7 @@ export const PlayerCardPage: React.FC = () => {
     if (!isNaN(playerId)) {
       load();
     }
-  }, [playerId]);
+  }, [playerId, user]);
 
   const filteredHistory = useMemo(() => {
     const inRange = (d: string) => {
@@ -251,12 +281,16 @@ export const PlayerCardPage: React.FC = () => {
     }, 200);
     return () => clearTimeout(t);
   }, [search]);
-
+  
   if (loading) return <div className="text-center py-8">Загрузка…</div>;
-  if (error) return <div className="text-center py-8 text-red-600">{error}</div>;
 
   return (
     <div className="space-y-6">
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded text-sm">
+          {error}
+        </div>
+      )}
       {/* Заголовок */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="flex items-baseline gap-3">

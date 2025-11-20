@@ -5,6 +5,10 @@ from django.views.decorators.http import require_GET
 from django.db.models import Count, Q
 from apps.players.models import Player, PlayerRatingDynamic
 from apps.matches.models import Match, MatchSet
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 
 def _match_base_q(player_id: int, hard: bool, medium: bool, tbo: bool):
@@ -21,6 +25,19 @@ def _match_base_q(player_id: int, hard: bool, medium: bool, tbo: bool):
     if tbo:
         q &= Q(sets__is_tiebreak_only=True)
     return q
+
+
+def _auth_required(request: HttpRequest) -> JsonResponse | None:
+    """УСТАРЕВШЕ: оставлено для обратной совместимости, больше не используется.
+
+    Реальная проверка аутентификации теперь выполняется через DRF
+    (@authentication_classes / @permission_classes) и JWTAuthentication.
+    """
+
+    user = getattr(request, "user", None)
+    if not user or not getattr(user, "is_authenticated", False):
+        return JsonResponse({"detail": "Authentication credentials were not provided."}, status=403)
+    return None
 
 
 def _match_score_str(match_id: int, flip: bool = False) -> str:
@@ -169,8 +186,10 @@ def _tournaments_count(player_id: int, hard: bool, medium: bool, tbo: bool) -> i
     )
 
 
-@require_GET
-def leaderboard(request: HttpRequest) -> JsonResponse:
+@api_view(["GET"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def leaderboard(request: HttpRequest) -> Response:
     # Параметры
     hard = request.GET.get('hard') in ('1', 'true', 'True')
     medium = request.GET.get('medium') in ('1', 'true', 'True')
@@ -216,7 +235,7 @@ def leaderboard(request: HttpRequest) -> JsonResponse:
             'rank': rank,
             'last5': last5,
         })
-    return JsonResponse({
+    return Response({
         'results': data,
         'page': page,
         'page_size': page_size,
@@ -225,8 +244,10 @@ def leaderboard(request: HttpRequest) -> JsonResponse:
     })
 
 
-@require_GET
-def player_history(request: HttpRequest, player_id: int) -> JsonResponse:
+@api_view(["GET"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def player_history(request: HttpRequest, player_id: int) -> Response:
     rows = (
         PlayerRatingDynamic.objects
         .filter(player_id=player_id)
@@ -237,11 +258,15 @@ def player_history(request: HttpRequest, player_id: int) -> JsonResponse:
             'rating_before', 'rating_after', 'total_change', 'matches_count'
         )
     )
-    return JsonResponse({'player_id': player_id, 'history': list(rows)})
+    return Response({'player_id': player_id, 'history': list(rows)})
 
 
-@require_GET
-def player_briefs(request: HttpRequest) -> JsonResponse:
+@api_view(["GET"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def player_briefs(request: HttpRequest) -> Response:
+    # Публичный эндпоинт: возвращает только текущий рейтинг и последнюю дельту.
+    # Персональные подробные данные остаются защищёнными в других ручках.
     ids_raw = (request.GET.get('ids') or '').strip()
     if not ids_raw:
         return JsonResponse({'results': []})
@@ -268,11 +293,13 @@ def player_briefs(request: HttpRequest) -> JsonResponse:
             'last_delta': getattr(d, 'total_change', 0) if d else 0,
             'rank': rank,
         })
-    return JsonResponse({'results': results})
+    return Response({'results': results})
 
 
-@require_GET
-def player_match_deltas(request: HttpRequest, player_id: int) -> JsonResponse:
+@api_view(["GET"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def player_match_deltas(request: HttpRequest, player_id: int) -> Response:
     from apps.players.models import PlayerRatingHistory
     items = list(
         PlayerRatingHistory.objects
@@ -342,11 +369,13 @@ def player_match_deltas(request: HttpRequest, player_id: int) -> JsonResponse:
             'team1_avg_before': team1_avg,
             'team2_avg_before': team2_avg,
         })
-    return JsonResponse({'player_id': player_id, 'matches': result})
+    return Response({'player_id': player_id, 'matches': result})
 
 
-@require_GET
-def h2h(request: HttpRequest) -> JsonResponse:
+@api_view(["GET"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def h2h(request: HttpRequest) -> Response:
     try:
         a = int(request.GET.get('a') or '0')
         b = int(request.GET.get('b') or '0')
@@ -430,11 +459,13 @@ def h2h(request: HttpRequest) -> JsonResponse:
             'team1_avg_before': avg1,
             'team2_avg_before': avg2,
         })
-    return JsonResponse({'a': a, 'b': b, 'matches': res})
+    return Response({'a': a, 'b': b, 'matches': res})
 
 
-@require_GET
-def player_relations(request: HttpRequest, player_id: int) -> JsonResponse:
+@api_view(["GET"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def player_relations(request: HttpRequest, player_id: int) -> Response:
     # Собираем только те матчи, которые фигурируют в PlayerRatingHistory игрока
     from apps.players.models import PlayerRatingHistory
     hist = list(
@@ -462,11 +493,13 @@ def player_relations(request: HttpRequest, player_id: int) -> JsonResponse:
                 partner_counts[pid] = partner_counts.get(pid, 0) + 1
             opponents.update([pid for pid in ids1 if pid])
     partners_list = [{'id': pid, 'count': partner_counts.get(pid, 0)} for pid in sorted(partners)]
-    return JsonResponse({'player_id': player_id, 'opponents': sorted(opponents), 'partners': partners_list})
+    return Response({'player_id': player_id, 'opponents': sorted(opponents), 'partners': partners_list})
 
 
-@require_GET
-def player_top_wins(request: HttpRequest, player_id: int) -> JsonResponse:
+@api_view(["GET"])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def player_top_wins(request: HttpRequest, player_id: int) -> Response:
     # Топ-5 побед по per-match дельте из истории
     from apps.players.models import PlayerRatingHistory
     top = list(
@@ -494,4 +527,4 @@ def player_top_wins(request: HttpRequest, player_id: int) -> JsonResponse:
             'partner': partner,
             'score': score,
         })
-    return JsonResponse({'player_id': player_id, 'wins': data})
+    return Response({'player_id': player_id, 'wins': data})

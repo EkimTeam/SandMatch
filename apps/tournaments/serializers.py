@@ -2,6 +2,7 @@ from rest_framework import serializers
 from apps.players.models import Player
 from apps.teams.models import Team
 from apps.matches.models import Match, MatchSet
+from apps.accounts.permissions import IsTournamentCreatorOrAdminForDeletion
 from .models import Tournament, TournamentEntry, SetFormat, SchedulePattern, Ruleset
 
 
@@ -177,6 +178,8 @@ class TournamentSerializer(serializers.ModelSerializer):
     group_schedule_patterns = serializers.SerializerMethodField()
     king_calculation_mode = serializers.CharField(read_only=True)
     ruleset = serializers.SerializerMethodField()
+    organizer_name = serializers.SerializerMethodField()
+    can_delete = serializers.SerializerMethodField()
 
     class Meta:
         model = Tournament
@@ -202,6 +205,8 @@ class TournamentSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
             "ruleset",
+            "organizer_name",
+            "can_delete",
         ]
 
     def get_participants_count(self, obj: Tournament) -> int:
@@ -270,6 +275,24 @@ class TournamentSerializer(serializers.ModelSerializer):
             }
         except Exception:
             return None
+
+    def get_organizer_name(self, obj: Tournament) -> str:
+        user = getattr(obj, "created_by", None)
+        if not user:
+            return ""
+        full_name = f"{user.last_name} {user.first_name}".strip()
+        return full_name or getattr(user, "username", "")
+
+    def get_can_delete(self, obj: Tournament) -> bool:
+        request = self.context.get("request") if hasattr(self, "context") else None
+        user = getattr(request, "user", None) if request is not None else None
+        if not user or not getattr(user, "is_authenticated", False):
+            return False
+        try:
+            perm = IsTournamentCreatorOrAdminForDeletion()
+            return bool(perm.has_object_permission(request, self, obj))
+        except Exception:
+            return False
 
 
 class SchedulePatternSerializer(serializers.ModelSerializer):

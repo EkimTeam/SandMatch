@@ -11,10 +11,15 @@ import { MatchActionDialog } from '../components/MatchActionDialog';
 import { MatchScoreModal } from '../components/MatchScoreModal';
 import FreeFormatScoreModal from '../components/FreeFormatScoreModal';
 import '../styles/knockout-dragdrop.css';
+import { useAuth } from '../context/AuthContext';
 
 export const KnockoutPage: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const role = user?.role;
+  const canManageStructure = role === 'ADMIN' || role === 'ORGANIZER';
+  const canManageMatches = canManageStructure || role === 'REFEREE';
   const [searchParams, setSearchParams] = useSearchParams();
   const tournamentId = useMemo(() => Number(id), [id]);
 
@@ -30,6 +35,7 @@ export const KnockoutPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const exportRef = useRef<HTMLDivElement | null>(null);
   const bracketExportRef = useRef<HTMLDivElement | null>(null);
+  const canDeleteTournament = !!(tMeta && (tMeta as any).can_delete);
 
   // Состояние для Drag & Drop
   const [dragDropState, setDragDropState] = useState<DragDropState>({
@@ -256,7 +262,8 @@ export const KnockoutPage: React.FC = () => {
           id: p.id,
           name: p.name,
           teamId: p.team_id,
-          isInBracket: false // будет обновлено при проверке слотов
+          isInBracket: false, // будет обновлено при проверке слотов
+          currentRating: typeof p.rating === 'number' ? p.rating : undefined,
         }))
         .sort((a, b) => a.name.localeCompare(b.name, 'ru')); // Сортировка по имени
       
@@ -264,7 +271,7 @@ export const KnockoutPage: React.FC = () => {
     } catch (error) {
       console.error('Failed to load participants:', error);
     }
-  }, [tournamentId]);
+  }, [tournamentId, canManageStructure]);
 
   // Инициализация drop slots при загрузке сетки
   useEffect(() => {
@@ -345,35 +352,59 @@ export const KnockoutPage: React.FC = () => {
   }, [data, byePositions]);
 
   useEffect(() => {
-    // загрузим метаданные турнира для шапки
     (async () => {
       if (!tournamentId) return;
+
+      // 1. Загружаем метаданные турнира для шапки и проверки прав доступа
       try {
-        const resp = await fetch(`/api/tournaments/${tournamentId}/`);
-        if (resp.ok) {
-          const j = await resp.json();
-          setTMeta(j);
+        const { data } = await api.get(`/tournaments/${tournamentId}/`);
+        setTMeta(data);
+      } catch (e: any) {
+        const status = e?.response?.status;
+        if (!user && status === 403) {
+          setError('Завершённые турниры доступны только зарегистрированным пользователям. Пожалуйста, войдите в систему.');
+        } else {
+          setError(e?.response?.data?.error || 'Ошибка загрузки турнира');
         }
-      } catch {}
-    })();
-    loadParticipants();
-    // Если bracketId не задан в URL — попробуем создать/получить его автоматически
-    (async () => {
-      if (!tournamentId) return;
+        return; // не продолжаем загрузку сетки/участников
+      }
+
+      // 2. Загрузка участников (read-only для REGISTERED/гостей)
+      await loadParticipants();
+
+      // 3. Определяем/создаём bracketId
       if (!bracketId) {
         try {
-          const resp = await tournamentApi.createKnockoutBracket(tournamentId, { size: 8, has_third_place: true });
-          const bid = resp?.bracket?.id;
-          if (bid) {
-            setBracketId(bid);
-            setSearchParams(prev => {
-              const sp = new URLSearchParams(prev);
-              sp.set('bracket', String(bid));
-              return sp;
-            }, { replace: true });
+          if (canManageStructure) {
+            // Организатор / админ: можем создать (или получить существующую) сетку
+            const resp = await tournamentApi.createKnockoutBracket(tournamentId, { size: 8, has_third_place: true });
+            const bid = resp?.bracket?.id;
+            if (bid) {
+              setBracketId(bid);
+              setSearchParams(prev => {
+                const sp = new URLSearchParams(prev);
+                sp.set('bracket', String(bid));
+                return sp;
+              }, { replace: true });
+            }
+          } else {
+            // REGISTERED / гость / REFEREE: только пытаемся получить уже существующую сетку
+            const b = await tournamentApi.getDefaultBracket(tournamentId);
+            if (b && b.id) {
+              setBracketId(b.id);
+              setSearchParams(prev => {
+                const sp = new URLSearchParams(prev);
+                sp.set('bracket', String(b.id));
+                return sp;
+              }, { replace: true });
+            } else {
+              setError('Сетка плей-офф ещё не создана организатором.');
+              return;
+            }
           }
         } catch (e: any) {
           setError(e?.response?.data?.error || 'Не удалось получить сетку');
+          return;
         }
       } else {
         // bracketId уже есть в URL
@@ -383,9 +414,11 @@ export const KnockoutPage: React.FC = () => {
           return sp;
         }, { replace: true });
       }
+
+      // 4. Загружаем сетку
       await loadDraw();
     })();
-  }, [loadDraw, bracketId, tournamentId, loadParticipants]);
+  }, [loadDraw, bracketId, tournamentId, loadParticipants, canManageStructure, setSearchParams, user]);
 
   // createBracket/demos удалены — управление сетками теперь через бэк/модалку создания турнира
   // demoCreateSeed8 удалена
@@ -396,6 +429,7 @@ export const KnockoutPage: React.FC = () => {
     slot: 'team_1' | 'team_2',
     participant: DraggableParticipant
   ) => {
+    if (!canManageStructure) return;
     // Блокировка для завершённых турниров
     if (tMeta?.status === 'completed') return;
     
@@ -477,7 +511,7 @@ export const KnockoutPage: React.FC = () => {
       });
       alert('Не удалось добавить участника в сетку');
     }
-  }, [tournamentId, bracketId, dragDropState.dropSlots]);
+  }, [tournamentId, bracketId, dragDropState.dropSlots, canManageStructure]);
 
   const handleRemoveFromSlot = useCallback(async (
     matchId: number,
@@ -525,6 +559,7 @@ export const KnockoutPage: React.FC = () => {
   }, [tournamentId, bracketId, dragDropState.dropSlots]);
 
   const handleRemoveParticipant = useCallback(async (participantId: number) => {
+    if (!canManageStructure) return;
     if (!tournamentId) return;
     
     try {
@@ -545,8 +580,9 @@ export const KnockoutPage: React.FC = () => {
   }, [tournamentId]);
 
   const handleAddParticipant = useCallback(() => {
+    if (!canManageStructure) return;
     setPickerOpen(true);
-  }, []);
+  }, [canManageStructure]);
 
   const handleParticipantSaved = useCallback(async () => {
     // Перезагрузить участников после добавления
@@ -584,6 +620,7 @@ export const KnockoutPage: React.FC = () => {
   }, [dragDropState.participants]);
 
   const handleAutoSeed = useCallback(async () => {
+    if (!canManageStructure) return;
     if (!tournamentId || !bracketId) return;
     try {
       await tournamentApi.seedBracket(tournamentId, bracketId);
@@ -593,7 +630,7 @@ export const KnockoutPage: React.FC = () => {
       console.error('Failed to auto seed:', error);
       alert('Не удалось выполнить автопосев');
     }
-  }, [tournamentId, bracketId, loadDraw, loadParticipants]);
+  }, [tournamentId, bracketId, loadDraw, loadParticipants, canManageStructure]);
 
   const canAddMoreParticipants = useMemo(() => {
     return dragDropState.participants.length < (tMeta?.planned_participants || 32);
@@ -622,6 +659,7 @@ export const KnockoutPage: React.FC = () => {
 
   // Обработчик фиксации участников
   const handleLockParticipants = useCallback(async (locked: boolean) => {
+    if (!canManageStructure) return;
     // Блокировка для завершённых турниров
     if (tMeta?.status === 'completed') return;
     
@@ -680,9 +718,10 @@ export const KnockoutPage: React.FC = () => {
         alert('Не удалось снять фиксацию участников');
       }
     }
-  }, [tournamentId, bracketId, dragDropState.dropSlots, loadDraw]);
+  }, [tournamentId, bracketId, dragDropState.dropSlots, loadDraw, canManageStructure]);
 
   const handleMatchClick = useCallback((matchId: number) => {
+    if (!canManageMatches) return;
     // Блокировка для завершённых турниров
     if (tMeta?.status === 'completed') return;
     
@@ -701,9 +740,10 @@ export const KnockoutPage: React.FC = () => {
       matchStatus: m.status as 'scheduled' | 'live' | 'completed',
       matchTitle: `${m.team_1?.name || 'TBD'} vs ${m.team_2?.name || 'TBD'}`
     });
-  }, [data, dragDropState.isSelectionLocked, tMeta]);
+  }, [data, dragDropState.isSelectionLocked, tMeta, canManageMatches]);
 
   const handleStartMatch = useCallback(async () => {
+    if (!canManageMatches) return;
     // Блокировка для завершённых турниров
     if (tMeta?.status === 'completed') return;
     
@@ -716,9 +756,10 @@ export const KnockoutPage: React.FC = () => {
       console.error('Failed to start match:', error);
       alert('Не удалось начать матч');
     }
-  }, [tournamentId, matchActionDialog.matchId, loadDraw, tMeta]);
+  }, [tournamentId, matchActionDialog.matchId, loadDraw, tMeta, canManageMatches]);
 
   const handleCancelMatch = useCallback(async () => {
+    if (!canManageMatches) return;
     // Блокировка для завершённых турниров
     if (tMeta?.status === 'completed') return;
     
@@ -737,9 +778,10 @@ export const KnockoutPage: React.FC = () => {
       console.error('Failed to cancel match:', error);
       alert('Не удалось отменить матч');
     }
-  }, [tournamentId, matchActionDialog.matchId, matchActionDialog.matchStatus, loadDraw, tMeta]);
+  }, [tournamentId, matchActionDialog.matchId, matchActionDialog.matchStatus, loadDraw, tMeta, canManageMatches]);
 
   const handleEnterScore = useCallback(() => {
+    if (!canManageMatches) return;
     // Блокировка для завершённых турниров
     if (tMeta?.status === 'completed') return;
     
@@ -756,7 +798,7 @@ export const KnockoutPage: React.FC = () => {
       team1: { id: m.team_1.id, name: m.team_1.full_name || m.team_1.name },
       team2: { id: m.team_2.id, name: m.team_2.full_name || m.team_2.name },
     });
-  }, [data, matchActionDialog.matchId, tMeta]);
+  }, [data, matchActionDialog.matchId, tMeta, canManageMatches]);
   
   const handleSaveScore = useCallback(async (
     winnerTeamId: number,
@@ -789,9 +831,27 @@ export const KnockoutPage: React.FC = () => {
       {/* Шапка */}
       <div style={{ position: 'relative', padding: '16px 16px 8px 16px', borderBottom: '1px solid #eee', background: '#fff' }}>
         <img src="/static/img/logo.png" alt="BeachPlay" style={{ position: 'absolute', right: 16, top: 16, height: 40 }} />
-        <div style={{ fontSize: 24, fontWeight: 700 }}>{tMeta?.name || 'Плей-офф'}</div>
-        <div className="meta" style={{ color: '#666' }}>
-          {tMeta ? `${formatDate(tMeta.date)} • ${tMeta.get_system_display} • ${tMeta.get_participant_mode_display}` : ''}
+        {/* 1-я строка: имя турнира */}
+        <div style={{ fontSize: 24, fontWeight: 700, marginBottom: 2 }}>{tMeta?.name || 'Плей-офф'}</div>
+        {/* 2-я строка: дата, система, формат, организатор */}
+        <div className="meta" style={{ color: '#666', fontSize: 14 }}>
+          {tMeta && (
+            <>
+              {tMeta.date ? formatDate(tMeta.date) : ''}
+              {tMeta.get_system_display ? ` • ${tMeta.get_system_display}` : ''}
+              {tMeta.get_participant_mode_display ? ` • ${tMeta.get_participant_mode_display}` : ''}
+              {tMeta.organizer_name ? ` • Организатор: ${tMeta.organizer_name}` : ''}
+            </>
+          )}
+        </div>
+        {/* 3-я строка: статус и число участников */}
+        <div style={{ color: '#777', fontSize: 12, marginTop: 2 }}>
+          {tMeta && (
+            <>
+              Статус: {tMeta.status === 'created' ? 'Создан' : tMeta.status === 'active' ? 'Активен' : 'Завершён'}
+              {typeof tMeta.participants_count === 'number' ? ` • Участников: ${tMeta.participants_count}` : ''}
+            </>
+          )}
         </div>
       </div>
 
@@ -823,17 +883,19 @@ export const KnockoutPage: React.FC = () => {
               {showFullNames ? 'Отображаемое имя' : 'ФИО показать'}
             </button>
             
-            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: ((dragDropState.isSelectionLocked || !canAddMoreParticipants) && tMeta?.status !== 'completed') ? 'pointer' : 'not-allowed', opacity: ((dragDropState.isSelectionLocked || !canAddMoreParticipants) && tMeta?.status !== 'completed') ? 1 : 0.5 }}>
-                <input
-                  type="checkbox"
-                  checked={dragDropState.isSelectionLocked}
-                  disabled={tMeta?.status === 'completed' || (canAddMoreParticipants && !dragDropState.isSelectionLocked)}
-                  onChange={(e) => handleLockParticipants(e.target.checked)}
-                />
-                Зафиксировать участников
-              </label>
-            </div>
+            {canManageStructure && (
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: (tMeta?.status === 'completed' || (canAddMoreParticipants && !dragDropState.isSelectionLocked)) ? 'not-allowed' : 'pointer', opacity: (tMeta?.status === 'completed' || (canAddMoreParticipants && !dragDropState.isSelectionLocked)) ? 0.6 : 1 }}>
+                  <input
+                    type="checkbox"
+                    checked={dragDropState.isSelectionLocked}
+                    disabled={tMeta?.status === 'completed' || (canAddMoreParticipants && !dragDropState.isSelectionLocked)}
+                    onChange={(e) => handleLockParticipants(e.target.checked)}
+                  />
+                  Зафиксировать участников
+                </label>
+              </div>
+            )}
           </div>
 
           {loading && <div>Загрузка...</div>}
@@ -950,12 +1012,12 @@ export const KnockoutPage: React.FC = () => {
 
       {/* Нижние общие кнопки */}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-start', padding: '16px', borderTop: '1px solid #eee' }} data-export-exclude="true">
-        {tMeta?.status !== 'completed' && (
+        {canManageStructure && tMeta?.status !== 'completed' && (
           <button className="btn" disabled={saving || !tMeta} onClick={async () => {
             if (!tMeta) return;
             setSaving(true);
             try {
-              await fetch(`/api/tournaments/${tMeta.id}/complete/`, { method: 'POST' });
+              await tournamentApi.complete(tMeta.id);
               alert('Турнир завершён');
               // Перенаправить на страницу списка турниров
               window.location.href = '/tournaments';
@@ -967,21 +1029,25 @@ export const KnockoutPage: React.FC = () => {
             }
           }}>Завершить турнир</button>
         )}
-        <button className="btn" disabled={saving || !tMeta} onClick={async () => {
-          if (!tMeta || !window.confirm(`Удалить турнир "${tMeta.name}"?`)) return;
-          setSaving(true);
-          try {
-            await fetch(`/api/tournaments/${tMeta.id}/`, { method: 'DELETE' });
-            alert('Турнир удалён');
-            window.location.href = '/tournaments';
-          } catch (e) {
-            console.error(e);
-            alert('Ошибка удаления');
-          } finally {
-            setSaving(false);
-          }
-        }} style={{ background: '#dc3545', borderColor: '#dc3545' }}>Удалить турнир</button>
-        <button className="btn" disabled={saving} onClick={handleShare}>Поделиться</button>
+        {canDeleteTournament && (
+          <button className="btn" disabled={saving || !tMeta} onClick={async () => {
+            if (!tMeta || !canDeleteTournament || !window.confirm(`Удалить турнир "${tMeta.name}"?`)) return;
+            setSaving(true);
+            try {
+              await tournamentApi.delete(tMeta.id);
+              alert('Турнир удалён');
+              window.location.href = '/tournaments';
+            } catch (e) {
+              console.error(e);
+              alert('Ошибка удаления');
+            } finally {
+              setSaving(false);
+            }
+          }} style={{ background: '#dc3545', borderColor: '#dc3545' }}>Удалить турнир</button>
+        )}
+        {role !== 'REFEREE' && (
+          <button className="btn" disabled={saving} onClick={handleShare}>Поделиться</button>
+        )}
       </div>
 
       {/* Контейнер для экспорта: скрыт на странице, показывается только при экспорте */}

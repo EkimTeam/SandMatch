@@ -4,6 +4,7 @@ import { formatDate } from '../services/date';
 import { Link } from 'react-router-dom';
 import { NewTournamentModal } from '../components/NewTournamentModal';
 import { TournamentFiltersModal, TournamentFilters } from '../components/TournamentFiltersModal';
+import { useAuth } from '../context/AuthContext';
 
 interface TournamentOverviewItem {
   id: number;
@@ -14,12 +15,16 @@ interface TournamentOverviewItem {
   status: string;
   get_system_display: string;
   get_participant_mode_display: string;
+  organizer_name?: string;
 }
 
 interface SetFormat { id: number; name: string; }
 interface Ruleset { id: number; name: string; }
 
 export const TournamentListPage: React.FC = () => {
+  const { user } = useAuth();
+  const canCreateTournament = user && (user.role === 'ADMIN' || user.role === 'ORGANIZER');
+  const isRefereeOnly = user?.role === 'REFEREE';
   const [activeTournaments, setActiveTournaments] = useState<TournamentOverviewItem[]>([]);
   const [historyTournaments, setHistoryTournaments] = useState<TournamentOverviewItem[]>([]);
   const [setFormats, setSetFormats] = useState<SetFormat[]>([]);
@@ -30,8 +35,8 @@ export const TournamentListPage: React.FC = () => {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [historyOffset, setHistoryOffset] = useState(0);
   const [historyHasMore, setHistoryHasMore] = useState(false);
-  const [historyTotal, setHistoryTotal] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [historyTotal, setHistoryTotal] = useState(0);
   const [filters, setFilters] = useState<TournamentFilters>({
     name: '',
     system: '',
@@ -57,16 +62,15 @@ export const TournamentListPage: React.FC = () => {
         history_offset: offset.toString(),
         history_limit: '20',
       });
-      
+
       // Добавляем фильтры
       if (filters.name) params.append('name', filters.name);
       if (filters.system) params.append('system', filters.system);
       if (filters.participant_mode) params.append('participant_mode', filters.participant_mode);
       if (filters.date_from) params.append('date_from', filters.date_from);
       if (filters.date_to) params.append('date_to', filters.date_to);
-      
-      const resp = await fetch(`/api/tournaments/overview/?${params.toString()}`);
-      const data = await resp.json();
+
+      const { data } = await api.get(`/tournaments/overview/?${params.toString()}`);
       const byDateDesc = (a: TournamentOverviewItem, b: TournamentOverviewItem) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
       
       setActiveTournaments((data.active || []).slice().sort(byDateDesc));
@@ -91,13 +95,11 @@ export const TournamentListPage: React.FC = () => {
   const loadDictionaries = async () => {
     try {
       const [fResp, rResp] = await Promise.all([
-        fetch('/api/set-formats/'),
-        fetch('/api/rulesets/'),
+        api.get('/set-formats/'),
+        api.get('/rulesets/'),
       ]);
-      const fJson = await fResp.json();
-      const rJson = await rResp.json();
-      setSetFormats(fJson.set_formats || []);
-      setRulesets(rJson.rulesets || []);
+      setSetFormats(fResp.data.set_formats || []);
+      setRulesets(rResp.data.rulesets || []);
     } catch (e) {
       console.error('Ошибка загрузки справочников:', e);
     }
@@ -141,6 +143,17 @@ export const TournamentListPage: React.FC = () => {
 
   const hasActiveFilters = filters.name || filters.system || filters.participant_mode || filters.date_from || filters.date_to;
 
+  if (isRefereeOnly) {
+    return (
+      <div className="card">
+        Этот список турниров недоступен для роли судьи. Пожалуйста, используйте раздел
+        {' '}
+        <span className="font-semibold">"Судейство"</span>
+        {' '}для перехода к вашим турнирам.
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="flex justify-between items-center gap-3 flex-wrap mb-6">
@@ -173,7 +186,9 @@ export const TournamentListPage: React.FC = () => {
               Список
             </button>
           </div>
-          <button className="btn" onClick={() => setShowModal(true)}>Начать новый турнир</button>
+          {canCreateTournament && (
+            <button className="btn" onClick={() => setShowModal(true)}>Начать новый турнир</button>
+          )}
         </div>
       </div>
 
@@ -184,7 +199,10 @@ export const TournamentListPage: React.FC = () => {
             {activeTournaments.map(t => (
               <div key={t.id} className="card">
                 <h3>{t.name}</h3>
-                <div className="meta">{formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}</div>
+                <div className="meta">
+                  {formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}
+                  {t.organizer_name ? ` • Организатор: ${t.organizer_name}` : ''}
+                </div>
                 
                 <div style={{ marginTop: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   <Link
@@ -210,8 +228,10 @@ export const TournamentListPage: React.FC = () => {
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <div>
                     <h3 className="m-0">{t.name}</h3>
-                    <div className="meta">{formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}</div>
-                    
+                    <div className="meta">
+                      {formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}
+                      {t.organizer_name ? ` • Организатор: ${t.organizer_name}` : ''}
+                    </div>
                   </div>
                   <Link
                     to={
@@ -247,7 +267,10 @@ export const TournamentListPage: React.FC = () => {
               {historyTournaments.map(t => (
                 <div key={t.id} className="card">
                   <h3>{t.name}</h3>
-                  <div className="meta">{formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}</div>
+                  <div className="meta">
+                    {formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}
+                    {t.organizer_name ? ` • Организатор: ${t.organizer_name}` : ''}
+                  </div>
                   <div style={{ marginTop: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                     <Link
                       to={
@@ -270,7 +293,10 @@ export const TournamentListPage: React.FC = () => {
                   <div className="flex items-center justify-between gap-3 flex-wrap">
                     <div>
                       <h3 className="m-0">{t.name}</h3>
-                      <div className="meta">{formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}</div>
+                      <div className="meta">
+                        {formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}
+                        {t.organizer_name ? ` • Организатор: ${t.organizer_name}` : ''}
+                      </div>
                     </div>
                     <Link to={t.system === 'round_robin' ? `/tournaments/${t.id}/round_robin` : `/tournaments/${t.id}/knockout`} className="btn">Открыть</Link>
                   </div>
@@ -293,10 +319,14 @@ export const TournamentListPage: React.FC = () => {
           )}
         </>
       ) : (
-        <div className="card">История пока пуста</div>
+        <div className="card">
+          {user
+            ? 'История пока пуста'
+            : 'Зарегистрируйтесь, чтобы видеть завершенные турниры'}
+        </div>
       )}
 
-      {showModal && (
+      {canCreateTournament && showModal && (
         <NewTournamentModal
           setFormats={setFormats}
           rulesets={rulesets}
