@@ -16,6 +16,9 @@ interface TournamentOverviewItem {
   get_system_display: string;
   get_participant_mode_display: string;
   organizer_name?: string;
+  participants_count?: number;
+  avg_rating_bp?: number | null;
+  planned_participants?: number | null;
 }
 
 interface SetFormat { id: number; name: string; }
@@ -143,6 +146,36 @@ export const TournamentListPage: React.FC = () => {
 
   const hasActiveFilters = filters.name || filters.system || filters.participant_mode || filters.date_from || filters.date_to;
 
+  const renderStatus = (status: string) => {
+    if (status === 'created') return 'Регистрация';
+    if (status === 'active') return 'Идёт';
+    if (status === 'completed') return 'Завершён';
+    return status;
+  };
+
+  const renderCardMetaExtra = (t: TournamentOverviewItem) => {
+    const avg = typeof t.avg_rating_bp === 'number' ? Math.round(t.avg_rating_bp) : null;
+    return (
+      <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 11, color: '#555' }}>
+        <span>Статус: {renderStatus(t.status)}</span>
+        <span
+          style={{
+            fontWeight: 600,
+            color: '#111827',
+            fontSize: 11,
+            padding: '2px 8px',
+            borderRadius: 9999,
+            border: '1px solid #e5e7eb',
+            background: '#f9fafb',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          ср.BP: {avg !== null ? avg : '-'}
+        </span>
+      </div>
+    );
+  };
+
   if (isRefereeOnly) {
     return (
       <div className="card">
@@ -200,9 +233,23 @@ export const TournamentListPage: React.FC = () => {
               <div key={t.id} className="card">
                 <h3>{t.name}</h3>
                 <div className="meta">
-                  {formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}
+                  {formatDate(t.date)} • {t.get_system_display}
+                  {' • '}
+                  <span
+                    aria-label={t.participant_mode === 'doubles' ? 'Парный турнир' : 'Индивидуальный турнир'}
+                    title={t.participant_mode === 'doubles' ? 'Парный турнир' : 'Индивидуальный турнир'}
+                  >
+                    {t.participant_mode === 'doubles' ? '👥' : '👤'}
+                  </span>
+                  {' '}
+                  <span style={{ fontSize: 13 }}>
+                    {t.status === 'created'
+                      ? `${typeof t.participants_count === 'number' ? t.participants_count : 0}/${typeof t.planned_participants === 'number' ? t.planned_participants : '-'}`
+                      : (typeof t.participants_count === 'number' ? t.participants_count : '-')}
+                  </span>
                   {t.organizer_name ? ` • Организатор: ${t.organizer_name}` : ''}
                 </div>
+                {renderCardMetaExtra(t)}
                 
                 <div style={{ marginTop: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   <Link
@@ -229,9 +276,23 @@ export const TournamentListPage: React.FC = () => {
                   <div>
                     <h3 className="m-0">{t.name}</h3>
                     <div className="meta">
-                      {formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}
+                      {formatDate(t.date)} • {t.get_system_display}
+                      {' • '}
+                      <span
+                        aria-label={t.participant_mode === 'doubles' ? 'Парный турнир' : 'Индивидуальный турнир'}
+                        title={t.participant_mode === 'doubles' ? 'Парный турнир' : 'Индивидуальный турнир'}
+                      >
+                        {t.participant_mode === 'doubles' ? '👥' : '👤'}
+                      </span>
+                      {' '}
+                      <span style={{ fontSize: 13 }}>
+                        {t.status === 'created'
+                          ? `${typeof t.participants_count === 'number' ? t.participants_count : 0}/${typeof t.planned_participants === 'number' ? t.planned_participants : '-'}`
+                          : (typeof t.participants_count === 'number' ? t.participants_count : '-')}
+                      </span>
                       {t.organizer_name ? ` • Организатор: ${t.organizer_name}` : ''}
                     </div>
+                    {renderCardMetaExtra(t)}
                   </div>
                   <Link
                     to={
@@ -268,9 +329,23 @@ export const TournamentListPage: React.FC = () => {
                 <div key={t.id} className="card">
                   <h3>{t.name}</h3>
                   <div className="meta">
-                    {formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}
+                    {formatDate(t.date)} • {t.get_system_display}
+                    {' • '}
+                    <span
+                      aria-label={t.participant_mode === 'doubles' ? 'Парный турнир' : 'Индивидуальный турнир'}
+                      title={t.participant_mode === 'doubles' ? 'Парный турнир' : 'Индивидуальный турнир'}
+                    >
+                      {t.participant_mode === 'doubles' ? '👥' : '👤'}
+                    </span>
+                    {' '}
+                    <span style={{ fontSize: 13 }}>
+                      {t.status === 'created'
+                        ? `${typeof t.participants_count === 'number' ? t.participants_count : 0}/${typeof t.planned_participants === 'number' ? t.planned_participants : '-'}`
+                        : (typeof t.participants_count === 'number' ? t.participants_count : '-')}
+                    </span>
                     {t.organizer_name ? ` • Организатор: ${t.organizer_name}` : ''}
                   </div>
+                  {renderCardMetaExtra(t)}
                   <div style={{ marginTop: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                     <Link
                       to={
@@ -294,9 +369,23 @@ export const TournamentListPage: React.FC = () => {
                     <div>
                       <h3 className="m-0">{t.name}</h3>
                       <div className="meta">
-                        {formatDate(t.date)} • {t.get_system_display} • {t.get_participant_mode_display}
+                        {formatDate(t.date)} • {t.get_system_display}
+                        {' • '}
+                        <span
+                          aria-label={t.participant_mode === 'doubles' ? 'Парный турнир' : 'Индивидуальный турнир'}
+                          title={t.participant_mode === 'doubles' ? 'Парный турнир' : 'Индивидуальный турнир'}
+                        >
+                          {t.participant_mode === 'doubles' ? '👥' : '👤'}
+                        </span>
+                        {' '}
+                        <span style={{ fontSize: 13 }}>
+                          {t.status === 'created'
+                            ? `${typeof t.participants_count === 'number' ? t.participants_count : 0}/${typeof t.planned_participants === 'number' ? t.planned_participants : '-'}`
+                            : (typeof t.participants_count === 'number' ? t.participants_count : '-')}
+                        </span>
                         {t.organizer_name ? ` • Организатор: ${t.organizer_name}` : ''}
                       </div>
+                      {renderCardMetaExtra(t)}
                     </div>
                     <Link to={t.system === 'round_robin' ? `/tournaments/${t.id}/round_robin` : `/tournaments/${t.id}/knockout`} className="btn">Открыть</Link>
                   </div>

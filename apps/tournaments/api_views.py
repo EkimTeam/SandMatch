@@ -2308,6 +2308,37 @@ def tournament_list(request):
     history_has_more = (history_offset + history_limit) < history_total
 
     def serialize_t(t: Tournament):
+        # Количество участников турнира
+        participants_count = t.entries.count()
+
+        # Средний рейтинг BP по игрокам турнира (current_rating из Player)
+        from apps.players.models import Player
+
+        avg_rating = None
+        if participants_count > 0:
+            player_ids: set[int] = set()
+            for e in t.entries.select_related("team").only("team_id").all():
+                team = getattr(e, "team", None)
+                if not team:
+                    continue
+                p1_id = getattr(team, "player_1_id", None)
+                p2_id = getattr(team, "player_2_id", None)
+                if p1_id:
+                    player_ids.add(p1_id)
+                if p2_id:
+                    player_ids.add(p2_id)
+            if player_ids:
+                qs = Player.objects.filter(id__in=player_ids).only("id", "current_rating")
+                total = 0.0
+                cnt = 0
+                for p in qs:
+                    cr = getattr(p, "current_rating", None)
+                    if cr is not None:
+                        total += float(cr)
+                        cnt += 1
+                if cnt > 0:
+                    avg_rating = round(total / cnt, 1)
+
         return {
             "id": t.id,
             "name": t.name,
@@ -2317,6 +2348,9 @@ def tournament_list(request):
             "status": t.status,
             "get_system_display": t.get_system_display(),
             "get_participant_mode_display": t.get_participant_mode_display(),
+            "participants_count": participants_count,
+            "planned_participants": t.planned_participants,
+            "avg_rating_bp": avg_rating,
         }
 
     return Response({

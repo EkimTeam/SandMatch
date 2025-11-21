@@ -25,11 +25,13 @@ export const StatsPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<any | null>(null);
 
-  const load = async (opts?: { from?: string; to?: string }) => {
+  const load = async (opts?: { from?: string | null; to?: string | null }) => {
     try {
       setLoading(true);
-      const effectiveFrom = opts?.from !== undefined ? opts.from : fromDate || undefined;
-      const effectiveTo = opts?.to !== undefined ? opts.to : toDate || undefined;
+      const hasFrom = opts && Object.prototype.hasOwnProperty.call(opts, 'from');
+      const hasTo = opts && Object.prototype.hasOwnProperty.call(opts, 'to');
+      const effectiveFrom = hasFrom ? (opts!.from || undefined) : (fromDate || undefined);
+      const effectiveTo = hasTo ? (opts!.to || undefined) : (toDate || undefined);
       const res = await ratingApi.summaryStats({ from: effectiveFrom, to: effectiveTo });
       setData(res);
       // Обновляем поля дат по фактически использованному периоду
@@ -173,9 +175,12 @@ export const StatsPage: React.FC = () => {
         <button
           className="px-3 py-1 bg-gray-100 rounded"
           onClick={() => {
+            const today = new Date().toISOString().slice(0, 10);
             setFromDate('');
-            setToDate('');
-            load({ from: undefined, to: undefined });
+            setToDate(today);
+            // from не задаём, чтобы backend сам подставил минимальную дату,
+            // а to задаём как текущую дату
+            load({ from: undefined, to: today });
           }}
         >
           За весь период
