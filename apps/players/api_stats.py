@@ -193,10 +193,11 @@ def summary_stats(request: HttpRequest) -> JsonResponse:
     earliest_match = Match.objects.filter(base_match_q).order_by('tournament__date').values_list('tournament__date', flat=True).first()
 
     effective_from = request.GET.get('from') or None
-    if earliest_match is not None and d_from is not None and earliest_match > d_from.date():
-        # Если в БД нет матчей старше запрошенной даты "от",
-        # возвращаем в периоде фактическую минимальную дату турниров
-        effective_from = earliest_match.isoformat()
+    if earliest_match is not None:
+        if d_from is None or earliest_match > d_from.date():
+            # Если параметр from не задан или в БД нет матчей старше запрошенной даты "от",
+            # возвращаем в периоде фактическую минимальную дату турниров
+            effective_from = earliest_match.isoformat()
 
     return JsonResponse({
         'period': {
