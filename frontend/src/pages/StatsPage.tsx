@@ -14,6 +14,7 @@ type PlayerRow = {
   winrate: number;
   unique_partners: number;
   unique_opponents: number;
+  score?: number;
 };
 
 export const StatsPage: React.FC = () => {
@@ -24,11 +25,18 @@ export const StatsPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<any | null>(null);
 
-  const load = async () => {
+  const load = async (opts?: { from?: string; to?: string }) => {
     try {
       setLoading(true);
-      const res = await ratingApi.summaryStats({ from: fromDate || undefined, to: toDate || undefined });
+      const effectiveFrom = opts?.from !== undefined ? opts.from : fromDate || undefined;
+      const effectiveTo = opts?.to !== undefined ? opts.to : toDate || undefined;
+      const res = await ratingApi.summaryStats({ from: effectiveFrom, to: effectiveTo });
       setData(res);
+      // Обновляем поля дат по фактически использованному периоду
+      if (res?.period) {
+        if (res.period.from) setFromDate(res.period.from);
+        if (res.period.to) setToDate(res.period.to);
+      }
     } catch (e: any) {
       setError(e?.response?.data?.error || 'Не удалось загрузить статистику');
     } finally {
@@ -36,47 +44,105 @@ export const StatsPage: React.FC = () => {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    // По умолчанию: период за год до текущей даты
+    const today = new Date();
+    const to = today.toISOString().slice(0, 10);
+    const fromDateObj = new Date(today);
+    fromDateObj.setFullYear(fromDateObj.getFullYear() - 1);
+    const from = fromDateObj.toISOString().slice(0, 10);
+    setFromDate(from);
+    setToDate(to);
+    load({ from, to });
+  }, []);
 
-  const Table: React.FC<{ title: string; rows: PlayerRow[] }> = ({ title, rows }) => (
-    <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-      <div className="px-4 py-3 border-b border-gray-200 font-semibold">{title}</div>
-      <div className="overflow-auto">
-        <table className="min-w-full text-sm">
-          <thead>
-            <tr className="bg-gray-50 text-gray-600">
-              <th className="px-3 py-2 text-left">Фамилия</th>
-              <th className="px-3 py-2 text-left">Имя</th>
-              <th className="px-3 py-2 text-left">Отображаемое имя</th>
-              <th className="px-3 py-2 text-right">Турниров</th>
-              <th className="px-3 py-2 text-right">Матчей</th>
-              <th className="px-3 py-2 text-right">Побед</th>
-              <th className="px-3 py-2 text-right">Поражений</th>
-              <th className="px-3 py-2 text-right">% побед</th>
-              <th className="px-3 py-2 text-right">Уник. партнёров</th>
-              <th className="px-3 py-2 text-right">Уник. противников</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.id}>
-                <td className="px-3 py-2">{r.last_name}</td>
-                <td className="px-3 py-2">{r.first_name}</td>
-                <td className="px-3 py-2">{r.display_name}</td>
-                <td className="px-3 py-2 text-right">{r.tournaments_count}</td>
-                <td className="px-3 py-2 text-right">{r.matches_count}</td>
-                <td className="px-3 py-2 text-right">{r.wins}</td>
-                <td className="px-3 py-2 text-right">{r.losses}</td>
-                <td className="px-3 py-2 text-right">{r.winrate}%</td>
-                <td className="px-3 py-2 text-right">{r.unique_partners}</td>
-                <td className="px-3 py-2 text-right">{r.unique_opponents}</td>
+  const Table: React.FC<{ title: string; rows: PlayerRow[]; withScore?: boolean }> = ({ title, rows, withScore }) => {
+    const [showScoreTip, setShowScoreTip] = useState(false);
+
+    return (
+      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-200 font-semibold">{title}</div>
+        <div className="overflow-auto">
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 text-gray-600">
+                <th className="px-2 py-2 text-right w-8">#</th>
+                <th className="px-3 py-2 text-left">Фамилия</th>
+                <th className="px-3 py-2 text-left">Имя</th>
+                <th className="px-3 py-2 text-left">Отображаемое имя</th>
+                <th className="px-3 py-2 text-right">Турниров</th>
+                <th className="px-3 py-2 text-right">Матчей</th>
+                <th className="px-3 py-2 text-right">Побед</th>
+                <th className="px-3 py-2 text-right">Поражений</th>
+                <th className="px-3 py-2 text-right">% побед</th>
+                <th className="px-3 py-2 text-right">Уник. партнёров</th>
+                <th className="px-3 py-2 text-right">Уник. противников</th>
+                {withScore && (
+                  <th className="px-3 py-2 text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <span>Оценка</span>
+                      <span
+                        className="relative inline-block"
+                        data-export-exclude="true"
+                        onMouseEnter={() => setShowScoreTip(true)}
+                        onMouseLeave={() => setShowScoreTip(false)}
+                      >
+                        <button
+                          type="button"
+                          className="w-4 h-4 rounded-full border border-gray-400 text-[10px] leading-3 flex items-center justify-center text-gray-600 bg-white"
+                          onClick={() => setShowScoreTip(v => !v)}
+                        >
+                          ?
+                        </button>
+                        {showScoreTip && (
+                          <div
+                            className="absolute top-full right-0 mt-1 z-20 bg-white border border-gray-300 rounded shadow text-xs text-gray-800 p-2"
+                            style={{ minWidth: '18rem', maxWidth: '24rem' }}
+                          >
+                            Оценка учитывает и процент побед, и количество матчей:
+                            <br />
+                            <span>
+                              score = winrate × (1 - e
+                              <sup>-matches/20</sup>
+                              )
+                            </span>
+                            <br />
+                            где <code>winrate</code> — % побед,
+                            <br />
+                            <code>matches</code> — число матчей.
+                          </div>
+                        )}
+                      </span>
+                    </div>
+                  </th>
+                )}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((r, idx) => (
+                <tr key={r.id}>
+                  <td className="px-2 py-2 text-right text-gray-500">{idx + 1}</td>
+                  <td className="px-3 py-2">{r.last_name}</td>
+                  <td className="px-3 py-2">{r.first_name}</td>
+                  <td className="px-3 py-2">{r.display_name}</td>
+                  <td className="px-3 py-2 text-right">{r.tournaments_count}</td>
+                  <td className="px-3 py-2 text-right">{r.matches_count}</td>
+                  <td className="px-3 py-2 text-right">{r.wins}</td>
+                  <td className="px-3 py-2 text-right">{r.losses}</td>
+                  <td className="px-3 py-2 text-right">{r.winrate}%</td>
+                  <td className="px-3 py-2 text-right">{r.unique_partners}</td>
+                  <td className="px-3 py-2 text-right">{r.unique_opponents}</td>
+                  {withScore && (
+                    <td className="px-3 py-2 text-right">{typeof r.score === 'number' ? r.score.toFixed(2) : '-'}</td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   if (user?.role === 'REFEREE') {
     return (
@@ -103,8 +169,17 @@ export const StatsPage: React.FC = () => {
           <label className="block text-xs text-gray-500">До</label>
           <input type="date" className="border rounded px-2 py-1" value={toDate} onChange={e=>setToDate(e.target.value)} />
         </div>
-        <button className="px-3 py-1 bg-blue-600 text-white rounded" onClick={load}>Показать</button>
-        <button className="px-3 py-1 bg-gray-100 rounded" onClick={()=>{ setFromDate(''); setToDate(''); load(); }}>За весь период</button>
+        <button className="px-3 py-1 bg-blue-600 text-white rounded" onClick={() => load()}>Показать</button>
+        <button
+          className="px-3 py-1 bg-gray-100 rounded"
+          onClick={() => {
+            setFromDate('');
+            setToDate('');
+            load({ from: undefined, to: undefined });
+          }}
+        >
+          За весь период
+        </button>
       </div>
 
       {/* Общая статистика */}
@@ -171,7 +246,7 @@ export const StatsPage: React.FC = () => {
       </div>
 
       {/* Таблицы */}
-      <Table title="Топ-20 игроков" rows={(data?.tables?.top20_by_winrate ?? [])} />
+      <Table title="Топ-20 игроков" rows={(data?.tables?.top20_by_winrate ?? [])} withScore />
       <Table title="Самые успешные (минимум 10 матчей)" rows={(data?.tables?.top_successful_min10 ?? [])} />
       <Table title="Самые активные игроки" rows={(data?.tables?.top_active ?? [])} />
       <Table title="Игроки с наибольшим количеством партнёров" rows={(data?.tables?.top_partners ?? [])} />
