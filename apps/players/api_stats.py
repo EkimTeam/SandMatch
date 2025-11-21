@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Dict, Any, Set
 from datetime import datetime
+import math
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.http import require_GET
 from django.db.models import Q
@@ -33,7 +34,8 @@ def summary_stats(request: HttpRequest) -> JsonResponse:
     d_from = _parse_date(request.GET.get('from'))
     d_to = _parse_date(request.GET.get('to'))
 
-    match_q = Q(status=Match.Status.COMPLETED) & _date_filters(d_from, d_to)
+    base_match_q = Q(status=Match.Status.COMPLETED)
+    match_q = base_match_q & _date_filters(d_from, d_to)
 
     # Общая статистика
     matches_qs = Match.objects.filter(match_q)
@@ -158,6 +160,11 @@ def summary_stats(request: HttpRequest) -> JsonResponse:
         wins_cnt = ps['wins']
         losses_cnt = ps['losses']
         winrate = round(100.0 * wins_cnt / matches_cnt, 1) if matches_cnt > 0 else 0.0
+        # Взвешенная оценка: winrate * (1 - exp(-matches/alpha))
+        # При малом числе матчей множитель маленький, при большом стремится к 1.
+        alpha = 20.0
+        reliability = 1.0 - math.exp(-matches_cnt / alpha) if matches_cnt > 0 else 0.0
+        score = round(winrate * reliability, 2)
         p = players_map.get(pid)
         rows.append({
             'id': pid,
@@ -171,18 +178,29 @@ def summary_stats(request: HttpRequest) -> JsonResponse:
             'winrate': winrate,
             'unique_partners': len(ps['partners']),
             'unique_opponents': len(ps['opponents']),
+            'score': score,
         })
 
     # Таблицы
-    top20_by_winrate = sorted(rows, key=lambda r: (-r['winrate'], -r['matches_count']))[:20]
+    # Топ-20 по оценке: сортировка по score (winrate * надёжность), затем по количеству матчей
+    top20_by_winrate = sorted(rows, key=lambda r: (-r.get('score', 0.0), -r['matches_count']))[:20]
     successful_10_min = [r for r in rows if r['matches_count'] >= 10]
     top_successful = sorted(successful_10_min, key=lambda r: (-r['winrate'], -r['matches_count']))[:20]
     top_active = sorted(rows, key=lambda r: (-r['matches_count'], -r['winrate']))[:20]
     top_partners = sorted(rows, key=lambda r: (-r['unique_partners'], -r['matches_count']))[:20]
 
+    # Определяем фактическую минимальную дату матчей в базе
+    earliest_match = Match.objects.filter(base_match_q).order_by('tournament__date').values_list('tournament__date', flat=True).first()
+
+    effective_from = request.GET.get('from') or None
+    if earliest_match is not None and d_from is not None and earliest_match > d_from.date():
+        # Если в БД нет матчей старше запрошенной даты "от",
+        # возвращаем в периоде фактическую минимальную дату турниров
+        effective_from = earliest_match.isoformat()
+
     return JsonResponse({
         'period': {
-            'from': request.GET.get('from') or None,
+            'from': effective_from,
             'to': request.GET.get('to') or None,
         },
         'overall': {
