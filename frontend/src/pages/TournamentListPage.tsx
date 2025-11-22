@@ -19,6 +19,7 @@ interface TournamentOverviewItem {
   participants_count?: number;
   avg_rating_bp?: number | null;
   planned_participants?: number | null;
+  groups_count?: number;
 }
 
 interface SetFormat { id: number; name: string; }
@@ -246,6 +247,9 @@ export const TournamentListPage: React.FC = () => {
                     {t.status === 'created'
                       ? `${typeof t.participants_count === 'number' ? t.participants_count : 0}/${typeof t.planned_participants === 'number' ? t.planned_participants : '-'}`
                       : (typeof t.participants_count === 'number' ? t.participants_count : '-')}
+                    {((t.system === 'round_robin' || t.system === 'king') && typeof t.groups_count === 'number' && t.groups_count > 1)
+                      ? ` • групп: ${t.groups_count}`
+                      : ''}
                   </span>
                   {t.organizer_name ? ` • Организатор: ${t.organizer_name}` : ''}
                 </div>
@@ -289,6 +293,9 @@ export const TournamentListPage: React.FC = () => {
                         {t.status === 'created'
                           ? `${typeof t.participants_count === 'number' ? t.participants_count : 0}/${typeof t.planned_participants === 'number' ? t.planned_participants : '-'}`
                           : (typeof t.participants_count === 'number' ? t.participants_count : '-')}
+                        {((t.system === 'round_robin' || t.system === 'king') && typeof t.groups_count === 'number' && t.groups_count > 1)
+                          ? ` • групп: ${t.groups_count}`
+                          : ''}
                       </span>
                       {t.organizer_name ? ` • Организатор: ${t.organizer_name}` : ''}
                     </div>
@@ -342,6 +349,9 @@ export const TournamentListPage: React.FC = () => {
                       {t.status === 'created'
                         ? `${typeof t.participants_count === 'number' ? t.participants_count : 0}/${typeof t.planned_participants === 'number' ? t.planned_participants : '-'}`
                         : (typeof t.participants_count === 'number' ? t.participants_count : '-')}
+                      {((t.system === 'round_robin' || t.system === 'king') && typeof t.groups_count === 'number' && t.groups_count > 1)
+                        ? ` • групп: ${t.groups_count}`
+                        : ''}
                     </span>
                     {t.organizer_name ? ` • Организатор: ${t.organizer_name}` : ''}
                   </div>
@@ -382,6 +392,9 @@ export const TournamentListPage: React.FC = () => {
                           {t.status === 'created'
                             ? `${typeof t.participants_count === 'number' ? t.participants_count : 0}/${typeof t.planned_participants === 'number' ? t.planned_participants : '-'}`
                             : (typeof t.participants_count === 'number' ? t.participants_count : '-')}
+                          {((t.system === 'round_robin' || t.system === 'king') && typeof t.groups_count === 'number' && t.groups_count > 1)
+                            ? ` • групп: ${t.groups_count}`
+                            : ''}
                         </span>
                         {t.organizer_name ? ` • Организатор: ${t.organizer_name}` : ''}
                       </div>

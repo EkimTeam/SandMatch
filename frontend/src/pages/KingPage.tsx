@@ -148,6 +148,12 @@ export const KingPage: React.FC = () => {
       setLoading(true);
       const data = await tournamentApi.getById(tournamentId);
       setTournament(data);
+      if (!showNamesInitializedRef.current) {
+        const organizerUsername = (data as any).organizer_username;
+        const useDisplayName = organizerUsername === 'ArtemPara';
+        setShowFullName(!useDisplayName);
+        showNamesInitializedRef.current = true;
+      }
       
       // Проверка, что это действительно турнир Кинг
       if (data.system !== 'king') {
@@ -321,8 +327,9 @@ export const KingPage: React.FC = () => {
           {tournament.organizer_name ? ` • Организатор: ${tournament.organizer_name}` : ''}
         </div>
         <div className="text-xs text-gray-500 mt-1">
-          Статус: {tournament.status === 'created' ? 'Создан' : tournament.status === 'active' ? 'Активен' : 'Завершён'}
+          Статус: {tournament.status === 'created' ? 'Регистрация' : tournament.status === 'active' ? 'Идёт' : 'Завершён'}
           {typeof tournament.participants_count === 'number' ? ` • Участников: ${tournament.participants_count}` : ''}
+          {typeof tournament.groups_count === 'number' && tournament.groups_count > 1 ? ` • групп: ${tournament.groups_count}` : ''}
         </div>
       </div>
 
