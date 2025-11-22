@@ -84,6 +84,7 @@ export const TournamentDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
   const { user } = useAuth();
+  const idNum = id ? Number(id) : NaN;
   const role = user?.role;
   const canManageTournament = role === 'ADMIN' || role === 'ORGANIZER';
   const canManageMatches = canManageTournament || role === 'REFEREE';
@@ -94,6 +95,7 @@ export const TournamentDetailPage: React.FC = () => {
   const [lockParticipants, setLockParticipants] = useState(false);
   const [showTech, setShowTech] = useState<boolean[]>([]); // по группам
   const [showFullName, setShowFullName] = useState(false);
+  const showNamesInitializedRef = useRef(false);
   const [pickerOpen, setPickerOpen] = useState<null | { group: number; row: number }>(null);
   // Модалка действий по ячейке счёта
   const [scoreDialog, setScoreDialog] = useState<null | { group: number; a: number; b: number; matchId?: number; isLive: boolean; matchTeam1Id?: number | null; matchTeam2Id?: number | null }>(null);
@@ -687,6 +689,14 @@ export const TournamentDetailPage: React.FC = () => {
   useEffect(() => {
     const loadRulesets = async () => {
       try {
+        const data = await tournamentApi.getById(idNum);
+        setT(data);
+        if (!showNamesInitializedRef.current) {
+          const organizerUsername = (data as any).organizer_username;
+          const useDisplayName = organizerUsername === 'ArtemPara';
+          setShowFullName(!useDisplayName);
+          showNamesInitializedRef.current = true;
+        }
         const list = await tournamentApi.getRulesets('round_robin');
         setRrRulesets(list);
       } catch (e) {
