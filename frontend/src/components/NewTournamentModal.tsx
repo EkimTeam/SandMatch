@@ -28,6 +28,11 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
   // Дефолт для круговой по заданной строке, затем fallback на (ITF), затем на первый
   const RR_DEFAULT_NAME = '(ITF): победы > личные встречи > разница сетов между всеми > личные встречи > разница геймов между всеми > личные встречи';
   const KING_DEFAULT_NAME = 'победы > разница геймов между всеми > разница геймов между собой > личные встречи';
+  const FREE_FORMAT_NAME = 'свободный формат';
+  const defaultSetFormatId = (setFormats.find(f => f.name === FREE_FORMAT_NAME)?.id)
+    || (setFormats.find(f => f.name.toLowerCase().includes(FREE_FORMAT_NAME))?.id)
+    || setFormats[0]?.id
+    || '';
   const defaultRulesetId = (rulesets.find(r => r.name === RR_DEFAULT_NAME)?.id)
     || (rulesets.find(r => r.name.includes('ITF'))?.id)
     || rulesets[0]?.id || '';
@@ -36,7 +41,7 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
     name: '',
     date: '',
     participant_mode: 'doubles',
-    set_format_id: setFormats[0]?.id || '',
+    set_format_id: defaultSetFormatId,
     system: 'round_robin',
     ruleset_id: defaultRulesetId,
     groups_count: 1,
@@ -188,7 +193,9 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
 
   // Обновляем дефолтные значения при поступлении справочников
   useEffect(() => {
-    const sf = setFormats[0]?.id;
+    const sf = (setFormats.find(f => f.name === FREE_FORMAT_NAME)?.id)
+      || (setFormats.find(f => f.name.toLowerCase().includes(FREE_FORMAT_NAME))?.id)
+      || setFormats[0]?.id;
     const rs = (rulesets.find(r => r.name === RR_DEFAULT_NAME)?.id)
       || (rulesets.find(r => r.name.includes('ITF'))?.id)
       || rulesets[0]?.id;

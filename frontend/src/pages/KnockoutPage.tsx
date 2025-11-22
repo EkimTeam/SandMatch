@@ -869,7 +869,7 @@ export const KnockoutPage: React.FC = () => {
         <div style={{ color: '#777', fontSize: 12, marginTop: 2 }}>
           {tMeta && (
             <>
-              Статус: {tMeta.status === 'created' ? 'Создан' : tMeta.status === 'active' ? 'Активен' : 'Завершён'}
+              Статус: {tMeta.status === 'created' ? 'Регистрация' : tMeta.status === 'active' ? 'Идёт' : 'Завершён'}
               {typeof tMeta.participants_count === 'number' ? ` • Участников: ${tMeta.participants_count}` : ''}
             </>
           )}
