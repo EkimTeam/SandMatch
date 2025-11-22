@@ -77,24 +77,26 @@ export const RoundComponent: React.FC<{
               }
               return team.display_name || team.name;
             };
-            
-            // Для участников из dropSlots тоже применяем getTeamName
-            // ВАЖНО: Если m?.team_1 === null (после сброса матча), показываем placeholder
-            // Для позиций BYE в первом раунде отображаем 'BYE' вместо 'Свободное место'
+
+            // В первом раунде, пока участники не зафиксированы в матчах (m.team_1/m.team_2 пусты),
+            // отображаем имя/рейтинг из dropSlots.currentParticipant, чтобы игрок был виден сразу.
+            const slot1Name = slot1?.currentParticipant?.name || null;
+            const slot2Name = slot2?.currentParticipant?.name || null;
+
             const team1Display = m?.team_1
               ? getTeamName(m.team_1)
               : (isFirstRound && canDrop
-                  ? (isBye1 ? 'BYE' : 'Свободное место')
+                  ? (slot1Name || (isBye1 ? 'BYE' : 'Свободное место'))
                   : placeholderTop);
             const team2Display = m?.team_2
               ? getTeamName(m.team_2)
               : (isFirstRound && canDrop
-                  ? (isBye2 ? 'BYE' : 'Свободное место')
+                  ? (slot2Name || (isBye2 ? 'BYE' : 'Свободное место'))
                   : placeholderBottom);
             
-            // Для тултипов всегда используем full_name
-            const team1Tooltip = m?.team_1?.full_name || m?.team_1?.name;
-            const team2Tooltip = m?.team_2?.full_name || m?.team_2?.name;
+            // Для тултипов всегда используем full_name, а если команды ещё нет — имя из слота
+            const team1Tooltip = m?.team_1?.full_name || m?.team_1?.name || slot1Name || undefined;
+            const team2Tooltip = m?.team_2?.full_name || m?.team_2?.name || slot2Name || undefined;
             
             const winnerId = m?.winner_id ?? null;
             const status = m?.status ?? 'scheduled';
@@ -162,12 +164,16 @@ export const RoundComponent: React.FC<{
                     title={team1Tooltip || undefined}
                   >
                     <span>{team1Display}</span>
-                    {typeof (m as any)?.team_1?.rating === 'number' && (
+                    {typeof (m as any)?.team_1?.rating === 'number' || typeof slot1?.currentParticipant?.currentRating === 'number' ? (
                       <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 2 }}>
-                        <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1 }}>{(m as any).team_1.rating}</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1 }}>
+                          {typeof (m as any)?.team_1?.rating === 'number'
+                            ? (m as any).team_1.rating
+                            : slot1?.currentParticipant?.currentRating}
+                        </span>
                         <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.7 }}>BP</span>
                       </span>
-                    )}
+                    ) : null}
                   </span>
                 </div>
                 {canDrop && slot1?.currentParticipant && (
@@ -217,12 +223,16 @@ export const RoundComponent: React.FC<{
                     title={team2Tooltip || undefined}
                   >
                     <span>{team2Display}</span>
-                    {typeof (m as any)?.team_2?.rating === 'number' && (
+                    {typeof (m as any)?.team_2?.rating === 'number' || typeof slot2?.currentParticipant?.currentRating === 'number' ? (
                       <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 2 }}>
-                        <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1 }}>{(m as any).team_2.rating}</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1 }}>
+                          {typeof (m as any)?.team_2?.rating === 'number'
+                            ? (m as any).team_2.rating
+                            : slot2?.currentParticipant?.currentRating}
+                        </span>
                         <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.7 }}>BP</span>
                       </span>
-                    )}
+                    ) : null}
                   </span>
                 </div>
                 {canDrop && slot2?.currentParticipant && (
