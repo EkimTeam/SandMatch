@@ -25,6 +25,7 @@ export const KingPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [lockParticipants, setLockParticipants] = useState(false);
   const [showFullName, setShowFullName] = useState(false);
+  const showNamesInitializedRef = useRef(false);
   const [showTech, setShowTech] = useState(false);
   const [pickerOpen, setPickerOpen] = useState<null | { group: number; row: number }>(null);
   const [scoreInput, setScoreInput] = useState<null | {

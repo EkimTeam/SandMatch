@@ -179,6 +179,7 @@ class TournamentSerializer(serializers.ModelSerializer):
     king_calculation_mode = serializers.CharField(read_only=True)
     ruleset = serializers.SerializerMethodField()
     organizer_name = serializers.SerializerMethodField()
+    organizer_username = serializers.SerializerMethodField()
     can_delete = serializers.SerializerMethodField()
 
     class Meta:
@@ -206,6 +207,7 @@ class TournamentSerializer(serializers.ModelSerializer):
             "updated_at",
             "ruleset",
             "organizer_name",
+            "organizer_username",
             "can_delete",
         ]
 
@@ -282,6 +284,12 @@ class TournamentSerializer(serializers.ModelSerializer):
             return ""
         full_name = f"{user.last_name} {user.first_name}".strip()
         return full_name or getattr(user, "username", "")
+
+    def get_organizer_username(self, obj: Tournament) -> str:
+        user = getattr(obj, "created_by", None)
+        if not user:
+            return ""
+        return getattr(user, "username", "") or ""
 
     def get_can_delete(self, obj: Tournament) -> bool:
         request = self.context.get("request") if hasattr(self, "context") else None

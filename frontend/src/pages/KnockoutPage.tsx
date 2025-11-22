@@ -54,6 +54,7 @@ export const KnockoutPage: React.FC = () => {
   
   // Переключатель отображения имён (display_name vs Фамилия Имя)
   const [showFullNames, setShowFullNames] = useState(false);
+  const showNamesInitializedRef = useRef(false);
   
   // Диалог действий с матчем
   const [matchActionDialog, setMatchActionDialog] = useState<{
@@ -230,6 +231,14 @@ export const KnockoutPage: React.FC = () => {
         
         // Сохранить метаданные турнира для проверки статуса
         setTMeta(tournament);
+        // Инициализировать режим отображения имён один раз: по умолчанию ФИО,
+        // исключение — турниры организатора ArtemPara (display_name по умолчанию)
+        if (!showNamesInitializedRef.current) {
+          const organizerUsername = (tournament as any).organizer_username;
+          const useDisplayName = organizerUsername === 'ArtemPara';
+          setShowFullNames(!useDisplayName);
+          showNamesInitializedRef.current = true;
+        }
       } catch (e) {
         console.error('Failed to load tournament status:', e);
       }
@@ -483,8 +492,17 @@ export const KnockoutPage: React.FC = () => {
         return { ...prev, participants: updatedParticipants, dropSlots: updatedDropSlots };
       });
 
-      // TODO: Сохранение на бэкенде
-      // await tournamentApi.addParticipantToBracket(tournamentId, bracketId, matchId, slot, participant.id);
+      // Сохранение на бэкенде (фиксация в DrawPosition/матче)
+      await tournamentApi.addParticipantToBracket(
+        tournamentId,
+        bracketId,
+        matchId,
+        slot,
+        participant.id // это TournamentEntry.id
+      );
+
+      // Перезагрузить сетку, чтобы подтянуть актуальные данные матчей из бэкенда
+      await loadDraw();
     } catch (error) {
       console.error('Failed to add participant to bracket:', error);
       // Откат изменений
@@ -511,7 +529,7 @@ export const KnockoutPage: React.FC = () => {
       });
       alert('Не удалось добавить участника в сетку');
     }
-  }, [tournamentId, bracketId, dragDropState.dropSlots, canManageStructure]);
+  }, [tournamentId, bracketId, dragDropState.dropSlots, canManageStructure, loadDraw]);
 
   const handleRemoveFromSlot = useCallback(async (
     matchId: number,
@@ -528,10 +546,13 @@ export const KnockoutPage: React.FC = () => {
     if (!slotToClear?.currentParticipant) return;
 
     try {
-      // Отправить запрос на backend для удаления из матча
-      await api.delete(`/tournaments/${tournamentId}/brackets/${bracketId}/remove_from_slot/`, {
-        data: { match_id: matchId, slot }
-      });
+      // Отправить запрос на backend для удаления участника из слота
+      await tournamentApi.removeParticipantFromBracket(
+        tournamentId,
+        bracketId,
+        matchId,
+        slot
+      );
 
       // Перезагрузить данные сетки для синхронизации
       await loadDraw();
