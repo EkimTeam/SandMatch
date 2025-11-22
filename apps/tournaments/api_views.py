@@ -1799,12 +1799,30 @@ class TournamentViewSet(viewsets.ModelViewSet):
             
             setattr(match, slot, entry.team)
             match.save(update_fields=[slot])
-            
+
+            # Обновить DrawPosition для конкретной позиции первого раунда
+            # Позиции считаются так же, как на фронте: (order_in_round - 1) * 2 + (1/2)
             from apps.tournaments.models import DrawPosition
-            draw_pos = DrawPosition.objects.filter(bracket=bracket, entry=None).first()
-            if draw_pos:
+
+            order_in_round = match.order_in_round or 1
+            base_pos = (order_in_round - 1) * 2
+            position = base_pos + (1 if slot == 'team_1' else 2)
+
+            draw_pos, _ = DrawPosition.objects.get_or_create(
+                bracket=bracket,
+                position=position,
+                defaults={
+                    'entry': entry,
+                    'source': DrawPosition.Source.MAIN,
+                },
+            )
+            if draw_pos.entry_id != entry.id:
                 draw_pos.entry = entry
-                draw_pos.save(update_fields=['entry'])
+                # При ручном назначении сбрасываем посев, чтобы не оставлять "висячие" seed-значения
+                draw_pos.seed = None
+                if draw_pos.source == DrawPosition.Source.BYE:
+                    draw_pos.source = DrawPosition.Source.MAIN
+                draw_pos.save(update_fields=['entry', 'seed', 'source'])
             
             return Response({'ok': True})
             
@@ -1833,6 +1851,19 @@ class TournamentViewSet(viewsets.ModelViewSet):
             
             setattr(match, slot, None)
             match.save(update_fields=[slot])
+
+            # Очистить соответствующую позицию в DrawPosition, чтобы entry_id стал NULL
+            from apps.tournaments.models import DrawPosition
+
+            order_in_round = match.order_in_round or 1
+            base_pos = (order_in_round - 1) * 2
+            position = base_pos + (1 if slot == 'team_1' else 2)
+
+            DrawPosition.objects.filter(bracket=bracket, position=position).update(
+                entry=None,
+                seed=None,
+                source=DrawPosition.Source.MAIN,
+            )
             
             return Response({'ok': True})
             
