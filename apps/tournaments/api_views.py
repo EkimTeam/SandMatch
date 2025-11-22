@@ -2382,6 +2382,7 @@ def tournament_list(request):
             "participants_count": participants_count,
             "planned_participants": t.planned_participants,
             "avg_rating_bp": avg_rating,
+            "groups_count": getattr(t, "groups_count", None),
         }
 
     return Response({
