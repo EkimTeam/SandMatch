@@ -68,6 +68,7 @@ type TournamentDetail = {
   matches?: MatchDTO[];
   organizer_name?: string;
   can_delete?: boolean;
+  participants_count?: number;
 };
 
 const toRoman = (num: number) => {
@@ -758,8 +759,12 @@ export const TournamentDetailPage: React.FC = () => {
     }));
   }, [t]);
 
-  const toggleTech = (gi: number) => {
-    setShowTech((prev) => prev.map((v, i) => (i === gi ? !v : v)));
+  const toggleTech = () => {
+    setShowTech((prev) => {
+      const anyOn = prev.some(Boolean);
+      const next = !anyOn;
+      return prev.map(() => next);
+    });
   };
 
   const handleCellClick = (groupIdx: number, rowIdx: number, colIdx: number | null, type: 'participant' | 'score') => {
@@ -959,10 +964,13 @@ export const TournamentDetailPage: React.FC = () => {
             {t.get_participant_mode_display ? ` • ${t.get_participant_mode_display}` : ''}
             {t.organizer_name ? ` • Организатор: ${t.organizer_name}` : ''}
           </div>
-          {/* 3-я строка: статус и число участников */}
+          {/* 3-я строка: статус, число участников и число групп */}
           <div style={{ fontSize: 13, color: '#777', marginTop: 2 }}>
-            Статус: {t.status === 'created' ? 'Создан' : t.status === 'active' ? 'Активен' : 'Завершён'}
+            Статус: {t.status === 'created' ? 'Регистрация' : t.status === 'active' ? 'Идёт' : 'Завершён'}
             {typeof t.participants_count === 'number' ? ` • Участников: ${t.participants_count}` : ''}
+            {((t.system === 'round_robin' || t.system === 'king') && typeof (t as any).groups_count === 'number' && (t as any).groups_count > 1)
+              ? ` • групп: ${(t as any).groups_count}`
+              : ''}
           </div>
         </div>
         {/* Модалка ввода счёта - выбор между обычной и свободным форматом */}
@@ -1298,7 +1306,7 @@ export const TournamentDetailPage: React.FC = () => {
         <div key={g.idx} style={{ marginBottom: 22 }}>
           <div style={{ marginBottom: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <strong>Группа {g.idx}</strong>
-            <button data-export-exclude="true" className={`toggle ${showTech[gi] ? 'active' : ''}`} onClick={() => toggleTech(gi)}>
+            <button data-export-exclude="true" className={`toggle ${showTech[0] ? 'active' : ''}`} onClick={toggleTech}>
               Победы/Сеты/Сеты соот./Геймы соот.
             </button>
             <button data-export-exclude="true" className={`toggle ${showFullName ? 'active' : ''}`} onClick={() => setShowFullName(v => !v)}>
@@ -1356,11 +1364,11 @@ export const TournamentDetailPage: React.FC = () => {
                   {g.cols.map((i) => (
                     <th key={i} style={{ border: '1px solid #e7e7ea', padding: '6px 8px' }}>{i}</th>
                   ))}
-                  <th className={showTech[gi] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 80 }}>Победы</th>
-                  <th className={showTech[gi] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 60 }}>Сеты</th>
-                  <th className={showTech[gi] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 60 }}>Сеты<br />соот.</th>
+                  <th className={showTech[0] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 80 }}>Победы</th>
+                  <th className={showTech[0] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 60 }}>Сеты</th>
+                  <th className={showTech[0] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 60 }}>Сеты<br />соот.</th>
                   <th style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 60 }}>Геймы</th>
-                  <th className={showTech[gi] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 60 }}>Геймы<br />соот.</th>
+                  <th className={showTech[0] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 60 }}>Геймы<br />соот.</th>
                   <th style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 60 }}>Место</th>
                 </tr>
               </thead>
@@ -1470,11 +1478,11 @@ export const TournamentDetailPage: React.FC = () => {
                         </td>
                       )
                     ))}
-                    <td className={showTech[gi] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{stats.wins}</td>
-                    <td className={showTech[gi] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{stats.sets}</td>
-                    <td className={showTech[gi] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{stats.setsRatio}</td>
+                    <td className={showTech[0] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{stats.wins}</td>
+                    <td className={showTech[0] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{stats.sets}</td>
+                    <td className={showTech[0] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{stats.setsRatio}</td>
                     <td style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{stats.games}</td>
-                    <td className={showTech[gi] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{stats.gamesRatio}</td>
+                    <td className={showTech[0] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{stats.gamesRatio}</td>
                     <td style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center', fontWeight: 700 }}><strong>{toRoman(placeByRow[rIdx] || g.rows.length)}</strong></td>
                   </tr>
                 );})}
