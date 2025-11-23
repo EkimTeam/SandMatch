@@ -191,6 +191,7 @@ export const RatingPage: React.FC = () => {
               Основан на модифицированной формуле Эло. Учитывается сила соперника и формат матча. Изменения применяются после завершения турнира. Короткие форматы имеют меньший вес.
             </div>
           </div>
+          <span className="text-xs text-gray-500">(рейтинг работает и рассчитывается в тестовом режиме)</span>
         </div>
       </div>
 
@@ -229,7 +230,10 @@ export const RatingPage: React.FC = () => {
                 return (
                   <tr key={r.id} className={needsHighlight ? 'bg-yellow-50 cursor-pointer' : 'cursor-pointer'}
                       onClick={() => { setSelectedPlayerId(r.id); navigate(`/players/${r.id}`); }}>
-                    <td className="px-3 py-2 align-middle text-gray-500">{r.rank ?? (idx + 1 + (page-1)*20)}</td>
+                    <td className="px-3 py-2 align-middle text-gray-500">
+                      <span>{r.rank ?? (idx + 1 + (page-1)*20)}</span>
+                      {needsHighlight && <span className="align-super text-xs ml-0.5">*</span>}
+                    </td>
                     <td className="px-3 py-2 align-middle">{r.last_name} {r.first_name || r.display_name}</td>
                     <td className="px-3 py-2 align-middle text-right font-semibold">{Math.round(r.current_rating)}</td>
                     <td className="px-3 py-2 align-middle text-right">{r.tournaments_count}</td>
@@ -254,9 +258,10 @@ export const RatingPage: React.FC = () => {
           </table>
         </div>
         {/* пагинация */}
-        <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-between text-sm">
+        <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-between gap-3 text-sm flex-wrap">
           <div>Стр. {page} из {totalPages}</div>
-          <div className="flex items-center gap-2">
+          <div className="text-gray-500 text-xs">* игроки, которые сыграли меньше 10 матчей или 5 турниров</div>
+          <div className="flex items-center gap-2 ml-auto">
             <button disabled={page<=1} className="px-2 py-1 border rounded disabled:opacity-50" onClick={()=>setPage(p=>Math.max(1, p-1))}>Назад</button>
             <button disabled={page>=totalPages} className="px-2 py-1 border rounded disabled:opacity-50" onClick={()=>setPage(p=>Math.min(totalPages, p+1))}>Вперёд</button>
           </div>
