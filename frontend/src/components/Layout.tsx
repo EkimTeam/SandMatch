@@ -31,13 +31,11 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
 
             <button
               type="button"
-              className="md:hidden inline-flex items-center justify-center p-2 rounded-md text-gray-600 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
+              className="md:hidden inline-flex items-center justify-center px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
               aria-label="Переключить меню"
               onClick={() => setMobileOpen((prev) => !prev)}
             >
-              <span className="block w-5 h-0.5 bg-gray-800 rounded mb-1"></span>
-              <span className="block w-5 h-0.5 bg-gray-800 rounded mb-1"></span>
-              <span className="block w-5 h-0.5 bg-gray-800 rounded"></span>
+              Меню
             </button>
 
             <nav className="hidden md:flex items-center gap-3 flex-wrap">
