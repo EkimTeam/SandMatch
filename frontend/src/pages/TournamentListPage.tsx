@@ -206,18 +206,20 @@ export const TournamentListPage: React.FC = () => {
           </button>
           <div className="flex border border-gray-300 rounded-lg overflow-hidden">
             <button
-              className={`px-3 py-2 text-sm ${viewMode === 'grid' ? 'bg-gray-100' : 'bg-white'}`}
+              className={`px-3 py-2 text-sm flex items-center justify-center gap-1 ${viewMode === 'grid' ? 'bg-gray-100' : 'bg-white'}`}
               onClick={() => setViewMode('grid')}
               title="Плитка"
             >
-              Плитка
+              <span className="inline md:hidden" aria-hidden="true">▦</span>
+              <span className="hidden md:inline">Плитка</span>
             </button>
             <button
-              className={`px-3 py-2 text-sm ${viewMode === 'list' ? 'bg-gray-100' : 'bg-white'}`}
+              className={`px-3 py-2 text-sm flex items-center justify-center gap-1 ${viewMode === 'list' ? 'bg-gray-100' : 'bg-white'}`}
               onClick={() => setViewMode('list')}
               title="Список"
             >
-              Список
+              <span className="inline md:hidden" aria-hidden="true">≡</span>
+              <span className="hidden md:inline">Список</span>
             </button>
           </div>
           {canCreateTournament && (
