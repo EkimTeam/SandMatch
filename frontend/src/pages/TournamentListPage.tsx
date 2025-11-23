@@ -247,7 +247,7 @@ export const TournamentListPage: React.FC = () => {
                     {t.status === 'created'
                       ? `${typeof t.participants_count === 'number' ? t.participants_count : 0}/${typeof t.planned_participants === 'number' ? t.planned_participants : '-'}`
                       : (typeof t.participants_count === 'number' ? t.participants_count : '-')}
-                    {((t.system === 'round_robin' || t.system === 'king') && typeof t.groups_count === 'number' && t.groups_count > 1)
+                    {((t.system === 'round_robin' || t.system === 'king') && typeof t.groups_count === 'number' && t.groups_count >= 1)
                       ? ` • групп: ${t.groups_count}`
                       : ''}
                   </span>
@@ -293,7 +293,7 @@ export const TournamentListPage: React.FC = () => {
                         {t.status === 'created'
                           ? `${typeof t.participants_count === 'number' ? t.participants_count : 0}/${typeof t.planned_participants === 'number' ? t.planned_participants : '-'}`
                           : (typeof t.participants_count === 'number' ? t.participants_count : '-')}
-                        {((t.system === 'round_robin' || t.system === 'king') && typeof t.groups_count === 'number' && t.groups_count > 1)
+                        {((t.system === 'round_robin' || t.system === 'king') && typeof t.groups_count === 'number' && t.groups_count >= 1)
                           ? ` • групп: ${t.groups_count}`
                           : ''}
                       </span>
@@ -349,7 +349,7 @@ export const TournamentListPage: React.FC = () => {
                       {t.status === 'created'
                         ? `${typeof t.participants_count === 'number' ? t.participants_count : 0}/${typeof t.planned_participants === 'number' ? t.planned_participants : '-'}`
                         : (typeof t.participants_count === 'number' ? t.participants_count : '-')}
-                      {((t.system === 'round_robin' || t.system === 'king') && typeof t.groups_count === 'number' && t.groups_count > 1)
+                      {((t.system === 'round_robin' || t.system === 'king') && typeof t.groups_count === 'number' && t.groups_count >= 1)
                         ? ` • групп: ${t.groups_count}`
                         : ''}
                     </span>
@@ -392,7 +392,7 @@ export const TournamentListPage: React.FC = () => {
                           {t.status === 'created'
                             ? `${typeof t.participants_count === 'number' ? t.participants_count : 0}/${typeof t.planned_participants === 'number' ? t.planned_participants : '-'}`
                             : (typeof t.participants_count === 'number' ? t.participants_count : '-')}
-                          {((t.system === 'round_robin' || t.system === 'king') && typeof t.groups_count === 'number' && t.groups_count > 1)
+                          {((t.system === 'round_robin' || t.system === 'king') && typeof t.groups_count === 'number' && t.groups_count >= 1)
                             ? ` • групп: ${t.groups_count}`
                             : ''}
                         </span>
