@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ratingApi } from '../services/api';
+import { ratingApi, btrApi, BtrLeaderboardItem } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, Legend, ResponsiveContainer } from 'recharts';
 
@@ -26,9 +26,137 @@ interface LeaderboardRow {
   }>;
 }
 
+interface BtrCategoryData {
+  label: string;
+  results: BtrLeaderboardItem[];
+  latest_date: string;
+  total: number;
+}
+
+// Маппинг категорий BTR
+const BTR_CATEGORY_MAP: Record<string, { code: string; label: string; shortLabel: string }> = {
+  'M': { code: 'men_double', label: 'Мужчины. Парный разряд', shortLabel: 'M' },
+  'MX': { code: 'men_mixed', label: 'Мужчины. Смешанный разряд', shortLabel: 'MX' },
+  'MU': { code: 'junior_male', label: 'Юноши', shortLabel: 'MU' },
+  'W': { code: 'women_double', label: 'Женщины. Парный разряд', shortLabel: 'W' },
+  'WX': { code: 'women_mixed', label: 'Женщины. Смешанный разряд', shortLabel: 'WX' },
+  'WU': { code: 'junior_female', label: 'Девушки', shortLabel: 'WU' },
+};
+
+// Компонент для отображения таблицы BTR категории
+const BtrCategoryTable: React.FC<{
+  loading: boolean;
+  error: string | null;
+  q: string;
+  btrCategories: Record<string, BtrCategoryData>;
+  selectedBtrCategory: string;
+  page: number;
+  navigate: any;
+}> = ({ loading, error, q, btrCategories, selectedBtrCategory, page, navigate }) => {
+  // Получаем данные выбранной категории
+  const categoryCode = BTR_CATEGORY_MAP[selectedBtrCategory]?.code;
+  const categoryData = categoryCode ? btrCategories[categoryCode] : null;
+  const categoryLabel = BTR_CATEGORY_MAP[selectedBtrCategory]?.label || '';
+  
+  // Проверяем, является ли категория юниорской (MU или WU)
+  const isJuniorCategory = selectedBtrCategory === 'MU' || selectedBtrCategory === 'WU';
+  
+  // Пагинация
+  const pageSize = 20;
+  const startIdx = (page - 1) * pageSize;
+  const endIdx = startIdx + pageSize;
+  const pageResults = categoryData?.results.slice(startIdx, endIdx) || [];
+  
+  return (
+    <div>
+      {loading && (
+        <div className="py-6 text-center text-gray-500">Загрузка...</div>
+      )}
+      {error && !loading && (
+        <div className="py-6 text-center text-red-600">{error}</div>
+      )}
+      {!loading && !error && categoryData && (
+        <div>
+          <div className="bg-gray-50 px-4 py-2 border-b border-gray-200">
+            <div className="flex items-center justify-between text-sm">
+              <span className="font-medium text-gray-700">{categoryLabel}</span>
+              <span className="text-gray-500">
+                Дата обн.: {categoryData.latest_date ? new Date(categoryData.latest_date).toLocaleDateString('ru-RU') : '—'} • Всего: {categoryData.total}
+              </span>
+            </div>
+          </div>
+          <table className="min-w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 text-gray-600">
+                <th className="px-3 py-2 text-left">#</th>
+                <th className="px-3 py-2 text-left">Игрок</th>
+                <th className="px-3 py-2 text-left">РНИ</th>
+                {isJuniorCategory && <th className="px-3 py-2 text-left">Год рождения</th>}
+                <th className="px-3 py-2 text-left">Город</th>
+                <th className="px-3 py-2 text-right">Рейтинг</th>
+                <th className="px-3 py-2 text-right">Сыграно турниров за 52 нед</th>
+                <th className="px-3 py-2 text-right">Учтено турниров</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pageResults.length === 0 ? (
+                <tr>
+                  <td colSpan={isJuniorCategory ? 8 : 7} className="px-3 py-6 text-center text-gray-500">
+                    {q ? 'Игроки не найдены' : 'Нет данных'}
+                  </td>
+                </tr>
+              ) : (
+                pageResults.map((r: BtrLeaderboardItem) => {
+                  // Извлекаем год рождения из даты
+                  const birthYear = r.birth_date ? new Date(r.birth_date).getFullYear() : null;
+                  
+                  return (
+                    <tr 
+                      key={r.id} 
+                      className="cursor-pointer hover:bg-gray-50"
+                      onClick={() => navigate(`/btr/players/${r.id}`)}
+                    >
+                      <td className="px-3 py-2 align-middle text-gray-500">{r.rank}</td>
+                      <td className="px-3 py-2 align-middle">
+                        {r.last_name} {r.first_name} {r.middle_name}
+                      </td>
+                      <td className="px-3 py-2 align-middle text-gray-600">{r.rni}</td>
+                      {isJuniorCategory && (
+                        <td className="px-3 py-2 align-middle text-gray-600">
+                          {birthYear || '—'}
+                        </td>
+                      )}
+                      <td className="px-3 py-2 align-middle text-gray-600">{r.city || '—'}</td>
+                      <td className="px-3 py-2 align-middle text-right font-semibold">
+                        {Math.round(r.current_rating)}
+                      </td>
+                      <td className="px-3 py-2 align-middle text-right text-gray-600">
+                        {r.tournaments_52_weeks}
+                      </td>
+                      <td className="px-3 py-2 align-middle text-right text-gray-600">
+                        {r.tournaments_counted}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {!loading && !error && !categoryData && (
+        <div className="py-6 text-center text-gray-500">Нет данных по рейтингу BTR</div>
+      )}
+    </div>
+  );
+};
+
 export const RatingPage: React.FC = () => {
   const { user } = useAuth();
+  const [ratingType, setRatingType] = useState<'bp' | 'btr'>('bp'); // Переключатель BP/BTR
   const [rows, setRows] = useState<LeaderboardRow[]>([]);
+  const [btrCategories, setBtrCategories] = useState<Record<string, BtrCategoryData>>({});
+  const [selectedBtrCategory, setSelectedBtrCategory] = useState<string>('M'); // Выбранная категория BTR
   const [page, setPage] = useState<number>(1);
   const [totalPages, setTotalPages] = useState<number>(1);
   const [q, setQ] = useState<string>('');
@@ -49,8 +177,12 @@ export const RatingPage: React.FC = () => {
   useEffect(() => {
     const pageParam = parseInt(searchParams.get('page') || '1', 10);
     const qParam = searchParams.get('q') || '';
+    const typeParam = searchParams.get('type') as 'bp' | 'btr' || 'bp';
+    const categoryParam = searchParams.get('category') || 'M';
     setPage(Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1);
     setQ(qParam);
+    setRatingType(typeParam);
+    setSelectedBtrCategory(categoryParam);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -58,12 +190,26 @@ export const RatingPage: React.FC = () => {
     const load = async () => {
       try {
         setLoading(true);
-        const data = await ratingApi.leaderboard({ q, page, page_size: 20 });
-        setRows(data.results || []);
-        setTotalPages(data.total_pages || 1);
-        // Выберем по умолчанию первого игрока для графика
-        if (!selectedPlayerId && (data.results || []).length > 0) {
-          setSelectedPlayerId((data.results || [])[0].id);
+        setError(null);
+        
+        if (ratingType === 'bp') {
+          // Загрузка BP рейтинга
+          const data = await ratingApi.leaderboard({ q, page, page_size: 20 });
+          setRows(data.results || []);
+          setTotalPages(data.total_pages || 1);
+          // Выберем по умолчанию первого игрока для графика
+          if (!selectedPlayerId && (data.results || []).length > 0) {
+            setSelectedPlayerId((data.results || [])[0].id);
+          }
+        } else {
+          // Загрузка BTR рейтинга (все категории)
+          const data = await btrApi.leaderboard({ q });
+          setBtrCategories(data.categories || {});
+          // Вычисляем пагинацию для выбранной категории
+          const categoryCode = BTR_CATEGORY_MAP[selectedBtrCategory]?.code;
+          const categoryData = categoryCode ? data.categories[categoryCode] : null;
+          const total = categoryData?.total || 0;
+          setTotalPages(Math.ceil(total / 20) || 1);
         }
       } catch (e: any) {
         setError(e?.response?.data?.error || 'Не удалось загрузить рейтинг');
@@ -72,15 +218,17 @@ export const RatingPage: React.FC = () => {
       }
     };
     load();
-  }, [q, page]);
+  }, [q, page, ratingType]);
 
   // Сохраняем параметры в URL
   useEffect(() => {
     const params: any = {};
     if (q) params.q = q;
     if (page && page > 1) params.page = String(page);
+    if (ratingType !== 'bp') params.type = ratingType;
+    if (ratingType === 'btr' && selectedBtrCategory !== 'M') params.category = selectedBtrCategory;
     setSearchParams(params, { replace: true });
-  }, [q, page, setSearchParams]);
+  }, [q, page, ratingType, selectedBtrCategory, setSearchParams]);
 
   // Загрузка истории выбранного игрока
   useEffect(() => {
@@ -183,21 +331,68 @@ export const RatingPage: React.FC = () => {
   return (
     <div className="space-y-6">
       <div>
-        <div className="flex items-center gap-2">
-          <h1 className="text-2xl font-bold">BeachPlay-Рейтинг (BP-Рейтинг)</h1>
+        <div className="flex items-center gap-2 mb-4">
+          <h1 className="text-2xl font-bold">
+            {ratingType === 'bp' ? 'BeachPlay-Рейтинг (BP-Рейтинг)' : 'BTR-Рейтинг (BeachTennisRussia)'}
+          </h1>
           <div className="relative group">
             <button className="ml-1 inline-flex items-center justify-center w-5 h-5 rounded bg-blue-600 text-white text-[11px] font-semibold" aria-label="Методика">i</button>
             <div className="absolute z-10 hidden group-hover:block bg-white border border-gray-200 rounded shadow p-3 text-sm w-80">
-              Основан на модифицированной формуле Эло. Учитывается сила соперника и формат матча. Изменения применяются после завершения турнира. Короткие форматы имеют меньший вес.
+              {ratingType === 'bp' 
+                ? 'Основан на модифицированной формуле Эло. Учитывается сила соперника и формат матча. Изменения применяются после завершения турнира. Короткие форматы имеют меньший вес.'
+                : 'Официальный рейтинг Федерации пляжного тенниса России. Данные обновляются ежемесячно с сайта btrussia.com.'}
             </div>
           </div>
-          <span className="text-xs text-gray-500">(рейтинг работает и рассчитывается в тестовом режиме)</span>
+          {ratingType === 'bp' && <span className="text-xs text-gray-500">(рейтинг работает и рассчитывается в тестовом режиме)</span>}
+        </div>
+        
+        {/* Переключатель BP / BTR */}
+        <div className="flex gap-2 border-b border-gray-200">
+          <button
+            onClick={() => { setRatingType('bp'); setPage(1); }}
+            className={`px-4 py-2 font-medium transition-colors ${
+              ratingType === 'bp'
+                ? 'text-blue-600 border-b-2 border-blue-600'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            BP-Рейтинг
+          </button>
+          <button
+            onClick={() => { setRatingType('btr'); setPage(1); }}
+            className={`px-4 py-2 font-medium transition-colors ${
+              ratingType === 'btr'
+                ? 'text-blue-600 border-b-2 border-blue-600'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            BTR-Рейтинг
+          </button>
         </div>
       </div>
 
       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between flex-wrap gap-3">
-          <div className="font-semibold">Таблица лидеров</div>
+          <div className="flex items-center gap-3">
+            <div className="font-semibold">Классификация</div>
+            {ratingType === 'btr' && (
+              <div className="flex gap-1">
+                {Object.keys(BTR_CATEGORY_MAP).map((key) => (
+                  <button
+                    key={key}
+                    onClick={() => { setSelectedBtrCategory(key); setPage(1); }}
+                    className={`px-3 py-1 text-sm font-medium rounded transition-colors ${
+                      selectedBtrCategory === key
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    {BTR_CATEGORY_MAP[key].shortLabel}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <form className="flex items-center gap-2" onSubmit={(e)=>{ e.preventDefault(); setPage(1); setQ(q.trim()); }}>
             <input value={q} onChange={e=>setQ(e.target.value)} className="border rounded px-2 py-1 text-sm" placeholder="Поиск игрока" />
             <button type="submit" className="px-3 py-1 text-sm bg-blue-600 text-white rounded">Искать</button>
@@ -205,26 +400,27 @@ export const RatingPage: React.FC = () => {
           </form>
         </div>
         <div className="overflow-auto">
-          <table className="min-w-full text-sm">
-            <thead>
-              <tr className="bg-gray-50 text-gray-600">
-                <th className="px-3 py-2 text-left">#</th>
-                <th className="px-3 py-2 text-left">Игрок</th>
-                <th className="px-3 py-2 text-right">Рейтинг</th>
-                <th className="px-3 py-2 text-right">Турниров</th>
-                <th className="px-3 py-2 text-right">Матчей</th>
-                <th className="px-3 py-2 text-right">% побед</th>
-                <th className="px-3 py-2 text-left">Последние 5 игр</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && (
-                <tr><td colSpan={6} className="px-3 py-6 text-center text-gray-500">Загрузка...</td></tr>
-              )}
-              {error && !loading && (
-                <tr><td colSpan={6} className="px-3 py-6 text-center text-red-600">{error}</td></tr>
-              )}
-              {!loading && !error && rows.map((r, idx) => {
+          {ratingType === 'bp' ? (
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 text-gray-600">
+                  <th className="px-3 py-2 text-left">#</th>
+                  <th className="px-3 py-2 text-left">Игрок</th>
+                  <th className="px-3 py-2 text-right">Рейтинг</th>
+                  <th className="px-3 py-2 text-right">Турниров</th>
+                  <th className="px-3 py-2 text-right">Матчей</th>
+                  <th className="px-3 py-2 text-right">% побед</th>
+                  <th className="px-3 py-2 text-left">Последние 5 игр</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading && (
+                  <tr><td colSpan={7} className="px-3 py-6 text-center text-gray-500">Загрузка...</td></tr>
+                )}
+                {error && !loading && (
+                  <tr><td colSpan={7} className="px-3 py-6 text-center text-red-600">{error}</td></tr>
+                )}
+                {!loading && !error && rows.map((r, idx) => {
                 const needsHighlight = r.tournaments_count < 5 || r.matches_count < 10;
                 const placeTop = rows.length > 2 && (idx >= rows.length - 2);
                 return (
@@ -254,13 +450,26 @@ export const RatingPage: React.FC = () => {
                   <td colSpan={7} className="py-6" />
                 </tr>
               )}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          ) : (
+            <BtrCategoryTable
+              loading={loading}
+              error={error}
+              q={q}
+              btrCategories={btrCategories}
+              selectedBtrCategory={selectedBtrCategory}
+              page={page}
+              navigate={navigate}
+            />
+          )}
         </div>
         {/* пагинация */}
         <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-between gap-3 text-sm flex-wrap">
           <div>Стр. {page} из {totalPages}</div>
-          <div className="text-gray-500 text-xs">* игроки, которые сыграли меньше 10 матчей или 5 турниров</div>
+          {ratingType === 'bp' && (
+            <div className="text-gray-500 text-xs">* игроки, которые сыграли меньше 10 матчей или 5 турниров</div>
+          )}
           <div className="flex items-center gap-2 ml-auto">
             <button disabled={page<=1} className="px-2 py-1 border rounded disabled:opacity-50" onClick={()=>setPage(p=>Math.max(1, p-1))}>Назад</button>
             <button disabled={page>=totalPages} className="px-2 py-1 border rounded disabled:opacity-50" onClick={()=>setPage(p=>Math.min(totalPages, p+1))}>Вперёд</button>

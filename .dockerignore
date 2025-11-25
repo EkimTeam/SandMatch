@@ -46,3 +46,7 @@ docs/
 # Static files (will be populated by COPY from builder and collectstatic)
 static/
 staticfiles/
+
+# BTR data files (temporary, not for production image)
+btr_data/
+BTR/

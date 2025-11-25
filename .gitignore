@@ -95,3 +95,7 @@ frontend/pnpm-lock.yaml
 
 # Generated exports/previews (if any)
 exports/
+
+# BTR data files (temporary, not for git)
+btr_data/
+BTR/

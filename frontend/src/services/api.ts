@@ -676,3 +676,151 @@ export const ratingApi = {
     return data;
   }
 };
+
+// ============================================================================
+// BTR API (BeachTennisRussia)
+// ============================================================================
+
+export interface BtrPlayer {
+  id: number;
+  rni: number;
+  first_name: string;
+  last_name: string;
+  middle_name: string;
+  gender: 'male' | 'female' | null;
+  birth_date: string | null;
+  city: string;
+  country: string;
+  current_rating?: number;
+  rank?: number;
+  category?: string;
+  rating_date?: string;
+}
+
+export interface BtrLeaderboardItem {
+  id: number;
+  rni: number;
+  first_name: string;
+  last_name: string;
+  middle_name: string;
+  gender: 'male' | 'female' | null;
+  birth_date: string | null;
+  city: string;
+  current_rating: number;
+  rank: number;
+  category: string;
+  category_display: string;
+  rating_date: string;
+  tournaments_total: number;
+  tournaments_52_weeks: number;
+  tournaments_counted: number;
+}
+
+export interface BtrRatingSnapshot {
+  date: string;
+  rating: number;
+  rank: number | null;
+  tournaments_total: number;
+  tournaments_52_weeks: number;
+  tournaments_counted: number;
+}
+
+export interface BtrCategory {
+  code: string;
+  label: string;
+  players_count: number;
+  latest_date: string;
+}
+
+export interface BtrPlayerDetail {
+  player: {
+    id: number;
+    rni: number;
+    first_name: string;
+    last_name: string;
+    middle_name: string;
+    gender: 'male' | 'female' | null;
+    birth_date: string | null;
+    city: string;
+  };
+  categories: Record<string, {
+    category: string;
+    category_display: string;
+    current_rating: number;
+    rank: number | null;
+    rating_date: string;
+    tournaments_total: number;
+    tournaments_52_weeks: number;
+    tournaments_counted: number;
+  }>;
+  stats: Record<string, {
+    max_rating: number;
+    min_rating: number;
+    total_tournaments: number;
+  }>;
+}
+
+export const btrApi = {
+  // Таблица лидеров BTR (все 6 категорий)
+  leaderboard: async (params?: {
+    q?: string;
+  }): Promise<{
+    categories: Record<string, {
+      label: string;
+      results: BtrLeaderboardItem[];
+      latest_date: string;
+      total: number;
+    }>;
+  }> => {
+    const { data } = await api.get('/btr/leaderboard/', { params });
+    return data;
+  },
+
+  // Детальная информация об игроке
+  playerDetail: async (playerId: number): Promise<BtrPlayerDetail> => {
+    const { data } = await api.get(`/btr/player/${playerId}/`);
+    return data;
+  },
+
+  // Информация о BTR рейтингах по BP player ID
+  playerByBpId: async (bpPlayerId: number): Promise<{
+    btr_player_id: number | null;
+    categories: Record<string, {
+      category: string;
+      category_display: string;
+      current_rating: number;
+      rank: number | null;
+    }>;
+  }> => {
+    const { data } = await api.get(`/btr/player/by-bp-id/${bpPlayerId}/`);
+    return data;
+  },
+
+  // История рейтинга игрока
+  playerHistory: async (
+    playerId: number,
+    category?: string
+  ): Promise<{
+    player_id: number;
+    rni: number;
+    full_name: string;
+    history_by_category: Record<string, BtrRatingSnapshot[]>;
+    history: any[];
+  }> => {
+    const params = category ? { category } : {};
+    const { data } = await api.get(`/btr/player/${playerId}/history/`, { params });
+    return data;
+  },
+
+  // Краткая информация об игроке (публичный)
+  playerBrief: async (playerId: number): Promise<BtrPlayer> => {
+    const { data } = await api.get(`/btr/player/${playerId}/brief/`);
+    return data;
+  },
+
+  // Список категорий
+  categories: async (): Promise<{ categories: BtrCategory[] }> => {
+    const { data } = await api.get('/btr/categories/');
+    return data;
+  },
+};
