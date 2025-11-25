@@ -9,6 +9,7 @@ import { KnockoutPage } from './pages/KnockoutPage';
 import { KingPage } from './pages/KingPage';
 import { StatsPage } from './pages/StatsPage';
 import { PlayerCardPage } from './pages/PlayerCardPage';
+import { BTRPlayerCardPage } from './pages/BTRPlayerCardPage';
 import { PlayersH2HPage } from './pages/PlayersH2HPage';
 import { RatingPage } from './pages/RatingPage';
 import { RefereePage } from './pages/RefereePage';
@@ -49,6 +50,9 @@ function App() {
             <Route path="/tournaments/:id" element={<TournamentDetailPage />} />
             <Route path="/tournaments/:id/knockout" element={<KnockoutPage />} />
             <Route path="/tournaments/:id/king" element={<KingPage />} />
+
+            {/* BTR Player Card - публичная страница */}
+            <Route path="/btr/players/:id" element={<BTRPlayerCardPage />} />
 
             {/* Остальное требует авторизации */}
             <Route path="/referee" element={<RequireAuth><RefereePage /></RequireAuth>} />

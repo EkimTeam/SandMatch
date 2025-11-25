@@ -5,6 +5,10 @@ python-dotenv~=1.0
 djangorestframework~=3.14
 django-cors-headers~=4.3
 djangorestframework-simplejwt~=5.3
+openpyxl~=3.1
+xlrd~=2.0
+beautifulsoup4~=4.12
+requests~=2.31
 
 # Security hardening
 django-csp~=3.8
