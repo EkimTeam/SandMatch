@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { playerApi, ratingApi, Player } from '../services/api';
+import { playerApi, ratingApi, btrApi, Player } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, Legend, ResponsiveContainer, LabelList } from 'recharts';
 
@@ -24,6 +24,7 @@ export const PlayerCardPage: React.FC = () => {
   const [relations, setRelations] = useState<{ opponents: number[]; partners: Array<{ id: number; count: number }> }>({ opponents: [], partners: [] });
   const [playersList, setPlayersList] = useState<Player[]>([]);
   const [topWins, setTopWins] = useState<any[]>([]);
+  const [btrInfo, setBtrInfo] = useState<{ btr_player_id: number | null; categories: Record<string, any> } | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -38,6 +39,14 @@ export const PlayerCardPage: React.FC = () => {
         const br = await ratingApi.playerBriefs([playerId]);
         const one = (br.results || [])[0];
         setBrief(one ? { current_rating: one.current_rating, last_delta: one.last_delta, rank: one.rank } : null);
+
+        // Загружаем BTR информацию по ID BP игрока
+        try {
+          const btr = await btrApi.playerByBpId(playerId);
+          setBtrInfo(btr);
+        } catch {
+          setBtrInfo(null);
+        }
 
         if (!user) {
           const list2 = await playerApi.getList();
@@ -296,7 +305,7 @@ export const PlayerCardPage: React.FC = () => {
         <div className="flex items-baseline gap-3">
           <h1 className="text-2xl font-bold">{player ? `${player.last_name} ${player.first_name}` : `Игрок #${playerId}`}</h1>
           {brief && (
-            <div className="flex items-baseline gap-2 text-gray-700">
+            <div className="flex items-baseline gap-2 text-gray-700 flex-wrap">
               {typeof brief.rank === 'number' && (
                 <span className="text-sm text-gray-500"># {brief.rank}</span>
               )}
@@ -304,6 +313,34 @@ export const PlayerCardPage: React.FC = () => {
                 <span className="text-xl font-bold leading-none">{brief.current_rating ?? 0}</span>
                 <span className="text-[10px] leading-none opacity-70">BP</span>
               </span>
+              {btrInfo && btrInfo.btr_player_id && Object.keys(btrInfo.categories).length > 0 && (
+                <>
+                  <span className="text-gray-400">•</span>
+                  <span 
+                    className="inline-flex items-baseline gap-2 cursor-pointer hover:opacity-80"
+                    onClick={() => navigate(`/btr/players/${btrInfo.btr_player_id}`)}
+                    title="Перейти к BTR профилю"
+                  >
+                    {Object.entries(btrInfo.categories).map(([catCode, catData]) => {
+                      const shortLabel = catCode === 'men_double' ? 'M' : 
+                                        catCode === 'men_mixed' ? 'MX' : 
+                                        catCode === 'junior_male' ? 'MU' :
+                                        catCode === 'women_double' ? 'W' :
+                                        catCode === 'women_mixed' ? 'WX' :
+                                        catCode === 'junior_female' ? 'WU' : catCode;
+                      return (
+                        <span key={catCode} className="inline-flex items-baseline gap-1">
+                          <span className="text-xl font-bold leading-none">{Math.round(catData.current_rating)}</span>
+                          <span className="text-[10px] leading-none opacity-70">BTR {shortLabel}</span>
+                          {catData.rank && (
+                            <span className="text-[10px] leading-none opacity-70">(#{catData.rank})</span>
+                          )}
+                        </span>
+                      );
+                    })}
+                  </span>
+                </>
+              )}
             </div>
           )}
         </div>
