@@ -266,6 +266,13 @@ class Tournament(models.Model):
         null=True, blank=True, help_text="Планируемое число участников (для UI)")
     rating_coefficient = models.FloatField(default=1.0)
     is_rating_calc = models.BooleanField(default=True)
+    prize_fund = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Призовой фонд",
+        help_text="Наличие и размер призового фонда (например: '50000 руб', '1000 USD')"
+    )
     parent_tournament = models.ForeignKey(
         "self",
         on_delete=models.SET_NULL,

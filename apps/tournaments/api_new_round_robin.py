@@ -67,6 +67,8 @@ def new_round_robin(request):
             status=Tournament.Status.CREATED,
             group_schedule_patterns=group_schedule_patterns if group_schedule_patterns else None,
             created_by=request.user if request.user.is_authenticated else None,
+            is_rating_calc=bool(data.get("is_rating_calc", True)),
+            prize_fund=data.get("prize_fund") or None,
         )
     except Exception as e:
         return Response({"ok": False, "error": str(e)}, status=400)

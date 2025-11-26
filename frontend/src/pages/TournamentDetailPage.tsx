@@ -56,12 +56,12 @@ type MatchDTO = {
 type TournamentDetail = {
   id: number;
   name: string;
-  date: string;
-  system: string;
-  participant_mode: string;
-  groups_count: number;
-  get_system_display: string;
-  get_participant_mode_display: string;
+  date?: string;
+  system?: string;
+  participant_mode?: string;
+  groups_count?: number;
+  get_system_display?: string;
+  get_participant_mode_display?: string;
   status: string;
   participants: Participant[];
   planned_participants?: number | null;
@@ -294,11 +294,11 @@ export const TournamentDetailPage: React.FC = () => {
       // Редирект на правильную страницу в зависимости от системы турнира
       if (data.system === 'king') {
         nav(`/tournaments/${id}/king`);
-        return;
+        return false;
       }
       if (data.system === 'knockout') {
         nav(`/tournaments/${id}/knockout`);
-        return;
+        return false;
       }
       
       setT(data);
@@ -306,6 +306,8 @@ export const TournamentDetailPage: React.FC = () => {
       // Определить состояние фиксации на основе статуса турнира
       if (data.status === 'active') {
         setLockParticipants(true);
+      } else {
+        setLockParticipants(false);
       }
       return true;
     } catch (e: any) {
@@ -691,7 +693,7 @@ export const TournamentDetailPage: React.FC = () => {
     const loadRulesets = async () => {
       try {
         const data = await tournamentApi.getById(idNum);
-        setT(data);
+        setT(data as any);
         if (!showNamesInitializedRef.current) {
           const organizerUsername = (data as any).organizer_username;
           const useDisplayName = organizerUsername === 'ArtemPara';
@@ -705,7 +707,7 @@ export const TournamentDetailPage: React.FC = () => {
       }
     };
     loadRulesets();
-  }, []);
+  }, [idNum]);
 
   const handleRrRulesetChange = async (rulesetId: number) => {
     if (!t || !canManageTournament) return;
@@ -864,10 +866,26 @@ export const TournamentDetailPage: React.FC = () => {
     setSaving(true);
     try {
       await api.post(`/tournaments/${t.id}/complete/`);
-      {
-        // Перезагрузим страницу
-        const upd = { ...t, status: 'completed' as const };
-        setT(upd);
+      // Перенаправить на страницу списка турниров
+      window.location.href = '/tournaments';
+    } catch (err: any) {
+      const errorData = err?.response?.data;
+      
+      // Если есть незавершенные матчи, запросить подтверждение
+      if (errorData?.error === 'incomplete_matches') {
+        const confirmed = window.confirm(errorData.message);
+        if (confirmed) {
+          try {
+            // Повторить запрос с параметром force
+            await api.post(`/tournaments/${t.id}/complete/`, { force: true });
+            alert('Турнир завершён');
+            window.location.href = '/tournaments';
+          } catch (e2: any) {
+            alert(e2?.response?.data?.error || 'Ошибка завершения турнира');
+          }
+        }
+      } else {
+        alert(errorData?.error || 'Ошибка при завершении турнира');
       }
     } finally {
       setSaving(false);
@@ -964,13 +982,16 @@ export const TournamentDetailPage: React.FC = () => {
             {t.get_participant_mode_display ? ` • ${t.get_participant_mode_display}` : ''}
             {t.organizer_name ? ` • Организатор: ${t.organizer_name}` : ''}
           </div>
-          {/* 3-я строка: статус, число участников и число групп */}
+          {/* 3-я строка: статус, число участников, число групп, средний рейтинг, коэффициент, призовой фонд */}
           <div style={{ fontSize: 13, color: '#777', marginTop: 2 }}>
             Статус: {t.status === 'created' ? 'Регистрация' : t.status === 'active' ? 'Идёт' : 'Завершён'}
             {typeof t.participants_count === 'number' ? ` • Участников: ${t.participants_count}` : ''}
             {((t.system === 'round_robin' || t.system === 'king') && typeof (t as any).groups_count === 'number' && (t as any).groups_count > 1)
               ? ` • групп: ${(t as any).groups_count}`
               : ''}
+            {t.status !== 'created' && typeof (t as any).avg_rating_bp === 'number' ? ` • средний рейтинг турнира по BP: ${Math.round((t as any).avg_rating_bp)}` : ''}
+            {t.status !== 'created' && typeof (t as any).rating_coefficient === 'number' ? ` • Коэффициент турнира: ${(t as any).rating_coefficient.toFixed(1)}` : ''}
+            {(t as any).prize_fund ? ` • Призовой фонд: ${(t as any).prize_fund}` : ''}
           </div>
         </div>
         {/* Модалка ввода счёта - выбор между обычной и свободным форматом */}

@@ -414,8 +414,8 @@ export const tournamentApi = {
     return data;
   },
 
-  complete: async (tournamentId: number) => {
-    const { data } = await api.post(`/tournaments/${tournamentId}/complete/`);
+  complete: async (tournamentId: number, force: boolean = false) => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/complete/`, { force });
     return data;
   },
 

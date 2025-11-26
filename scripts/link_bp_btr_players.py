@@ -25,6 +25,7 @@ django.setup()
 
 from apps.players.models import Player as BpPlayer
 from apps.btr.models import BtrPlayer
+from apps.players.services.initial_rating_service import get_initial_bp_rating
 
 
 def normalize_name(first_name: str, last_name: str) -> str:
@@ -111,7 +112,25 @@ def link_bp_btr_players(dry_run: bool = False, verbose: bool = False):
             try:
                 if not dry_run:
                     bp_player.btr_player_id = btr_player.id
-                    bp_player.save(update_fields=['btr_player_id'])
+                    
+                    # Если у игрока нет рейтинга, устанавливаем стартовый из BTR
+                    if not bp_player.current_rating or bp_player.current_rating == 0:
+                        initial_rating = get_initial_bp_rating(bp_player)
+                        bp_player.current_rating = initial_rating
+                        bp_player.save(update_fields=['btr_player_id', 'current_rating'])
+                        rating_info = f", BP рейтинг: {initial_rating}"
+                    else:
+                        bp_player.save(update_fields=['btr_player_id'])
+                        rating_info = ""
+                else:
+                    # В dry-run режиме тоже показываем какой был бы рейтинг
+                    if not bp_player.current_rating or bp_player.current_rating == 0:
+                        bp_player.btr_player_id = btr_player.id  # Временно для расчета
+                        initial_rating = get_initial_bp_rating(bp_player)
+                        bp_player.btr_player_id = None  # Откатываем
+                        rating_info = f", BP рейтинг: {initial_rating}"
+                    else:
+                        rating_info = ""
                 
                 stats['linked'] += 1
                 linked_players.append({
@@ -123,7 +142,7 @@ def link_bp_btr_players(dry_run: bool = False, verbose: bool = False):
                 })
                 
                 print(f"✅ {bp_player.last_name} {bp_player.first_name} (BP #{bp_player.id}) → "
-                      f"{btr_player.last_name} {btr_player.first_name} (BTR #{btr_player.id}, РНИ: {btr_player.rni})")
+                      f"{btr_player.last_name} {btr_player.first_name} (BTR #{btr_player.id}, РНИ: {btr_player.rni}){rating_info}")
             
             except Exception as e:
                 stats['errors'] += 1

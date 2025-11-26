@@ -235,8 +235,27 @@ export const KingPage: React.FC = () => {
       setSaving(true);
       await tournamentApi.complete(tournamentId);
       await loadTournament();
+      // Перенаправить на страницу списка турниров
+      window.location.href = '/tournaments';
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Ошибка при завершении турнира');
+      const errorData = err?.response?.data;
+      
+      // Если есть незавершенные матчи, запросить подтверждение
+      if (errorData?.error === 'incomplete_matches') {
+        const confirmed = window.confirm(errorData.message);
+        if (confirmed) {
+          try {
+            // Повторить запрос с параметром force
+            await tournamentApi.complete(tournamentId, true);
+            alert('Турнир завершён');
+            window.location.href = '/tournaments';
+          } catch (e2: any) {
+            alert(e2?.response?.data?.error || 'Ошибка завершения турнира');
+          }
+        }
+      } else {
+        alert(errorData?.error || 'Ошибка при завершении турнира');
+      }
     } finally {
       setSaving(false);
     }
@@ -330,6 +349,9 @@ export const KingPage: React.FC = () => {
           Статус: {tournament.status === 'created' ? 'Регистрация' : tournament.status === 'active' ? 'Идёт' : 'Завершён'}
           {typeof tournament.participants_count === 'number' ? ` • Участников: ${tournament.participants_count}` : ''}
           {typeof tournament.groups_count === 'number' && tournament.groups_count > 1 ? ` • групп: ${tournament.groups_count}` : ''}
+          {tournament.status !== 'created' && typeof (tournament as any).avg_rating_bp === 'number' ? ` • средний рейтинг турнира по BP: ${Math.round((tournament as any).avg_rating_bp)}` : ''}
+          {tournament.status !== 'created' && typeof (tournament as any).rating_coefficient === 'number' ? ` • Коэффициент турнира: ${(tournament as any).rating_coefficient.toFixed(1)}` : ''}
+          {(tournament as any).prize_fund ? ` • Призовой фонд: ${(tournament as any).prize_fund}` : ''}
         </div>
       </div>
 

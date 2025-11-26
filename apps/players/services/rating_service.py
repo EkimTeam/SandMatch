@@ -6,6 +6,7 @@ from django.db import transaction
 from apps.players.models import Player, PlayerRatingHistory, PlayerRatingDynamic
 from apps.tournaments.models import Tournament
 from apps.matches.models import Match, MatchSet
+from apps.players.services.initial_rating_service import get_initial_bp_rating
 
 
 @dataclass
@@ -28,6 +29,14 @@ def _team_rating(p1: float, p2: Optional[float]) -> float:
 
 
 def _format_modifier(match_id: int) -> float:
+    """Рассчитывает форматный множитель на основе количества и результатов сетов.
+    
+    Правила:
+    - Один тай-брейк: 0.3
+    - Один полный сет: 1.0
+    - Несколько сетов: 1.0 + 0.1 * |diff_sets|, где diff_sets - разница выигранных сетов
+      Примеры: 2:0 → 1.2, 3:0 → 1.3, 2:1 → 1.1, 3:1 → 1.2, 1:1 → 1.0
+    """
     sets = list(MatchSet.objects.filter(match_id=match_id).order_by('index'))
     if not sets:
         return 1.0
@@ -35,7 +44,7 @@ def _format_modifier(match_id: int) -> float:
     if total_sets == 1:
         s = sets[0]
         return 0.3 if s.is_tiebreak_only else 1.0
-    # 2+ сетов: 1.0 + (N-1)*0.1 + |diff_sets|*0.1
+    # 2+ сетов: 1.0 + 0.1 * |diff_sets|
     sets_won_a = 0
     sets_won_b = 0
     for s in sets:
@@ -43,9 +52,8 @@ def _format_modifier(match_id: int) -> float:
             sets_won_a += 1
         else:
             sets_won_b += 1
-    base = 1.0 + (total_sets - 1) * 0.1
-    diff_bonus = abs(sets_won_a - sets_won_b) * 0.1
-    return base + diff_bonus
+    diff_sets = abs(sets_won_a - sets_won_b)
+    return 1.0 + diff_sets * 0.1
 
 
 @transaction.atomic
@@ -56,16 +64,26 @@ def compute_ratings_for_tournament(tournament_id: int, k_factor: float = 32.0) -
     - Пишем per-match записи в PlayerRatingHistory (значение = rating_after, reason = модификаторы)
     - Пишем агрегат в PlayerRatingDynamic
     - Обновляем Player.current_rating
+    - Применяем коэффициент турнира (rating_coefficient) к изменениям рейтинга
     """
     tournament = Tournament.objects.select_for_update().get(id=tournament_id)
     tournament_date = getattr(tournament, 'date', None)
+    tournament_coefficient = float(getattr(tournament, 'rating_coefficient', 1.0))
 
     matches = (
         Match.objects
         .filter(tournament_id=tournament_id, status=Match.Status.COMPLETED)
         .select_related('team_1', 'team_2')
+        .prefetch_related('tournament__entries')
         .order_by('id')
     )
+    
+    # Получаем все TournamentEntry для проверки is_out_of_competition
+    from apps.tournaments.models import TournamentEntry
+    entries_map = {
+        entry.team_id: entry
+        for entry in TournamentEntry.objects.filter(tournament_id=tournament_id).select_related('team')
+    }
 
     # Собираем всех вовлечённых игроков
     player_ids: set[int] = set()
@@ -77,13 +95,50 @@ def compute_ratings_for_tournament(tournament_id: int, k_factor: float = 32.0) -
 
     players_map: Dict[int, Player] = Player.objects.in_bulk(player_ids)
     # Текущие рейтинги на вход турнира
-    ratings_before: Dict[int, float] = {pid: float(p.current_rating or 0.0) for pid, p in players_map.items()}
+    # Если рейтинг = 0, определяем стартовый рейтинг по BTR или по названию турнира
+    ratings_before: Dict[int, float] = {}
+    for pid, p in players_map.items():
+        if p.current_rating and p.current_rating > 0:
+            ratings_before[pid] = float(p.current_rating)
+        else:
+            # Определяем стартовый рейтинг
+            initial_rating = get_initial_bp_rating(p, tournament)
+            ratings_before[pid] = float(initial_rating)
     # Накопленные изменения по игрокам за турнир (int)
     delta_by_player: Dict[int, int] = {pid: 0 for pid in player_ids}
     # Пер-матч журнал для записи истории: (match_id, change:int, fmt:float, opp_team_rating:float)
     per_match_records: Dict[int, List[Tuple[int, int, float, float]]] = {pid: [] for pid in player_ids}
 
     for m in matches:
+        # Проверяем, не участвуют ли команды вне зачета (is_out_of_competition)
+        team1_id = getattr(m.team_1, 'id', None) if m.team_1 else None
+        team2_id = getattr(m.team_2, 'id', None) if m.team_2 else None
+        
+        team1_entry = entries_map.get(team1_id) if team1_id else None
+        team2_entry = entries_map.get(team2_id) if team2_id else None
+        
+        # Если хотя бы одна команда вне зачета - не считаем рейтинг для этого матча
+        if (team1_entry and team1_entry.is_out_of_competition) or (team2_entry and team2_entry.is_out_of_competition):
+            # Записываем нулевые дельты для истории
+            t1_p1 = getattr(m.team_1, 'player_1_id', None) if m.team_1 else None
+            t1_p2 = getattr(m.team_1, 'player_2_id', None) if m.team_1 else None
+            t2_p1 = getattr(m.team_2, 'player_1_id', None) if m.team_2 else None
+            t2_p2 = getattr(m.team_2, 'player_2_id', None) if m.team_2 else None
+            
+            t1_r1 = ratings_before.get(t1_p1, 0.0) if t1_p1 else 0.0
+            t1_r2 = ratings_before.get(t1_p2, t1_r1) if t1_p1 else 0.0
+            t2_r1 = ratings_before.get(t2_p1, 0.0) if t2_p1 else 0.0
+            t2_r2 = ratings_before.get(t2_p2, t2_r1) if t2_p1 else 0.0
+            team1_rating = _team_rating(t1_r1, t1_p2 and t1_r2 if t1_p1 else None)
+            team2_rating = _team_rating(t2_r1, t2_p2 and t2_r2 if t2_p1 else None)
+            fmt = _format_modifier(m.id)
+            
+            for pid in filter(None, [t1_p1, t1_p2]):
+                per_match_records[pid].append((m.id, 0, fmt, team2_rating))
+            for pid in filter(None, [t2_p1, t2_p2]):
+                per_match_records[pid].append((m.id, 0, fmt, team1_rating))
+            continue
+        
         # Форматный множитель по сетам
         fmt = _format_modifier(m.id)
 
@@ -125,11 +180,12 @@ def compute_ratings_for_tournament(tournament_id: int, k_factor: float = 32.0) -
 
         actual1 = 1.0 if (m.winner_id == getattr(m, 'team_1_id', None) or m.winner_id == getattr(m.team_1, 'id', None)) else 0.0
         actual2 = 1.0 - actual1
-        reason_base = f"K={k_factor};FMT={fmt:.2f}"
+        reason_base = f"K={k_factor};FMT={fmt:.2f};COEF={tournament_coefficient:.2f}"
 
         # Изменение для игроков команды 1
         exp1 = _expected(team1_rating, team2_rating)
-        change1 = int(round(k_factor * fmt * (actual1 - exp1)))
+        # Применяем коэффициент турнира к изменению рейтинга
+        change1 = int(round(k_factor * fmt * (actual1 - exp1) * tournament_coefficient))
         for pid in filter(None, [t1_p1, t1_p2]):
             delta_by_player[pid] = int(delta_by_player.get(pid, 0)) + change1
             # Запомним per-match запись (match_id, delta:int, fmt, opp_team_rating)
@@ -137,7 +193,8 @@ def compute_ratings_for_tournament(tournament_id: int, k_factor: float = 32.0) -
 
         # Изменение для игроков команды 2
         exp2 = _expected(team2_rating, team1_rating)
-        change2 = int(round(k_factor * fmt * (actual2 - exp2)))
+        # Применяем коэффициент турнира к изменению рейтинга
+        change2 = int(round(k_factor * fmt * (actual2 - exp2) * tournament_coefficient))
         for pid in filter(None, [t2_p1, t2_p2]):
             delta_by_player[pid] = int(delta_by_player.get(pid, 0)) + change2
             per_match_records[pid].append((m.id, change2, fmt, team1_rating))

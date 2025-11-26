@@ -20,6 +20,8 @@ interface TournamentOverviewItem {
   avg_rating_bp?: number | null;
   planned_participants?: number | null;
   groups_count?: number;
+  rating_coefficient?: number | null;
+  prize_fund?: string | null;
 }
 
 interface SetFormat { id: number; name: string; }
@@ -156,23 +158,65 @@ export const TournamentListPage: React.FC = () => {
 
   const renderCardMetaExtra = (t: TournamentOverviewItem) => {
     const avg = typeof t.avg_rating_bp === 'number' ? Math.round(t.avg_rating_bp) : null;
+    const coef = typeof t.rating_coefficient === 'number' ? t.rating_coefficient.toFixed(1) : null;
+    const prize = t.prize_fund ? t.prize_fund.trim() : null;
+    
+    // Для турниров в статусе "created" не показываем коэффициент и средний рейтинг
+    const showRatingInfo = t.status !== 'created';
+    
     return (
-      <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 11, color: '#555' }}>
+      <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 11, color: '#555', flexWrap: 'wrap' }}>
         <span>Статус: {renderStatus(t.status)}</span>
-        <span
-          style={{
-            fontWeight: 600,
-            color: '#111827',
-            fontSize: 11,
-            padding: '2px 8px',
-            borderRadius: 9999,
-            border: '1px solid #e5e7eb',
-            background: '#f9fafb',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          ср.BP: {avg !== null ? avg : '-'}
-        </span>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {showRatingInfo && avg !== null && (
+            <span
+              style={{
+                fontWeight: 600,
+                color: '#111827',
+                fontSize: 11,
+                padding: '2px 8px',
+                borderRadius: 9999,
+                border: '1px solid #e5e7eb',
+                background: '#f9fafb',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              ср. рейтинг: {avg}
+            </span>
+          )}
+          {showRatingInfo && coef !== null && (
+            <span
+              style={{
+                fontWeight: 600,
+                color: '#111827',
+                fontSize: 11,
+                padding: '2px 8px',
+                borderRadius: 9999,
+                border: '1px solid #e5e7eb',
+                background: '#f9fafb',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              COEF: {coef}
+            </span>
+          )}
+          {prize && (
+            <span
+              style={{
+                fontWeight: 600,
+                color: '#111827',
+                fontSize: 11,
+                padding: '2px 8px',
+                borderRadius: 9999,
+                border: '1px solid #e5e7eb',
+                background: '#f9fafb',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              $={prize}
+            </span>
+          )}
+        </div>
       </div>
     );
   };
