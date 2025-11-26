@@ -20,7 +20,7 @@ import os
 import sys
 import django
 from datetime import datetime
-from typing import Dict, Set
+from typing import Dict
 
 # Настройка Django окружения
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -28,13 +28,13 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'sandmatch.settings.base')
 django.setup()
 
 from django.db import transaction
-from django.db.models import Q, Count
+from django.db.models import Q
 from apps.players.models import Player, PlayerRatingDynamic, PlayerRatingHistory
 from apps.tournaments.models import Tournament
 from apps.matches.models import Match
 from apps.players.services.initial_rating_service import get_initial_bp_rating
 from apps.players.services import rating_service
-from apps.tournaments.services.coefficient_calculator import auto_calculate_and_save_coefficient
+from apps.tournaments.services.coefficient_calculator import auto_calculate_tournament_coefficient
 
 
 def print_section(title: str):
@@ -85,7 +85,7 @@ def step2_set_btr_based_ratings(dry_run: bool = False):
     
     # Находим всех игроков с BTR связью
     players_with_btr = Player.objects.filter(
-        btr_id__isnull=False
+        btr_player_id__isnull=False
     ).select_related('btr_player')
     
     print(f"📊 Найдено игроков с BTR связью: {players_with_btr.count()}")
@@ -93,10 +93,27 @@ def step2_set_btr_based_ratings(dry_run: bool = False):
     if dry_run:
         print("\n⚠️  DRY RUN: Рейтинги НЕ будут установлены")
         print("\nПримеры установки рейтинга:")
+        
+        from apps.btr.models import BtrRatingSnapshot
+        
         for player in players_with_btr[:10]:
-            btr_rating = player.btr_player.rating if player.btr_player else None
+            # Получаем максимальный BTR рейтинг из категорий men_double и women_double
+            btr_rating = None
+            if player.btr_player:
+                relevant_categories = ['men_double', 'women_double']
+                max_rating = 0
+                for category in relevant_categories:
+                    latest_snapshot = BtrRatingSnapshot.objects.filter(
+                        player=player.btr_player,
+                        category=category
+                    ).order_by('-rating_date').first()
+                    if latest_snapshot and latest_snapshot.rating_value > max_rating:
+                        max_rating = latest_snapshot.rating_value
+                btr_rating = max_rating if max_rating > 0 else None
+            
             bp_rating = get_initial_bp_rating(player, None)
             print(f"   {player.last_name} {player.first_name}: BTR={btr_rating} → BP={bp_rating}")
+        
         if players_with_btr.count() > 10:
             print(f"   ... и ещё {players_with_btr.count() - 10} игроков")
         return
@@ -125,7 +142,7 @@ def step3_set_non_btr_ratings(dry_run: bool = False):
     
     # Находим игроков без BTR связи, которые играли хотя бы один матч
     players_without_btr = Player.objects.filter(
-        Q(btr_id__isnull=True) | Q(btr_id=0)
+        Q(btr_player_id__isnull=True) | Q(btr_player_id=0)
     ).filter(
         current_rating=0
     )
@@ -237,9 +254,8 @@ def step4_recalculate_tournament_coefficients(dry_run: bool = False):
     for tournament in tournaments:
         try:
             old_coef = tournament.rating_coefficient
-            auto_calculate_and_save_coefficient(tournament)
+            new_coef = auto_calculate_tournament_coefficient(tournament.id)
             tournament.refresh_from_db()
-            new_coef = tournament.rating_coefficient
             
             updated_count += 1
             
