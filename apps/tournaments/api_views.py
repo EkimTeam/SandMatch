@@ -766,6 +766,14 @@ class TournamentViewSet(viewsets.ModelViewSet):
             
             # Изменить статус турнира на active при фиксации
             if tournament.status == Tournament.Status.CREATED:
+                # Автоматически рассчитываем коэффициент турнира
+                from apps.tournaments.services.coefficient_calculator import auto_calculate_tournament_coefficient
+                try:
+                    auto_calculate_tournament_coefficient(tournament.id)
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).warning(f"Не удалось рассчитать коэффициент турнира {tournament.id}: {e}")
+                
                 tournament.status = Tournament.Status.ACTIVE
                 tournament.save(update_fields=['status'])
             
@@ -830,6 +838,14 @@ class TournamentViewSet(viewsets.ModelViewSet):
             
             # Изменить статус турнира на active
             if tournament.status == Tournament.Status.CREATED:
+                # Автоматически рассчитываем коэффициент турнира
+                from apps.tournaments.services.coefficient_calculator import auto_calculate_tournament_coefficient
+                try:
+                    auto_calculate_tournament_coefficient(tournament.id)
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).warning(f"Не удалось рассчитать коэффициент турнира {tournament.id}: {e}")
+                
                 tournament.status = Tournament.Status.ACTIVE
                 tournament.save(update_fields=['status'])
             
@@ -1573,6 +1589,8 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 planned_participants=int(data.get("participants") or 0) or None,
                 brackets_count=brackets_count,
                 status=Tournament.Status.CREATED,
+                is_rating_calc=bool(data.get("is_rating_calc", True)),
+                prize_fund=data.get("prize_fund") or None,
             )
         except Exception as e:
             return Response({"ok": False, "error": str(e)}, status=400)
@@ -2129,6 +2147,14 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 
                 # Изменить статус турнира на active при фиксации
                 if tournament.status == Tournament.Status.CREATED:
+                    # Автоматически рассчитываем коэффициент турнира
+                    from apps.tournaments.services.coefficient_calculator import auto_calculate_tournament_coefficient
+                    try:
+                        auto_calculate_tournament_coefficient(tournament.id)
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).warning(f"Не удалось рассчитать коэффициент турнира {tournament.id}: {e}")
+                    
                     tournament.status = Tournament.Status.ACTIVE
                     tournament.save(update_fields=['status'])
                 
@@ -2383,6 +2409,8 @@ def tournament_list(request):
             "planned_participants": t.planned_participants,
             "avg_rating_bp": avg_rating,
             "groups_count": getattr(t, "groups_count", None),
+            "rating_coefficient": t.rating_coefficient,
+            "prize_fund": t.prize_fund,
         }
 
     return Response({
@@ -2450,53 +2478,75 @@ def rulesets_list(request):
 def tournament_complete(request, pk: int):
     """Завершить турнир и выполнить расчёт рейтинга по его матчам.
 
-    Дополнительно: если у участвующих игроков стартовый рейтинг = 0, установить его по методике:
-    - Если в названии турнира есть 'HARD' (без учёта регистра) → 1100
-    - Если в названии турнира есть 'MEDIUM' → 900
-    - Иначе → 1000
+    Логика:
+    0. Проверить все ли матчи завершены. Если есть незавершенные - вернуть предупреждение.
+    1. Установить начальные рейтинги игрокам с рейтингом=0 или NULL.
+    2. Проверить нужно ли считать рейтинг (is_rating_calc).
+    3. Рассчитать рейтинг с учетом is_out_of_competition.
+    4. Завершить турнир.
     """
     t = get_object_or_404(Tournament, pk=pk)
-    # Защита от повторного завершения и двойного расчёта
+    
+    from apps.players.models import PlayerRatingDynamic, Player
+    from apps.matches.models import Match
+    from apps.players.services.initial_rating_service import get_initial_bp_rating
+    
+    # Если турнир уже завершен, удаляем старые данные рейтинга для пересчета
     if t.status == Tournament.Status.COMPLETED:
-        return Response({"ok": False, "error": "Турнир уже завершён"}, status=400)
-    from apps.players.models import PlayerRatingDynamic
-    if PlayerRatingDynamic.objects.filter(tournament_id=t.id).exists():
-        return Response({"ok": False, "error": "Рейтинг для этого турнира уже рассчитан"}, status=400)
+        # Удаляем старые записи рейтинга для пересчета
+        PlayerRatingDynamic.objects.filter(tournament_id=t.id).delete()
+        from apps.players.models import PlayerRatingHistory
+        PlayerRatingHistory.objects.filter(tournament_id=t.id).delete()
+    
+    # 0. Проверка незавершенных матчей
+    total_matches = Match.objects.filter(tournament_id=t.id).count()
+    completed_matches = Match.objects.filter(tournament_id=t.id, status=Match.Status.COMPLETED).count()
+    
+    # Если есть незавершенные матчи, проверяем параметр force
+    if completed_matches < total_matches:
+        force = request.data.get('force', False)
+        if not force:
+            return Response({
+                "ok": False,
+                "error": "incomplete_matches",
+                "message": "Пока ещё не все матчи в турнире сыграны. Вы всё равно хотите завершить турнир?",
+                "completed": completed_matches,
+                "total": total_matches
+            }, status=400)
+    
     with transaction.atomic():
-        # Установим стартовые рейтинги новым игрокам (current_rating == 0), участвовавшим в турнире
-        name_lc = (t.name or '').lower()
-        if 'hard' in name_lc:
-            start_rating = 1100
-        elif 'medium' in name_lc:
-            start_rating = 900
-        else:
-            start_rating = 1000
-
-        # Соберём игроков из завершённых матчей турнира
-        from apps.matches.models import Match
-        matches = (
-            Match.objects
-            .filter(tournament_id=t.id, status=Match.Status.COMPLETED)
-            .select_related('team_1', 'team_2')
-        )
+        # 1. Установить начальные рейтинги игрокам с рейтингом=0 или NULL
+        # Соберём всех игроков, участвовавших в турнире (из всех матчей)
+        all_matches = Match.objects.filter(tournament_id=t.id).select_related('team_1', 'team_2')
         player_ids: set[int] = set()
-        for m in matches:
+        for m in all_matches:
             for pid in [getattr(m.team_1, 'player_1_id', None), getattr(m.team_1, 'player_2_id', None),
                         getattr(m.team_2, 'player_1_id', None), getattr(m.team_2, 'player_2_id', None)]:
                 if pid:
                     player_ids.add(pid)
-
+        
+        # Установим начальные рейтинги для игроков с рейтингом 0 или NULL
         if player_ids:
-            from apps.players.models import Player
-            Player.objects.filter(id__in=player_ids, current_rating=0).update(current_rating=start_rating)
-
-        # Выполним расчёт рейтинга по турниру
-        rating_service.compute_ratings_for_tournament(t.id)
-
-        # Переведём турнир в статус COMPLETED
+            players_to_update = Player.objects.filter(
+                id__in=player_ids
+            ).filter(
+                Q(current_rating__isnull=True) | Q(current_rating=0)
+            )
+            
+            for player in players_to_update:
+                initial_rating = get_initial_bp_rating(player, t)
+                player.current_rating = initial_rating
+                player.save(update_fields=['current_rating'])
+        
+        # 2. Проверить нужно ли считать рейтинг для этого турнира
+        if t.is_rating_calc:
+            # 3. Выполним расчёт рейтинга по турниру с учетом is_out_of_competition
+            rating_service.compute_ratings_for_tournament(t.id)
+        
+        # 4. Переведём турнир в статус COMPLETED
         t.status = Tournament.Status.COMPLETED
-        t.save(update_fields=["status"]) 
-
+        t.save(update_fields=["status"])
+    
     return Response({"ok": True})
 
 

@@ -865,12 +865,15 @@ export const KnockoutPage: React.FC = () => {
             </>
           )}
         </div>
-        {/* 3-я строка: статус и число участников */}
+        {/* 3-я строка: статус, число участников, средний рейтинг, коэффициент, призовой фонд */}
         <div style={{ color: '#777', fontSize: 12, marginTop: 2 }}>
           {tMeta && (
             <>
               Статус: {tMeta.status === 'created' ? 'Регистрация' : tMeta.status === 'active' ? 'Идёт' : 'Завершён'}
               {typeof tMeta.participants_count === 'number' ? ` • Участников: ${tMeta.participants_count}` : ''}
+              {tMeta.status !== 'created' && typeof tMeta.avg_rating_bp === 'number' ? ` • средний рейтинг турнира по BP: ${Math.round(tMeta.avg_rating_bp)}` : ''}
+              {tMeta.status !== 'created' && typeof tMeta.rating_coefficient === 'number' ? ` • Коэффициент турнира: ${tMeta.rating_coefficient.toFixed(1)}` : ''}
+              {tMeta.prize_fund ? ` • Призовой фонд: ${tMeta.prize_fund}` : ''}
             </>
           )}
         </div>
@@ -1042,9 +1045,27 @@ export const KnockoutPage: React.FC = () => {
               alert('Турнир завершён');
               // Перенаправить на страницу списка турниров
               window.location.href = '/tournaments';
-            } catch (e) {
+            } catch (e: any) {
               console.error(e);
-              alert('Ошибка завершения турнира');
+              const errorData = e?.response?.data;
+              
+              // Если есть незавершенные матчи, запросить подтверждение
+              if (errorData?.error === 'incomplete_matches') {
+                const confirmed = window.confirm(errorData.message);
+                if (confirmed) {
+                  try {
+                    // Повторить запрос с параметром force
+                    await tournamentApi.complete(tMeta.id, true);
+                    alert('Турнир завершён');
+                    window.location.href = '/tournaments';
+                  } catch (e2: any) {
+                    console.error(e2);
+                    alert(e2?.response?.data?.error || 'Ошибка завершения турнира');
+                  }
+                }
+              } else {
+                alert(errorData?.error || 'Ошибка завершения турнира');
+              }
             } finally {
               setSaving(false);
             }

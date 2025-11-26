@@ -59,6 +59,8 @@ def new_knockout(request):
                 planned_participants=planned_participants,
                 status=Tournament.Status.CREATED,
                 created_by=request.user if request.user.is_authenticated else None,
+                is_rating_calc=bool(data.get("is_rating_calc", True)),
+                prize_fund=data.get("prize_fund") or None,
             )
 
             # размер сетки на одну сетку: ближайшая степень двойки >= ceil(planned_participants / brackets_count)

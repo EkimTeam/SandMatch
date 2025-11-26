@@ -57,8 +57,8 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.WARNING("Файлы не найдены на сайте"))
                 return
 
-            # Сортируем по дате (новые первые)
-            available_files.sort(key=lambda x: x[2], reverse=True)
+            # Сортируем по дате (старые первые)
+            available_files.sort(key=lambda x: x[2], reverse=False)
 
             self.stdout.write(self.style.SUCCESS(f"Найдено {len(available_files)} файлов на сайте\n"))
 

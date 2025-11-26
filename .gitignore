@@ -98,4 +98,4 @@ exports/
 
 # BTR data files (temporary, not for git)
 btr_data/
-/BTR/
+BTR/

@@ -181,6 +181,9 @@ class TournamentSerializer(serializers.ModelSerializer):
     organizer_name = serializers.SerializerMethodField()
     organizer_username = serializers.SerializerMethodField()
     can_delete = serializers.SerializerMethodField()
+    avg_rating_bp = serializers.SerializerMethodField()
+    rating_coefficient = serializers.FloatField(read_only=True)
+    prize_fund = serializers.CharField(read_only=True, allow_blank=True, allow_null=True)
 
     class Meta:
         model = Tournament
@@ -209,6 +212,9 @@ class TournamentSerializer(serializers.ModelSerializer):
             "organizer_name",
             "organizer_username",
             "can_delete",
+            "avg_rating_bp",
+            "rating_coefficient",
+            "prize_fund",
         ]
 
     def get_participants_count(self, obj: Tournament) -> int:
@@ -301,6 +307,44 @@ class TournamentSerializer(serializers.ModelSerializer):
             return bool(perm.has_object_permission(request, self, obj))
         except Exception:
             return False
+
+    def get_avg_rating_bp(self, obj: Tournament):
+        """Рассчитывает средний BP рейтинг участников турнира"""
+        from apps.players.models import Player
+        
+        participants_count = obj.entries.count()
+        if participants_count == 0:
+            return None
+        
+        # Собираем ID всех игроков
+        player_ids = set()
+        for e in obj.entries.select_related("team").only("team_id").all():
+            team = getattr(e, "team", None)
+            if not team:
+                continue
+            p1_id = getattr(team, "player_1_id", None)
+            p2_id = getattr(team, "player_2_id", None)
+            if p1_id:
+                player_ids.add(p1_id)
+            if p2_id:
+                player_ids.add(p2_id)
+        
+        if not player_ids:
+            return None
+        
+        # Рассчитываем средний рейтинг
+        qs = Player.objects.filter(id__in=player_ids).only("id", "current_rating")
+        total = 0.0
+        cnt = 0
+        for p in qs:
+            cr = getattr(p, "current_rating", None)
+            if cr is not None:
+                total += float(cr)
+                cnt += 1
+        
+        if cnt > 0:
+            return round(total / cnt, 1)
+        return None
 
 
 class SchedulePatternSerializer(serializers.ModelSerializer):

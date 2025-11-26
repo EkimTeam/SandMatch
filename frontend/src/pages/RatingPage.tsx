@@ -51,8 +51,9 @@ const BtrCategoryTable: React.FC<{
   btrCategories: Record<string, BtrCategoryData>;
   selectedBtrCategory: string;
   page: number;
+  pageSize: number;
   navigate: any;
-}> = ({ loading, error, q, btrCategories, selectedBtrCategory, page, navigate }) => {
+}> = ({ loading, error, q, btrCategories, selectedBtrCategory, page, pageSize, navigate }) => {
   // Получаем данные выбранной категории
   const categoryCode = BTR_CATEGORY_MAP[selectedBtrCategory]?.code;
   const categoryData = categoryCode ? btrCategories[categoryCode] : null;
@@ -62,7 +63,6 @@ const BtrCategoryTable: React.FC<{
   const isJuniorCategory = selectedBtrCategory === 'MU' || selectedBtrCategory === 'WU';
   
   // Пагинация
-  const pageSize = 20;
   const startIdx = (page - 1) * pageSize;
   const endIdx = startIdx + pageSize;
   const pageResults = categoryData?.results.slice(startIdx, endIdx) || [];
@@ -159,6 +159,7 @@ export const RatingPage: React.FC = () => {
   const [selectedBtrCategory, setSelectedBtrCategory] = useState<string>('M'); // Выбранная категория BTR
   const [page, setPage] = useState<number>(1);
   const [totalPages, setTotalPages] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(20);
   const [q, setQ] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -176,10 +177,12 @@ export const RatingPage: React.FC = () => {
   // Инициализация из URL
   useEffect(() => {
     const pageParam = parseInt(searchParams.get('page') || '1', 10);
+    const pageSizeParam = parseInt(searchParams.get('page_size') || '20', 10);
     const qParam = searchParams.get('q') || '';
     const typeParam = searchParams.get('type') as 'bp' | 'btr' || 'bp';
     const categoryParam = searchParams.get('category') || 'M';
     setPage(Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1);
+    setPageSize([20, 40, 60].includes(pageSizeParam) ? pageSizeParam : 20);
     setQ(qParam);
     setRatingType(typeParam);
     setSelectedBtrCategory(categoryParam);
@@ -194,7 +197,7 @@ export const RatingPage: React.FC = () => {
         
         if (ratingType === 'bp') {
           // Загрузка BP рейтинга
-          const data = await ratingApi.leaderboard({ q, page, page_size: 20 });
+          const data = await ratingApi.leaderboard({ q, page, page_size: pageSize });
           setRows(data.results || []);
           setTotalPages(data.total_pages || 1);
           // Выберем по умолчанию первого игрока для графика
@@ -209,7 +212,7 @@ export const RatingPage: React.FC = () => {
           const categoryCode = BTR_CATEGORY_MAP[selectedBtrCategory]?.code;
           const categoryData = categoryCode ? data.categories[categoryCode] : null;
           const total = categoryData?.total || 0;
-          setTotalPages(Math.ceil(total / 20) || 1);
+          setTotalPages(Math.ceil(total / pageSize) || 1);
         }
       } catch (e: any) {
         setError(e?.response?.data?.error || 'Не удалось загрузить рейтинг');
@@ -218,17 +221,18 @@ export const RatingPage: React.FC = () => {
       }
     };
     load();
-  }, [q, page, ratingType]);
+  }, [q, page, pageSize, ratingType, selectedBtrCategory]);
 
   // Сохраняем параметры в URL
   useEffect(() => {
     const params: any = {};
     if (q) params.q = q;
     if (page && page > 1) params.page = String(page);
+    if (pageSize !== 20) params.page_size = String(pageSize);
     if (ratingType !== 'bp') params.type = ratingType;
     if (ratingType === 'btr' && selectedBtrCategory !== 'M') params.category = selectedBtrCategory;
     setSearchParams(params, { replace: true });
-  }, [q, page, ratingType, selectedBtrCategory, setSearchParams]);
+  }, [q, page, pageSize, ratingType, selectedBtrCategory, setSearchParams]);
 
   // Загрузка истории выбранного игрока
   useEffect(() => {
@@ -460,13 +464,33 @@ export const RatingPage: React.FC = () => {
               btrCategories={btrCategories}
               selectedBtrCategory={selectedBtrCategory}
               page={page}
+              pageSize={pageSize}
               navigate={navigate}
             />
           )}
         </div>
         {/* пагинация */}
         <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-between gap-3 text-sm flex-wrap">
-          <div>Стр. {page} из {totalPages}</div>
+          <div className="flex items-center gap-3">
+            <div>Стр. {page} из {totalPages}</div>
+            <div className="flex items-center gap-2">
+              <label htmlFor="pageSize" className="text-gray-600">Показывать:</label>
+              <select
+                id="pageSize"
+                value={pageSize}
+                onChange={(e) => {
+                  const newSize = parseInt(e.target.value, 10);
+                  setPageSize(newSize);
+                  setPage(1); // Сбрасываем на первую страницу
+                }}
+                className="px-2 py-1 border rounded bg-white text-sm"
+              >
+                <option value="20">20</option>
+                <option value="40">40</option>
+                <option value="60">60</option>
+              </select>
+            </div>
+          </div>
           {ratingType === 'bp' && (
             <div className="text-gray-500 text-xs">* игроки, которые сыграли меньше 10 матчей или 5 турниров</div>
           )}
@@ -476,6 +500,246 @@ export const RatingPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Формула расчета рейтинга BP */}
+      {ratingType === 'bp' && (
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 mt-6">
+          <details className="group">
+            <summary className="px-4 py-3 cursor-pointer select-none flex items-center justify-between hover:bg-gray-50 transition-colors">
+              <span className="font-medium text-gray-900">ƒ(x) Формула расчета рейтинга BP</span>
+              <svg className="w-5 h-5 text-gray-500 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </summary>
+            <div className="px-4 py-4 border-t border-gray-200 text-sm space-y-4">
+              {/* Основная формула */}
+              <div>
+                <h4 className="font-semibold text-gray-900 mb-2">Основная формула (система Elo)</h4>
+                <div className="bg-gray-50 p-3 rounded border border-gray-200 font-mono text-xs overflow-x-auto">
+                  <div>Δ = K × FMT × (Actual − Expected) × COEF</div>
+                </div>
+                <p className="mt-2 text-gray-600">
+                  Где <strong>Δ</strong> — изменение рейтинга игрока после матча
+                </p>
+              </div>
+
+              {/* Параметры */}
+              <div>
+                <h4 className="font-semibold text-gray-900 mb-2">Параметры формулы</h4>
+                <ul className="space-y-2 text-gray-700">
+                  <li>
+                    <strong>K = 32</strong> — коэффициент изменчивости (K-фактор)
+                  </li>
+                  <li>
+                    <strong>FMT</strong> — форматный множитель, зависящий от результата по сетам:
+                    <ul className="ml-6 mt-1 space-y-1 text-sm">
+                      <li>• Один тай-брейк: <code className="bg-gray-100 px-1 rounded">FMT = 0.3</code></li>
+                      <li>• Один полный сет: <code className="bg-gray-100 px-1 rounded">FMT = 1.0</code></li>
+                      <li>• Несколько сетов: <code className="bg-gray-100 px-1 rounded">FMT = 1.0 + 0.1 × |diff|</code>
+                        <div className="text-gray-500 ml-4 mt-0.5">где diff — разница выигранных сетов</div>
+                        <div className="text-gray-500 ml-4 mt-0.5">Примеры: 2:0 → 1.2, 3:0 → 1.3, 2:1 → 1.1, 3:1 → 1.2, 1:1 → 1.0</div>
+                      </li>
+                    </ul>
+                  </li>
+                  <li>
+                    <strong>Actual</strong> — фактический результат:
+                    <ul className="ml-6 mt-1 space-y-1 text-sm">
+                      <li>• Победа: <code className="bg-gray-100 px-1 rounded">1.0</code></li>
+                      <li>• Поражение: <code className="bg-gray-100 px-1 rounded">0.0</code></li>
+                    </ul>
+                  </li>
+                  <li>
+                    <strong>Expected</strong> — ожидаемый результат (вероятность победы):
+                    <div className="bg-gray-50 p-2 mt-1 rounded border border-gray-200 font-mono text-xs">
+                      Expected = 1 / (1 + 10<sup>((R<sub>opp</sub> − R<sub>team</sub>) / 400)</sup>)
+                    </div>
+                    <div className="text-gray-500 ml-4 mt-1 text-sm">
+                      где R<sub>team</sub> — средний рейтинг вашей команды, R<sub>opp</sub> — средний рейтинг команды соперников
+                    </div>
+                  </li>
+                  <li>
+                    <strong>COEF</strong> — коэффициент турнира:
+                    <div className="text-gray-500 ml-4 mt-1 text-sm">
+                      Автоматически рассчитывается при фиксации участников на основе среднего рейтинга и количества участников.
+                      Позволяет увеличить влияние крупных престижных турниров и уменьшить влияние небольших тренировочных турниров.
+                    </div>
+                  </li>
+                </ul>
+              </div>
+
+              {/* Расчет коэффициента турнира */}
+              <div>
+                <h4 className="font-semibold text-gray-900 mb-2">Расчет коэффициента турнира (COEF)</h4>
+                <p className="text-gray-600 text-sm mb-2">
+                  Коэффициент автоматически рассчитывается при фиксации участников турнира по таблице:
+                </p>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-xs border border-gray-300">
+                    <thead>
+                      <tr className="bg-gray-100">
+                        <th className="border border-gray-300 px-2 py-1 text-left">Средний рейтинг</th>
+                        <th className="border border-gray-300 px-2 py-1 text-center">≤8</th>
+                        <th className="border border-gray-300 px-2 py-1 text-center">9-12</th>
+                        <th className="border border-gray-300 px-2 py-1 text-center">12-16</th>
+                        <th className="border border-gray-300 px-2 py-1 text-center">17-24</th>
+                        <th className="border border-gray-300 px-2 py-1 text-center">&gt;24</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td className="border border-gray-300 px-2 py-1 font-medium">≤800</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">0.6</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">0.7</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">0.8</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">0.9</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">1.0</td>
+                      </tr>
+                      <tr className="bg-gray-50">
+                        <td className="border border-gray-300 px-2 py-1 font-medium">801-950</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">0.7</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">0.8</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">0.9</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">1.0</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">1.1</td>
+                      </tr>
+                      <tr>
+                        <td className="border border-gray-300 px-2 py-1 font-medium">951-1050</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">0.8</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">0.9</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">1.0</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">1.1</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">1.2</td>
+                      </tr>
+                      <tr className="bg-gray-50">
+                        <td className="border border-gray-300 px-2 py-1 font-medium">1051-1200</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">0.9</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">1.0</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">1.1</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">1.2</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">1.3</td>
+                      </tr>
+                      <tr>
+                        <td className="border border-gray-300 px-2 py-1 font-medium">&gt;1200</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">1.0</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">1.1</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">1.2</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">1.3</td>
+                        <td className="border border-gray-300 px-2 py-1 text-center">1.4</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div className="mt-2 text-sm text-gray-700">
+                  <strong>Бонус за призовой фонд:</strong> +0.2 к коэффициенту, если в турнире указан призовой фонд
+                </div>
+                <div className="mt-2 space-y-1 text-xs text-gray-600">
+                  <div><strong>Пример 1:</strong> 10 участников, средний рейтинг 900 → COEF = 0.8</div>
+                  <div><strong>Пример 2:</strong> 18 участников, средний рейтинг 1100 → COEF = 1.2</div>
+                  <div><strong>Пример 3:</strong> 30 участников, средний рейтинг 1300, призовой фонд → COEF = 1.4 + 0.2 = 1.6</div>
+                </div>
+              </div>
+
+              {/* Рейтинг команды */}
+              <div>
+                <h4 className="font-semibold text-gray-900 mb-2">Рейтинг команды</h4>
+                <div className="bg-gray-50 p-3 rounded border border-gray-200">
+                  <div className="font-mono text-xs mb-2">R<sub>team</sub> = (R<sub>player1</sub> + R<sub>player2</sub>) / 2</div>
+                  <p className="text-gray-600 text-xs">
+                    Для одиночных матчей используется рейтинг игрока как средний рейтинг команды
+                  </p>
+                </div>
+              </div>
+
+              {/* Примеры */}
+              <div>
+                <h4 className="font-semibold text-gray-900 mb-2">Примеры расчета</h4>
+                
+                {/* Пример 1 */}
+                <div className="bg-blue-50 p-3 rounded border border-blue-200 mb-3">
+                  <div className="font-medium text-blue-900 mb-2">Пример 1: Победа равных команд (счет 2:0)</div>
+                  <div className="text-sm text-gray-700 space-y-1">
+                    <div>• Ваша команда: 1200 + 1200 = <strong>R<sub>team</sub> = 1200</strong></div>
+                    <div>• Команда соперников: 1180 + 1220 = <strong>R<sub>opp</sub> = 1200</strong></div>
+                    <div>• Формат: 2 сета со счетом 2:0 → diff = 2 → <strong>FMT = 1.0 + 0.1×2 = 1.2</strong></div>
+                    <div>• Expected = 1 / (1 + 10<sup>0</sup>) = <strong>0.5</strong></div>
+                    <div>• Коэффициент турнира: <strong>COEF = 1.0</strong></div>
+                    <div>• Δ = 32 × 1.2 × (1.0 − 0.5) × 1.0 = <strong>+19</strong></div>
+                    <div className="mt-2 font-medium text-blue-900">Результат: каждый игрок получает +19 рейтинга</div>
+                  </div>
+                </div>
+
+                {/* Пример 2 */}
+                <div className="bg-green-50 p-3 rounded border border-green-200 mb-3">
+                  <div className="font-medium text-green-900 mb-2">Пример 2: Победа над сильными соперниками</div>
+                  <div className="text-sm text-gray-700 space-y-1">
+                    <div>• Ваша команда: 1100 + 1100 = <strong>R<sub>team</sub> = 1100</strong></div>
+                    <div>• Команда соперников: 1400 + 1400 = <strong>R<sub>opp</sub> = 1400</strong></div>
+                    <div>• Формат: 1 полный сет → <strong>FMT = 1.0</strong></div>
+                    <div>• Expected = 1 / (1 + 10<sup>(300/400)</sup>) ≈ <strong>0.15</strong></div>
+                    <div>• Коэффициент турнира: <strong>COEF = 1.0</strong></div>
+                    <div>• Δ = 32 × 1.0 × (1.0 − 0.15) × 1.0 = <strong>+27</strong></div>
+                    <div className="mt-2 font-medium text-green-900">Результат: каждый игрок получает +27 рейтинга (победа над сильными дает больше очков)</div>
+                  </div>
+                </div>
+
+                {/* Пример 3 */}
+                <div className="bg-red-50 p-3 rounded border border-red-200 mb-3">
+                  <div className="font-medium text-red-900 mb-2">Пример 3: Поражение от слабых соперников</div>
+                  <div className="text-sm text-gray-700 space-y-1">
+                    <div>• Ваша команда: 1500 + 1500 = <strong>R<sub>team</sub> = 1500</strong></div>
+                    <div>• Команда соперников: 1200 + 1200 = <strong>R<sub>opp</sub> = 1200</strong></div>
+                    <div>• Формат: 1 полный сет → <strong>FMT = 1.0</strong></div>
+                    <div>• Expected = 1 / (1 + 10<sup>(−300/400)</sup>) ≈ <strong>0.85</strong></div>
+                    <div>• Коэффициент турнира: <strong>COEF = 1.0</strong></div>
+                    <div>• Δ = 32 × 1.0 × (0.0 − 0.85) × 1.0 = <strong>−27</strong></div>
+                    <div className="mt-2 font-medium text-red-900">Результат: каждый игрок теряет −27 рейтинга (поражение от слабых стоит дорого)</div>
+                  </div>
+                </div>
+
+                {/* Пример 4 */}
+                <div className="bg-yellow-50 p-3 rounded border border-yellow-200 mb-3">
+                  <div className="font-medium text-yellow-900 mb-2">Пример 4: Тай-брейк</div>
+                  <div className="text-sm text-gray-700 space-y-1">
+                    <div>• Ваша команда: 1300 + 1300 = <strong>R<sub>team</sub> = 1300</strong></div>
+                    <div>• Команда соперников: 1300 + 1300 = <strong>R<sub>opp</sub> = 1300</strong></div>
+                    <div>• Формат: только тай-брейк → <strong>FMT = 0.3</strong></div>
+                    <div>• Expected = <strong>0.5</strong></div>
+                    <div>• Коэффициент турнира: <strong>COEF = 1.0</strong></div>
+                    <div>• Δ = 32 × 0.3 × (1.0 − 0.5) × 1.0 = <strong>+5</strong></div>
+                    <div className="mt-2 font-medium text-yellow-900">Результат: каждый игрок получает +5 рейтинга (короткие матчи дают меньше очков)</div>
+                  </div>
+                </div>
+
+                {/* Пример 5 */}
+                <div className="bg-purple-50 p-3 rounded border border-purple-200">
+                  <div className="font-medium text-purple-900 mb-2">Пример 5: Турнир с повышенным коэффициентом (счет 2:1)</div>
+                  <div className="text-sm text-gray-700 space-y-1">
+                    <div>• Ваша команда: 1200 + 1200 = <strong>R<sub>team</sub> = 1200</strong></div>
+                    <div>• Команда соперников: 1200 + 1200 = <strong>R<sub>opp</sub> = 1200</strong></div>
+                    <div>• Формат: 3 сета со счетом 2:1 → diff = 1 → <strong>FMT = 1.0 + 0.1×1 = 1.1</strong></div>
+                    <div>• Expected = <strong>0.5</strong></div>
+                    <div>• Коэффициент турнира: <strong>COEF = 1.5</strong> (важный турнир)</div>
+                    <div>• Δ = 32 × 1.1 × (1.0 − 0.5) × 1.5 = <strong>+26</strong></div>
+                    <div className="mt-2 font-medium text-purple-900">Результат: каждый игрок получает +26 рейтинга (турниры с COEF &gt; 1.0 дают больше очков)</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Важные замечания */}
+              <div className="bg-gray-50 p-3 rounded border border-gray-200">
+                <h4 className="font-semibold text-gray-900 mb-2">Важные замечания</h4>
+                <ul className="space-y-1 text-gray-700 text-sm">
+                  <li>• Минимальный рейтинг игрока: <strong>1</strong></li>
+                  <li>• Стартовый рейтинг новых игроков: <strong>1000</strong></li>
+                  <li>• Рейтинг обновляется после завершения турнира (не после каждого матча)</li>
+                  <li>• Все изменения рейтинга за турнир суммируются и применяются одновременно</li>
+                  <li>• Игроки с менее чем 5 турнирами или 10 матчами отмечены * (рейтинг может быть нестабильным)</li>
+                </ul>
+              </div>
+            </div>
+          </details>
+        </div>
+      )}
 
       {/* График убран по требованию. Оставляем только таблицу лидеров */}
     </div>

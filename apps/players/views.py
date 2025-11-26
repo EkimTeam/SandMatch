@@ -9,6 +9,7 @@ from django.db.models import Q
 import json
 
 from apps.players.models import Player
+from apps.players.services.initial_rating_service import get_initial_bp_rating
 
 
 class PlayersListView(ListView):
@@ -56,12 +57,16 @@ def create_player(request):
         if existing:
             return JsonResponse({'error': f'Игрок {existing.display_name} уже существует'}, status=400)
         
+        # Определяем стартовый рейтинг (проверяем BTR)
+        initial_rating = get_initial_bp_rating(Player(first_name=first_name, last_name=last_name))
+        
         # Пытаемся создать игрока. Если произошло "duplicate key value ... players_player_pkey",
         # то это признак рассинхронизации последовательности id после ручных вставок.
         try:
             player = Player.objects.create(
                 first_name=first_name,
-                last_name=last_name
+                last_name=last_name,
+                current_rating=initial_rating
             )
         except IntegrityError as e:
             msg = str(e)
@@ -75,7 +80,8 @@ def create_player(request):
                         )
                 player = Player.objects.create(
                     first_name=first_name,
-                    last_name=last_name
+                    last_name=last_name,
+                    current_rating=initial_rating
                 )
             else:
                 raise

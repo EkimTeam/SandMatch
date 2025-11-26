@@ -49,6 +49,9 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
     ko_participants: '',
     brackets_count: 1,
     schedule_pattern_id: '',
+    is_rating_calc: true,
+    has_prize_fund: false,
+    prize_fund: '',
   });
 
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
@@ -59,8 +62,9 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
   const effectiveRulesets = (localRulesets && localRulesets.length > 0) ? localRulesets : rulesets;
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+    const { name, value, type } = e.target;
+    const checked = (e.target as HTMLInputElement).checked;
+    setFormData(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
     if (errors[name]) {
       setErrors(prev => ({ ...prev, [name]: '' }));
     }
@@ -74,6 +78,9 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
     }
     if (!formData.date) {
       newErrors.date = 'Выберите дату';
+    }
+    if (formData.has_prize_fund && !formData.prize_fund.trim()) {
+      newErrors.prize_fund = 'Укажите призовой фонд';
     }
 
     if (formData.system === 'round_robin') {
@@ -119,6 +126,8 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
       ko_participants: formData.ko_participants ? Number(formData.ko_participants) : undefined,
       brackets_count: 1, // Всегда 1 сетка
       schedule_pattern_id: formData.schedule_pattern_id ? Number(formData.schedule_pattern_id) : undefined,
+      is_rating_calc: formData.is_rating_calc,
+      prize_fund: formData.has_prize_fund ? formData.prize_fund.trim() : null,
     };
     onSubmit(payload);
   };
@@ -258,9 +267,41 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
 
             <div className="form-row">
               <label>Рейтинг</label>
-              <div className="muted">
-                <input type="checkbox" id="rating" disabled /> с обсчётом рейтинга (скоро)
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input 
+                  type="checkbox" 
+                  id="is_rating_calc" 
+                  name="is_rating_calc"
+                  checked={formData.is_rating_calc}
+                  onChange={handleChange}
+                />
+                <label htmlFor="is_rating_calc" style={{ margin: 0, cursor: 'pointer' }}>с обсчётом рейтинга BP</label>
               </div>
+            </div>
+
+            <div className="form-row">
+              <label>Призовой фонд</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input 
+                  type="checkbox" 
+                  id="has_prize_fund" 
+                  name="has_prize_fund"
+                  checked={formData.has_prize_fund}
+                  onChange={handleChange}
+                />
+                {formData.has_prize_fund && (
+                  <input
+                    type="text"
+                    id="prize_fund"
+                    name="prize_fund"
+                    placeholder="Например, 50 000₽"
+                    value={formData.prize_fund}
+                    onChange={handleChange}
+                    style={{ flex: 1 }}
+                  />
+                )}
+              </div>
+              {errors.prize_fund && <div className="error">{errors.prize_fund}</div>}
             </div>
 
             <div className="form-row">
