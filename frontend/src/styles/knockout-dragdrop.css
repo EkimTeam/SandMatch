@@ -70,6 +70,11 @@
   border-radius: 4px;
   cursor: grab;
   transition: all 0.2s;
+  /* Улучшение для touch устройств */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .participant-item.draggable:hover {
@@ -85,11 +90,14 @@
 .participant-item.in-bracket {
   opacity: 0.6;
   cursor: not-allowed;
+  touch-action: auto;
 }
 
 .participant-item.dragging {
   opacity: 0.5;
   background: #e3f2fd;
+  transform: scale(1.05);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.2);
 }
 
 .participant-name {
@@ -163,6 +171,29 @@
   box-shadow: 0 0 0 2px #2196f3;
 }
 
+/* Улучшение drop-зон для touch устройств */
+[data-drop-slot] {
+  position: relative;
+  touch-action: auto;
+}
+
+[data-drop-slot]:empty::after {
+  content: 'Перетащите сюда';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #9ca3af;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+@media (max-width: 768px) {
+  [data-drop-slot]:empty::after {
+    content: 'Нажмите на участника';
+  }
+}
+
 .match-slot.filled {
   background: white;
   border-style: solid;
@@ -192,4 +223,50 @@
 
 .btn-remove-small:hover {
   color: #dc3545;
+}
+
+/* Адаптивность для мобильных устройств */
+@media (max-width: 768px) {
+  .knockout-content {
+    flex-direction: column;
+  }
+  
+  .participants-panel {
+    width: 100%;
+    min-width: unset;
+    max-height: 40vh;
+    border-right: none;
+    border-bottom: 2px solid #e0e0e0;
+  }
+  
+  .bracket-panel {
+    padding: 8px;
+  }
+  
+  .participant-item {
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    font-size: 16px;
+  }
+  
+  .participant-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+  
+  .participant-actions button {
+    width: 100%;
+  }
+  
+  /* Увеличиваем размер drop-зон для удобства на мобильных */
+  [data-drop-slot] {
+    min-height: 48px;
+    padding: 8px;
+  }
+  
+  /* Визуальная обратная связь для touch */
+  .participant-item:active {
+    transform: scale(0.98);
+    background: #e3f2fd;
+  }
 }
