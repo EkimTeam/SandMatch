@@ -1524,10 +1524,10 @@ class TournamentViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["get"])
     def group_stats(self, request, pk=None):
         tournament: Tournament = self.get_object()
-        # Соберём список групп из участников
+        # Соберём список групп из участников (исключаем None для участников без позиции)
         from apps.tournaments.models import TournamentEntry
         group_indices = (
-            TournamentEntry.objects.filter(tournament=tournament)
+            TournamentEntry.objects.filter(tournament=tournament, group_index__isnull=False)
             .values_list("group_index", flat=True)
             .distinct()
         )
@@ -1621,10 +1621,16 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     # Одиночка
                     full_name = f"{p1.last_name} {p1.first_name}"
             
-            # Текущий рейтинг: берём рейтинг первого игрока, если он есть
+            # Текущий рейтинг: для пар - средний, для одиночек - рейтинг игрока
             rating = 0
             try:
-                if team.player_1 and hasattr(team.player_1, "current_rating"):
+                if team.player_1 and team.player_2:
+                    # Для пар - средний рейтинг
+                    r1 = int(team.player_1.current_rating or 0)
+                    r2 = int(team.player_2.current_rating or 0)
+                    rating = round((r1 + r2) / 2) if (r1 > 0 or r2 > 0) else 0
+                elif team.player_1:
+                    # Для одиночек - рейтинг игрока
                     rating = int(team.player_1.current_rating or 0)
             except Exception:
                 rating = 0
@@ -1899,6 +1905,16 @@ class TournamentViewSet(viewsets.ModelViewSet):
         # Блокировка для завершённых турниров
         if tournament.status == Tournament.Status.COMPLETED:
             return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
+        
+        # Проверка максимального количества участников
+        current_count = tournament.entries.count()
+        max_participants = tournament.planned_participants or 32
+        if current_count >= max_participants:
+            return Response({
+                'ok': False, 
+                'error': f'Достигнуто максимальное количество участников ({max_participants})'
+            }, status=400)
+        
         name = request.data.get('name')
         player_id = request.data.get('player_id')
         player1_id = request.data.get('player1_id')
@@ -1963,26 +1979,37 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     )
                     team = Team.objects.create(player_1=player)
                 
-                # Найти первый свободный row_index
-                existing_entries = tournament.entries.all()
-                used_positions = set(existing_entries.values_list('row_index', flat=True))
-                
-                # Найти первую свободную позицию от 1 до planned_participants
-                max_participants = tournament.planned_participants or 32
-                row_index = 1
-                for i in range(1, max_participants + 1):
-                    if i not in used_positions:
-                        row_index = i
-                        break
-                
-                # Создать запись участника
-                entry = TournamentEntry.objects.create(
-                    tournament=tournament,
-                    team=team,
-                    group_index=1,
-                    row_index=row_index,
-                    is_out_of_competition=False
-                )
+                # Для круговой системы в статусе created участники добавляются БЕЗ позиции
+                # (они попадут в левый список для drag-and-drop)
+                if tournament.system == Tournament.System.ROUND_ROBIN and tournament.status == Tournament.Status.CREATED:
+                    entry = TournamentEntry.objects.create(
+                        tournament=tournament,
+                        team=team,
+                        group_index=None,
+                        row_index=None,
+                        is_out_of_competition=False
+                    )
+                else:
+                    # Для других систем или статусов - найти первый свободный row_index
+                    existing_entries = tournament.entries.all()
+                    used_positions = set(existing_entries.values_list('row_index', flat=True))
+                    
+                    # Найти первую свободную позицию от 1 до planned_participants
+                    max_participants = tournament.planned_participants or 32
+                    row_index = 1
+                    for i in range(1, max_participants + 1):
+                        if i not in used_positions:
+                            row_index = i
+                            break
+                    
+                    # Создать запись участника
+                    entry = TournamentEntry.objects.create(
+                        tournament=tournament,
+                        team=team,
+                        group_index=1,
+                        row_index=row_index,
+                        is_out_of_competition=False
+                    )
                 
                 return Response({
                     'ok': True,
@@ -2216,6 +2243,84 @@ class TournamentViewSet(viewsets.ModelViewSet):
             return Response({'ok': False, 'error': str(e)}, status=500)
 
     @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="set_participant_position", permission_classes=[IsAuthenticated])
+    def set_participant_position(self, request, pk=None):
+        """Установить позицию существующего участника в группе.
+        
+        Body (JSON):
+        {
+          "entry_id": 123,
+          "group_index": 1,
+          "row_index": 0
+        }
+        """
+        tournament: Tournament = self.get_object()
+        self._ensure_can_manage_match(request, tournament)
+        
+        entry_id = request.data.get('entry_id')
+        group_index = request.data.get('group_index')
+        row_index = request.data.get('row_index')
+        
+        if not entry_id or group_index is None or row_index is None:
+            return Response({'ok': False, 'error': 'Не указаны обязательные параметры'}, status=400)
+        
+        try:
+            entry = TournamentEntry.objects.get(id=entry_id, tournament=tournament)
+            
+            # Проверить, не занята ли позиция
+            existing = TournamentEntry.objects.filter(
+                tournament=tournament,
+                group_index=group_index,
+                row_index=row_index
+            ).exclude(id=entry_id).first()
+            
+            if existing:
+                return Response({'ok': False, 'error': 'Позиция уже занята'}, status=400)
+            
+            # Установить позицию
+            entry.group_index = group_index
+            entry.row_index = row_index
+            entry.save(update_fields=['group_index', 'row_index'])
+            
+            return Response({'ok': True})
+        except TournamentEntry.DoesNotExist:
+            return Response({'ok': False, 'error': 'Участник не найден'}, status=404)
+        except Exception as e:
+            return Response({'ok': False, 'error': str(e)}, status=500)
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="clear_participant_position", permission_classes=[IsAuthenticated])
+    def clear_participant_position(self, request, pk=None):
+        """Очистить позицию участника (убрать из таблицы, но оставить в турнире).
+        
+        Body (JSON):
+        {
+          "entry_id": 123
+        }
+        """
+        tournament: Tournament = self.get_object()
+        self._ensure_can_manage_match(request, tournament)
+        
+        entry_id = request.data.get('entry_id')
+        
+        if not entry_id:
+            return Response({'ok': False, 'error': 'Не указан entry_id'}, status=400)
+        
+        try:
+            entry = TournamentEntry.objects.get(id=entry_id, tournament=tournament)
+            
+            # Очистить позицию (установить в None или -1)
+            entry.group_index = None
+            entry.row_index = None
+            entry.save(update_fields=['group_index', 'row_index'])
+            
+            return Response({'ok': True})
+        except TournamentEntry.DoesNotExist:
+            return Response({'ok': False, 'error': 'Участник не найден'}, status=404)
+        except Exception as e:
+            return Response({'ok': False, 'error': str(e)}, status=500)
+
+    @method_decorator(csrf_exempt)
     @action(detail=True, methods=["delete"], url_path="remove_participant", permission_classes=[IsAuthenticated])
     def remove_participant_from_tournament(self, request, pk=None):
         """Удалить участника из турнира."""
@@ -2232,6 +2337,223 @@ class TournamentViewSet(viewsets.ModelViewSet):
         except TournamentEntry.DoesNotExist:
             return Response({'ok': False, 'error': 'Участник не найден'}, status=404)
         except Exception as e:
+            return Response({'ok': False, 'error': str(e)}, status=500)
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="auto_seed", permission_classes=[IsAuthenticated])
+    def auto_seed(self, request, pk=None):
+        """Автоматический посев участников по группам с учетом рейтинга.
+        
+        Алгоритм:
+        1. Сортировка участников по убыванию рейтинга (с учетом is_profi, rating_btr)
+        2. Если группа одна - проставляем по порядку
+        3. Если групп несколько - распределяем отрезками:
+           - Первый отрезок (размер = кол-во групп) - по одному в каждую группу на 1-е место
+           - Второй отрезок - по одному в каждую группу на 2-е место (случайный порядок групп)
+           - И т.д.
+        """
+        tournament: Tournament = self.get_object()
+        
+        # Блокировка для завершённых турниров
+        if tournament.status == Tournament.Status.COMPLETED:
+            return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
+        
+        if tournament.system != Tournament.System.ROUND_ROBIN:
+            return Response({'ok': False, 'error': 'Автопосев доступен только для круговой системы'}, status=400)
+        
+        try:
+            import random
+            from django.db.models import Q
+            
+            # Сначала очищаем все позиции (аналог "Очистить таблицы")
+            tournament.entries.filter(
+                group_index__isnull=False
+            ).update(
+                group_index=None,
+                row_index=None
+            )
+            
+            # Получаем всех участников (теперь все без позиции) с prefetch для BTR
+            entries = list(tournament.entries.select_related(
+                'team__player_1__btr_player', 
+                'team__player_2__btr_player'
+            ).prefetch_related(
+                'team__player_1__btr_player__snapshots',
+                'team__player_2__btr_player__snapshots'
+            ).all())
+            
+            if not entries:
+                return Response({'ok': False, 'error': 'Нет участников для посева'}, status=400)
+            
+            # Функция для вычисления рейтинга участника (BP)
+            def get_entry_rating(entry):
+                team = entry.team
+                if not team:
+                    return 0
+                
+                # Для одиночек
+                if team.player_1 and not team.player_2:
+                    return team.player_1.current_rating or 0
+                
+                # Для пар - средний рейтинг
+                if team.player_1 and team.player_2:
+                    r1 = team.player_1.current_rating or 0
+                    r2 = team.player_2.current_rating or 0
+                    return (r1 + r2) / 2
+                
+                return 0
+            
+            # Функция для подсчета профи в команде
+            def count_profi(entry):
+                team = entry.team
+                if not team:
+                    return 0
+                
+                count = 0
+                if team.player_1 and hasattr(team.player_1, 'is_profi') and team.player_1.is_profi:
+                    count += 1
+                if team.player_2 and hasattr(team.player_2, 'is_profi') and team.player_2.is_profi:
+                    count += 1
+                
+                return count
+            
+            # Функция для получения рейтинга BTR
+            def get_btr_rating(entry):
+                team = entry.team
+                if not team:
+                    return 0
+                
+                def get_player_btr(player):
+                    """Получить последний BTR рейтинг игрока в категории men_double или women_double"""
+                    if not player or not hasattr(player, 'btr_player') or not player.btr_player:
+                        return 0
+                    
+                    # Определяем категорию по полу игрока
+                    if player.gender == 'male':
+                        category = 'men_double'
+                    elif player.gender == 'female':
+                        category = 'women_double'
+                    else:
+                        return 0
+                    
+                    # Получаем последний снимок рейтинга в нужной категории
+                    try:
+                        from apps.btr.models import BtrRatingSnapshot
+                        snapshot = BtrRatingSnapshot.objects.filter(
+                            player=player.btr_player,
+                            category=category
+                        ).order_by('-rating_date').first()
+                        
+                        return snapshot.rating_value if snapshot else 0
+                    except Exception:
+                        return 0
+                
+                # Для одиночек
+                if team.player_1 and not team.player_2:
+                    return get_player_btr(team.player_1)
+                
+                # Для пар - средний рейтинг BTR
+                if team.player_1 and team.player_2:
+                    r1 = get_player_btr(team.player_1)
+                    r2 = get_player_btr(team.player_2)
+                    return (r1 + r2) / 2
+                
+                return 0
+            
+            # Сортировка участников
+            def sort_key(entry):
+                rating = get_entry_rating(entry)
+                profi_count = count_profi(entry)
+                btr = get_btr_rating(entry)
+                rand = random.random()  # Для случайного порядка при равных показателях
+                
+                # Сортируем по убыванию: (-rating, -profi_count, -btr, rand)
+                return (-rating, -profi_count, -btr, rand)
+            
+            sorted_entries = sorted(entries, key=sort_key)
+            
+            # Логирование для отладки
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Auto-seed: {len(sorted_entries)} entries")
+            for idx, entry in enumerate(sorted_entries[:5]):  # Первые 5 для примера
+                rating = get_entry_rating(entry)
+                profi = count_profi(entry)
+                btr = get_btr_rating(entry)
+                logger.info(f"  {idx+1}. {entry.team} - Rating: {rating}, Profi: {profi}, BTR: {btr}")
+            
+            groups_count = tournament.groups_count or 1
+            
+            if groups_count == 1:
+                # Одна группа - просто проставляем по порядку
+                for idx, entry in enumerate(sorted_entries):
+                    entry.group_index = 1
+                    entry.row_index = idx
+                    entry.save(update_fields=['group_index', 'row_index'])
+            else:
+                # Несколько групп - распределяем отрезками
+                segment_size = groups_count
+                segments = []
+                
+                # Разбиваем на отрезки
+                for i in range(0, len(sorted_entries), segment_size):
+                    segments.append(sorted_entries[i:i + segment_size])
+                
+                # Распределяем по группам
+                for row_idx, segment in enumerate(segments):
+                    # Создаем список доступных групп
+                    available_groups = list(range(1, groups_count + 1))
+                    
+                    # Для первого отрезка - по порядку
+                    if row_idx == 0:
+                        for i, entry in enumerate(segment):
+                            entry.group_index = available_groups[i]
+                            entry.row_index = row_idx
+                            entry.save(update_fields=['group_index', 'row_index'])
+                    else:
+                        # Для остальных отрезков - случайный порядок групп
+                        random.shuffle(available_groups)
+                        
+                        for i, entry in enumerate(segment):
+                            if i < len(available_groups):
+                                entry.group_index = available_groups[i]
+                                entry.row_index = row_idx
+                                entry.save(update_fields=['group_index', 'row_index'])
+            
+            return Response({'ok': True, 'seeded_count': len(sorted_entries)})
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response({'ok': False, 'error': str(e)}, status=500)
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="clear_tables", permission_classes=[IsAuthenticated])
+    def clear_tables(self, request, pk=None):
+        """Очистить таблицы - убрать всех участников из позиций (group_index=None, row_index=None)."""
+        tournament: Tournament = self.get_object()
+        
+        # Блокировка для завершённых турниров
+        if tournament.status == Tournament.Status.COMPLETED:
+            return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
+        
+        if tournament.system != Tournament.System.ROUND_ROBIN:
+            return Response({'ok': False, 'error': 'Очистка таблиц доступна только для круговой системы'}, status=400)
+        
+        try:
+            # Обновляем всех участников - убираем позиции
+            updated_count = tournament.entries.filter(
+                group_index__isnull=False
+            ).update(
+                group_index=None,
+                row_index=None
+            )
+            
+            return Response({'ok': True, 'cleared_count': updated_count})
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
             return Response({'ok': False, 'error': str(e)}, status=500)
 
 

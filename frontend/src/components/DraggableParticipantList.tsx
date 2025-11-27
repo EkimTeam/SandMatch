@@ -6,6 +6,7 @@ interface Props {
   onRemoveParticipant: (id: number) => void;
   onAddParticipant: () => void;
   onAutoSeed: () => void;
+  onClearTables: () => void;
   maxParticipants: number;
   canAddMore: boolean;
 }
@@ -15,12 +16,14 @@ export const DraggableParticipantList: React.FC<Props> = ({
   onRemoveParticipant,
   onAddParticipant,
   onAutoSeed,
+  onClearTables,
   maxParticipants,
   canAddMore
 }) => {
   const [draggedParticipant, setDraggedParticipant] = useState<DraggableParticipant | null>(null);
   const [touchStartY, setTouchStartY] = useState<number>(0);
   const [ghostPosition, setGhostPosition] = useState<{ x: number; y: number } | null>(null);
+  const [sortBy, setSortBy] = useState<'name' | 'rating'>('name');
 
   const handleDragStart = (e: React.DragEvent, participant: DraggableParticipant) => {
     if (participant.isInBracket) {
@@ -122,10 +125,44 @@ export const DraggableParticipantList: React.FC<Props> = ({
     });
   };
 
+  // Сортировка участников
+  const sortedParticipants = [...participants].sort((a, b) => {
+    if (sortBy === 'rating') {
+      // Сортировка по рейтингу (по убыванию)
+      const ratingA = a.currentRating || 0;
+      const ratingB = b.currentRating || 0;
+      if (ratingB !== ratingA) {
+        return ratingB - ratingA;
+      }
+      // При равном рейтинге - по имени
+      return a.name.localeCompare(b.name, 'ru');
+    } else {
+      // Сортировка по имени (по возрастанию)
+      return a.name.localeCompare(b.name, 'ru');
+    }
+  });
+
   return (
     <div className="participant-list-container">
       <div className="participant-list-header">
-        <h3>Участники ({participants.length}/{maxParticipants})</h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <h3>Участники ({participants.length}/{maxParticipants})</h3>
+          <select 
+            value={sortBy} 
+            onChange={(e) => setSortBy(e.target.value as 'name' | 'rating')}
+            style={{ 
+              fontSize: 12, 
+              padding: '2px 6px', 
+              borderRadius: 4, 
+              border: '1px solid #ccc',
+              cursor: 'pointer'
+            }}
+            title="Сортировка"
+          >
+            <option value="name">по ФИО</option>
+            <option value="rating">по рейтингу</option>
+          </select>
+        </div>
         <div className="participant-actions">
           <button 
             className="btn btn-primary btn-sm"
@@ -141,6 +178,13 @@ export const DraggableParticipantList: React.FC<Props> = ({
           >
             Автопосев
           </button>
+          <button 
+            className="btn btn-sm"
+            onClick={onClearTables}
+            style={{ background: '#dc3545', borderColor: '#dc3545', color: 'white' }}
+          >
+            Очистить таблицы
+          </button>
         </div>
       </div>
       
@@ -148,7 +192,7 @@ export const DraggableParticipantList: React.FC<Props> = ({
         className="participant-list"
         onDragOver={handleDragOver}
       >
-        {participants.map(participant => (
+        {sortedParticipants.map(participant => (
           <div
             key={participant.id}
             className={`participant-item ${participant.isInBracket ? 'in-bracket' : ''} ${!participant.isInBracket ? 'draggable' : ''} ${draggedParticipant?.id === participant.id ? 'dragging' : ''}`}
