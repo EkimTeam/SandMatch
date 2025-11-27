@@ -20,6 +20,7 @@ export const DraggableParticipantList: React.FC<Props> = ({
 }) => {
   const [draggedParticipant, setDraggedParticipant] = useState<DraggableParticipant | null>(null);
   const [touchStartY, setTouchStartY] = useState<number>(0);
+  const [ghostPosition, setGhostPosition] = useState<{ x: number; y: number } | null>(null);
 
   const handleDragStart = (e: React.DragEvent, participant: DraggableParticipant) => {
     if (participant.isInBracket) {
@@ -55,6 +56,9 @@ export const DraggableParticipantList: React.FC<Props> = ({
     // Визуальная обратная связь
     const target = e.currentTarget as HTMLElement;
     target.style.opacity = '0.5';
+    
+    // Добавляем класс к body для подсветки drop-зон
+    document.body.classList.add('dragging');
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
@@ -62,6 +66,24 @@ export const DraggableParticipantList: React.FC<Props> = ({
     
     // Предотвращаем скролл страницы при перетаскивании
     e.preventDefault();
+    
+    // Обновляем позицию ghost элемента
+    const touch = e.touches[0];
+    setGhostPosition({ x: touch.clientX, y: touch.clientY });
+    
+    // Подсвечиваем drop-зону под пальцем
+    const elementUnderFinger = document.elementFromPoint(touch.clientX, touch.clientY);
+    const dropSlot = elementUnderFinger?.closest('[data-drop-slot]') as HTMLElement;
+    
+    // Убираем подсветку со всех drop-зон
+    document.querySelectorAll('[data-drop-slot].hover-highlight').forEach(el => {
+      el.classList.remove('hover-highlight');
+    });
+    
+    // Добавляем подсветку к текущей drop-зоне
+    if (dropSlot && !dropSlot.querySelector('.participant-name')) {
+      dropSlot.classList.add('hover-highlight');
+    }
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
@@ -88,7 +110,16 @@ export const DraggableParticipantList: React.FC<Props> = ({
     }
     
     setDraggedParticipant(null);
+    setGhostPosition(null);
     delete (window as any).__draggedParticipant;
+    
+    // Убираем класс dragging с body
+    document.body.classList.remove('dragging');
+    
+    // Убираем все подсветки drop-зон
+    document.querySelectorAll('[data-drop-slot].hover-highlight').forEach(el => {
+      el.classList.remove('hover-highlight');
+    });
   };
 
   return (
@@ -165,6 +196,37 @@ export const DraggableParticipantList: React.FC<Props> = ({
           </div>
         )}
       </div>
+      
+      {/* Ghost элемент для визуализации перетаскивания */}
+      {draggedParticipant && ghostPosition && (
+        <div
+          className="drag-ghost"
+          style={{
+            position: 'fixed',
+            left: ghostPosition.x,
+            top: ghostPosition.y,
+            transform: 'translate(-50%, -50%)',
+            pointerEvents: 'none',
+            zIndex: 9999,
+            padding: '8px 12px',
+            background: 'white',
+            border: '2px solid #2196f3',
+            borderRadius: '4px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+            fontSize: '14px',
+            fontWeight: 500,
+            whiteSpace: 'nowrap',
+            opacity: 0.9
+          }}
+        >
+          {draggedParticipant.name}
+          {typeof draggedParticipant.currentRating === 'number' && (
+            <span style={{ marginLeft: 8, fontSize: 11, color: '#666' }}>
+              {draggedParticipant.currentRating} BP
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 };
