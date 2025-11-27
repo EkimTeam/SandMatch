@@ -18,6 +18,9 @@ def _match_base_q(player_id: int, hard: bool, medium: bool, tbo: bool):
         Q(team_2__player_1_id=player_id) |
         Q(team_2__player_2_id=player_id)
     )
+    # Исключаем матчи с BYE (где одна из команд отсутствует)
+    q &= Q(team_1__isnull=False) & Q(team_2__isnull=False)
+    
     if hard and not medium:
         q &= Q(tournament__name__icontains='HARD')
     if medium and not hard:
@@ -317,6 +320,9 @@ def player_match_deltas(request: HttpRequest, player_id: int) -> Response:
             continue
         m = matches.get(match_id)
         if not m:
+            continue
+        # Пропускаем матчи с BYE (когда одна из команд отсутствует)
+        if m.team_1 is None or m.team_2 is None:
             continue
         # Значение value в истории теперь — это дельта за ЭТОТ матч
         delta = it['value']
