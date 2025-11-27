@@ -490,3 +490,123 @@ body.dragging [data-drop-slot]:not([data-occupied="true"]) {
   transform: scale(1.02);
   transition: all 0.15s ease-out;
 }
+
+/* ========================================
+   Упрощенные таблицы для круговой и кинга
+   ======================================== */
+
+.simplified-group-table {
+  margin-bottom: 24px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: white;
+}
+
+.simplified-group-table h3 {
+  background: #f8f9fa;
+  padding: 12px 16px;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.simplified-group-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.simplified-group-table th {
+  background: #f8f9fa;
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 14px;
+  border-bottom: 2px solid #dee2e6;
+}
+
+.simplified-group-table td {
+  padding: 12px;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.simplified-group-table td.drop-cell {
+  transition: all 0.2s;
+  position: relative;
+}
+
+.simplified-group-table td.drop-cell.empty {
+  background: #f9fafb;
+  border: 1px dashed #d1d5db;
+}
+
+.simplified-group-table td.drop-cell.empty:not(.locked):hover {
+  background: #e9ecef;
+  border-color: #adb5bd;
+}
+
+.simplified-group-table td.drop-cell.filled {
+  background: white;
+}
+
+.simplified-group-table td.drop-cell.locked {
+  cursor: default !important;
+  background: #f8f9fa;
+}
+
+.simplified-group-table td.drop-cell.hover-highlight {
+  background: #dbeafe !important;
+  border-color: #2563eb !important;
+  border-width: 2px !important;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+}
+
+.simplified-group-table .placeholder {
+  color: #9ca3af;
+  font-style: italic;
+  font-size: 13px;
+}
+
+/* Мобильная адаптация для упрощенных таблиц */
+@media (max-width: 768px) and (orientation: portrait) {
+  .simplified-group-table {
+    margin-bottom: 16px;
+  }
+  
+  .simplified-group-table h3 {
+    font-size: 14px;
+    padding: 8px 12px;
+  }
+  
+  .simplified-group-table th,
+  .simplified-group-table td {
+    padding: 8px;
+    font-size: 12px;
+  }
+  
+  .simplified-group-table td.drop-cell {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 1024px) and (orientation: landscape) {
+  .simplified-group-table {
+    margin-bottom: 12px;
+  }
+  
+  .simplified-group-table h3 {
+    font-size: 13px;
+    padding: 6px 12px;
+  }
+  
+  .simplified-group-table th,
+  .simplified-group-table td {
+    padding: 6px 8px;
+    font-size: 11px;
+  }
+  
+  .simplified-group-table td.drop-cell {
+    min-height: 40px;
+  }
+}

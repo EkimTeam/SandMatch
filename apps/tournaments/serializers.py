@@ -11,21 +11,19 @@ class PlayerSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Player
-        fields = ["id", "first_name", "last_name", "display_name", "level"]
+        fields = ["id", "first_name", "last_name", "display_name", "level", "current_rating"]
 
 
 class TeamSerializer(serializers.ModelSerializer):
     name = serializers.SerializerMethodField()
     display_name = serializers.SerializerMethodField()
     full_name = serializers.SerializerMethodField()
+    player_1 = PlayerSerializer(read_only=True)
+    player_2 = PlayerSerializer(read_only=True)
 
     class Meta:
         model = Team
         fields = ["id", "name", "display_name", "full_name", "player_1", "player_2"]
-        extra_kwargs = {
-            "player_1": {"read_only": True},
-            "player_2": {"read_only": True},
-        }
 
     def get_name(self, obj: Team) -> str:
         return str(obj)

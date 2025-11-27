@@ -3,6 +3,7 @@
 export interface DraggableParticipant {
   id: number;
   name: string;
+  fullName?: string; // полное имя (Фамилия Имя) для отображения
   teamId?: number; // для существующих команд
   isInBracket: boolean; // находится ли участник в сетке
   currentRating?: number; // текущий рейтинг игрока (для отображения)

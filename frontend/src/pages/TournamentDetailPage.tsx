@@ -5,9 +5,14 @@ import api, { matchApi, tournamentApi, Ruleset as ApiRuleset, ratingApi } from '
 import { getAccessToken } from '../services/auth';
 import { useAuth } from '../context/AuthContext';
 import { ParticipantPickerModal } from '../components/ParticipantPickerModal';
+import { KnockoutParticipantPicker } from '../components/KnockoutParticipantPicker';
 import { MatchScoreModal } from '../components/MatchScoreModal';
 import FreeFormatScoreModal from '../components/FreeFormatScoreModal';
 import SchedulePatternModal from '../components/SchedulePatternModal';
+import { DraggableParticipantList } from '../components/DraggableParticipantList';
+import { SimplifiedGroupTable, SimplifiedDropSlot } from '../components/SimplifiedGroupTable';
+import { DraggableParticipant, DragDropState } from '../types/dragdrop';
+import '../styles/knockout-dragdrop.css';
 import html2canvas from 'html2canvas';
 
 // Константы цветов для подсветки ячеек
@@ -98,6 +103,15 @@ export const TournamentDetailPage: React.FC = () => {
   const [showFullName, setShowFullName] = useState(false);
   const showNamesInitializedRef = useRef(false);
   const [pickerOpen, setPickerOpen] = useState<null | { group: number; row: number }>(null);
+  
+  // Состояние для Drag & Drop (для статуса created)
+  const [dragDropState, setDragDropState] = useState<DragDropState>({
+    participants: [],
+    dropSlots: [],
+    isSelectionLocked: false
+  });
+  const [simplifiedDropSlots, setSimplifiedDropSlots] = useState<SimplifiedDropSlot[]>([]);
+  const [dragDropPickerOpen, setDragDropPickerOpen] = useState(false);
   // Модалка действий по ячейке счёта
   const [scoreDialog, setScoreDialog] = useState<null | { group: number; a: number; b: number; matchId?: number; isLive: boolean; matchTeam1Id?: number | null; matchTeam2Id?: number | null }>(null);
   // Модалка ввода счёта (унифицированная с олимпийкой)
@@ -303,12 +317,28 @@ export const TournamentDetailPage: React.FC = () => {
       
       setT(data);
       setShowTech(Array.from({ length: data.groups_count || 1 }).map(() => false));
+      
+      // Инициализировать режим отображения имён один раз: по умолчанию ФИО,
+      // исключение — турниры организатора ArtemPara (display_name по умолчанию)
+      if (!showNamesInitializedRef.current) {
+        const organizerUsername = (data as any).organizer_username;
+        const useDisplayName = organizerUsername === 'ArtemPara';
+        setShowFullName(!useDisplayName);
+        showNamesInitializedRef.current = true;
+      }
+      
       // Определить состояние фиксации на основе статуса турнира
       if (data.status === 'active') {
         setLockParticipants(true);
       } else {
         setLockParticipants(false);
       }
+      
+      // Загрузить участников для drag-and-drop если статус created
+      if (data.status === 'created') {
+        loadParticipantsForDragDrop(data);
+      }
+      
       return true;
     } catch (e: any) {
       const status = e?.response?.status;
@@ -321,6 +351,279 @@ export const TournamentDetailPage: React.FC = () => {
       return false;
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Загрузка участников для drag-and-drop (статус created)
+  const loadParticipantsForDragDrop = async (tournamentData: TournamentDetail) => {
+    const groupsCount = tournamentData.groups_count || 1;
+    const totalParticipants = tournamentData.planned_participants || 0;
+    
+    // Вычисляем размер каждой группы индивидуально
+    const getGroupSize = (groupIndex: number) => {
+      const base = Math.floor(totalParticipants / groupsCount);
+      const remainder = totalParticipants % groupsCount;
+      // Первые remainder групп получают +1 участника
+      return groupIndex < remainder ? base + 1 : base;
+    };
+    
+    // Создаем drop slots для каждой группы и позиции
+    const slots: SimplifiedDropSlot[] = [];
+    const participantsInSlots = new Set<number>();
+    
+    for (let gi = 0; gi < groupsCount; gi++) {
+      const groupSize = getGroupSize(gi);
+      for (let ri = 0; ri < groupSize; ri++) {
+        // Ищем участника с конкретной позицией (group_index и row_index должны быть не null)
+        const participant = tournamentData.participants.find(
+          p => p.group_index === gi + 1 && p.row_index === ri && p.group_index != null && p.row_index != null
+        );
+        
+        if (participant?.team) {
+          participantsInSlots.add(participant.id);
+        }
+        
+        // Вычисляем рейтинг
+        let rating: number | undefined = undefined;
+        if (participant?.team) {
+          const team = participant.team as any;
+          if (tournamentData.participant_mode === 'doubles' && team.player_1 && team.player_2) {
+            // Для пар - средний рейтинг игроков
+            const r1 = team.player_1?.current_rating || 0;
+            const r2 = team.player_2?.current_rating || 0;
+            rating = r1 > 0 || r2 > 0 ? Math.round((r1 + r2) / 2) : undefined;
+          } else if (tournamentData.participant_mode === 'singles' && team.player_1) {
+            rating = typeof team.player_1 === 'object' ? team.player_1.current_rating : undefined;
+          }
+        }
+        
+        slots.push({
+          groupIndex: gi,
+          rowIndex: ri,
+          currentParticipant: participant?.team ? {
+            id: participant.id, // TournamentEntry.id
+            name: participant.team.display_name || participant.team.name,
+            fullName: participant.team.full_name,
+            teamId: participant.team.id,
+            isInBracket: true,
+            currentRating: rating
+          } : null
+        });
+      }
+    }
+    
+    setSimplifiedDropSlots(slots);
+    
+    // Загружаем всех участников турнира через существующий endpoint
+    try {
+      const participantsResp = await tournamentApi.getTournamentParticipants(tournamentData.id);
+      
+      // НЕ фильтруем участников - показываем всех, но с флагом isInBracket
+      const availableParticipants: DraggableParticipant[] = participantsResp
+        .map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          fullName: p.name, // В get_participants уже возвращается полное имя
+          teamId: p.team_id,
+          isInBracket: participantsInSlots.has(p.id), // Флаг: участник в таблице или нет
+          currentRating: typeof p.rating === 'number' ? p.rating : undefined
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'ru')); // Сортировка по алфавиту
+      
+      setDragDropState({
+        participants: availableParticipants,
+        dropSlots: [],
+        isSelectionLocked: tournamentData.status !== 'created'
+      });
+    } catch (error) {
+      console.error('Failed to load tournament entries:', error);
+      setDragDropState({
+        participants: [],
+        dropSlots: [],
+        isSelectionLocked: tournamentData.status !== 'created'
+      });
+    }
+  };
+
+  // Обработчик добавления участника на позицию
+  const handleDropParticipant = async (groupIndex: number, rowIndex: number, participant: DraggableParticipant) => {
+    if (!t) return;
+    
+    // Проверка занятости слота
+    const targetSlot = simplifiedDropSlots.find(
+      s => s.groupIndex === groupIndex && s.rowIndex === rowIndex
+    );
+    if (targetSlot?.currentParticipant) {
+      alert('Этот слот уже занят. Сначала удалите текущего участника.');
+      return;
+    }
+    
+    // Проверка дубликатов - участник уже в таблице
+    const alreadyInTable = simplifiedDropSlots.some(
+      s => s.currentParticipant?.id === participant.id
+    );
+    if (alreadyInTable) {
+      alert('Этот участник уже находится в таблице.');
+      return;
+    }
+    
+    try {
+      // Оптимистичное обновление UI - сохраняем рейтинг участника
+      setSimplifiedDropSlots(prev => prev.map(slot => {
+        if (slot.groupIndex === groupIndex && slot.rowIndex === rowIndex) {
+          return { 
+            ...slot, 
+            currentParticipant: { 
+              ...participant, 
+              isInBracket: true,
+              currentRating: participant.currentRating // Явно сохраняем рейтинг
+            } 
+          };
+        }
+        return slot;
+      }));
+      
+      setDragDropState(prev => ({
+        ...prev,
+        participants: prev.participants.map(p => ({
+          ...p,
+          isInBracket: p.id === participant.id ? true : p.isInBracket
+        }))
+      }));
+      
+      // API вызов для установки позиции участника
+      await api.post(`/tournaments/${t.id}/set_participant_position/`, {
+        entry_id: participant.id, // TournamentEntry.id
+        group_index: groupIndex + 1, // Backend использует 1-based индексацию
+        row_index: rowIndex
+      });
+      
+      // Перезагружаем данные турнира
+      await reload();
+    } catch (error) {
+      console.error('Error adding participant to position:', error);
+      alert('Не удалось добавить участника на позицию');
+      
+      // Откат изменений
+      setSimplifiedDropSlots(prev => prev.map(slot => {
+        if (slot.groupIndex === groupIndex && slot.rowIndex === rowIndex) {
+          return { ...slot, currentParticipant: null };
+        }
+        return slot;
+      }));
+      
+      setDragDropState(prev => ({
+        ...prev,
+        participants: prev.participants.map(p => ({
+          ...p,
+          isInBracket: p.id === participant.id ? false : p.isInBracket
+        }))
+      }));
+    }
+  };
+
+  // Обработчик удаления участника с позиции
+  const handleRemoveParticipant = async (groupIndex: number, rowIndex: number) => {
+    if (!t) return;
+    
+    const slot = simplifiedDropSlots.find(s => s.groupIndex === groupIndex && s.rowIndex === rowIndex);
+    if (!slot?.currentParticipant) return;
+    
+    if (!confirm(`Удалить ${slot.currentParticipant.name} из группы?`)) return;
+    
+    try {
+      const participantToRemove = slot.currentParticipant;
+      
+      // API вызов для очистки позиции участника
+      await api.post(`/tournaments/${t.id}/clear_participant_position/`, {
+        entry_id: participantToRemove.id
+      });
+      
+      // Перезагружаем данные турнира
+      await reload();
+    } catch (error) {
+      console.error('Error removing participant from position:', error);
+      alert('Не удалось удалить участника с позиции');
+    }
+  };
+
+  // Автопосев участников
+  const handleAutoSeed = async () => {
+    if (!t) return;
+    
+    if (!confirm('Автоматически распределить участников по группам с учетом рейтинга?')) return;
+    
+    try {
+      setSaving(true);
+      
+      // API вызов для автопосева
+      const { data } = await api.post(`/tournaments/${t.id}/auto_seed/`);
+      
+      if (data.ok) {
+        alert(`Успешно распределено участников: ${data.seeded_count}`);
+        // Перезагружаем данные турнира
+        await reload();
+      } else {
+        alert(data.error || 'Не удалось выполнить автопосев');
+      }
+    } catch (error: any) {
+      console.error('Error auto-seeding:', error);
+      const errorMsg = error?.response?.data?.error || 'Не удалось выполнить автопосев';
+      alert(errorMsg);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Обработчик очистки таблиц
+  const handleClearTables = async () => {
+    if (!t) return;
+    
+    if (!confirm('Очистить все таблицы? Все участники вернутся в список слева.')) return;
+    
+    try {
+      setSaving(true);
+      
+      // API вызов для очистки таблиц
+      const { data } = await api.post(`/tournaments/${t.id}/clear_tables/`);
+      
+      if (data.ok) {
+        alert(`Таблицы очищены. Участников перемещено: ${data.cleared_count}`);
+        // Перезагружаем данные турнира
+        await reload();
+      } else {
+        alert(data.error || 'Не удалось очистить таблицы');
+      }
+    } catch (error: any) {
+      console.error('Error clearing tables:', error);
+      const errorMsg = error?.response?.data?.error || 'Не удалось очистить таблицы';
+      alert(errorMsg);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Обработчик удаления участника из турнира (из левого списка)
+  const handleRemoveParticipantFromList = async (participantId: number) => {
+    if (!t) return;
+    
+    try {
+      // Удалить из БД
+      await api.delete(`/tournaments/${t.id}/remove_participant/`, {
+        data: { entry_id: participantId }
+      });
+      
+      // Обновить UI
+      setDragDropState(prev => ({
+        ...prev,
+        participants: prev.participants.filter(p => p.id !== participantId)
+      }));
+      
+      // Перезагрузить данные
+      await reload();
+    } catch (error) {
+      console.error('Error removing participant from tournament:', error);
+      alert('Не удалось удалить участника из турнира');
     }
   };
 
@@ -985,7 +1288,11 @@ export const TournamentDetailPage: React.FC = () => {
           {/* 3-я строка: статус, число участников, число групп, средний рейтинг, коэффициент, призовой фонд */}
           <div style={{ fontSize: 13, color: '#777', marginTop: 2 }}>
             Статус: {t.status === 'created' ? 'Регистрация' : t.status === 'active' ? 'Идёт' : 'Завершён'}
-            {typeof t.participants_count === 'number' ? ` • Участников: ${t.participants_count}` : ''}
+            {typeof t.participants_count === 'number' && typeof t.planned_participants === 'number' 
+              ? ` • Участников: ${t.participants_count}/${t.planned_participants}` 
+              : typeof t.participants_count === 'number' 
+              ? ` • Участников: ${t.participants_count}` 
+              : ''}
             {((t.system === 'round_robin' || t.system === 'king') && typeof (t as any).groups_count === 'number' && (t as any).groups_count > 1)
               ? ` • групп: ${(t as any).groups_count}`
               : ''}
@@ -1323,6 +1630,182 @@ export const TournamentDetailPage: React.FC = () => {
         </div>
       )}
 
+      {/* Условный рендеринг в зависимости от статуса турнира */}
+      {t.status === 'created' ? (
+        /* Drag-and-Drop интерфейс для статуса created */
+        <div className="knockout-content" style={{ marginTop: 16, height: 'calc(100vh - 300px)', minHeight: '500px' }}>
+          {/* Левая панель с участниками */}
+          <div className="participants-panel">
+            <DraggableParticipantList
+              participants={dragDropState.participants}
+              onRemoveParticipant={handleRemoveParticipantFromList}
+              onAddParticipant={() => setDragDropPickerOpen(true)}
+              onAutoSeed={handleAutoSeed}
+              onClearTables={handleClearTables}
+              maxParticipants={t.planned_participants || 32}
+              canAddMore={true}
+            />
+          </div>
+
+          {/* Правая панель с упрощенными таблицами */}
+          <div className="bracket-panel">
+            {/* Кнопка переключения отображения имен */}
+            <div style={{ marginBottom: 16, display: 'flex', gap: 8 }}>
+              <button 
+                data-export-exclude="true" 
+                className={`toggle ${showFullName ? 'active' : ''}`} 
+                onClick={() => setShowFullName(v => !v)}
+              >
+                ФИО показать
+              </button>
+            </div>
+            
+            {Array.from({ length: t.groups_count || 1 }, (_, gi) => {
+              const groupIndex = gi;
+              const groupName = `Группа ${gi + 1}`;
+              
+              // Вычисляем размер группы с учетом остатка
+              const totalParticipants = t.planned_participants || 0;
+              const groupsCount = t.groups_count || 1;
+              const base = Math.floor(totalParticipants / groupsCount);
+              const remainder = totalParticipants % groupsCount;
+              const plannedPerGroup = groupIndex < remainder ? base + 1 : base;
+              
+              const groupSlots = simplifiedDropSlots.filter(s => s.groupIndex === groupIndex);
+              
+              return (
+                <div key={groupIndex} style={{ marginBottom: 24 }}>
+                  <SimplifiedGroupTable
+                    groupIndex={groupIndex}
+                    groupName={groupName}
+                    plannedParticipants={plannedPerGroup}
+                    dropSlots={groupSlots}
+                    onDrop={handleDropParticipant}
+                    onRemove={handleRemoveParticipant}
+                    isLocked={dragDropState.isSelectionLocked}
+                    showFullName={showFullName}
+                  />
+                  
+                  {/* Расписание и кнопка выбора формата */}
+                  <div style={{ marginTop: 16, padding: 12, background: '#f8f9fa', borderRadius: 8 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
+                      Расписание группы {gi + 1}
+                    </div>
+                    
+                    {(() => {
+                      // Получаем расписание для этой группы из schedule
+                      const groupScheduleRounds = schedule?.[gi + 1];
+                      
+                      if (groupScheduleRounds && groupScheduleRounds.length > 0) {
+                        // Показываем расписание
+                        return (
+                          <div style={{ marginBottom: 8 }}>
+                            {groupScheduleRounds.map((round: [number, number][], roundIdx: number) => (
+                              <div key={roundIdx} style={{ marginBottom: 4, fontSize: 13 }}>
+                                <strong>Тур {roundIdx + 1}:</strong>{' '}
+                                {round.map((pair: [number, number], pairIdx: number) => (
+                                  <span key={pairIdx}>
+                                    {pairIdx > 0 ? ', ' : ''}
+                                    {pair[0]}–{pair[1]}
+                                  </span>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      } else {
+                        // Расписание не создано
+                        return (
+                          <div className="text-gray-500 text-sm mb-2">
+                            Выберите формат расписания для группы
+                          </div>
+                        );
+                      }
+                    })()}
+                    
+                    {canManageTournament && (
+                      <button
+                        onClick={() => {
+                          // Получаем текущий выбранный шаблон для группы
+                          let currentPatternId: number | null = null;
+                          const raw = (t as any)?.group_schedule_patterns;
+                          if (raw) {
+                            if (typeof raw === 'string') {
+                              try {
+                                const parsed = JSON.parse(raw);
+                                const nbspName = groupName.replace(' ', '\u00A0');
+                                const val = parsed?.[groupName] ?? parsed?.[nbspName];
+                                if (val != null && val !== '') currentPatternId = Number(val);
+                              } catch (_) {
+                                // ignore parse error
+                              }
+                            } else if (typeof raw === 'object') {
+                              const nbspName = groupName.replace(' ', '\u00A0');
+                              const val = raw?.[groupName] ?? raw?.[nbspName];
+                              if (val != null && val !== '') currentPatternId = Number(val);
+                            }
+                          }
+                          setSchedulePatternModal({
+                            groupName,
+                            participantsCount: plannedPerGroup,
+                            currentPatternId
+                          });
+                        }}
+                        className="px-3 py-1.5 text-sm text-white bg-green-600 rounded hover:bg-green-700 transition-colors"
+                      >
+                        Выбрать формат расписания
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            
+            {/* Кнопка фиксации участников */}
+            {canManageTournament && (() => {
+              // Проверяем, заполнены ли все таблицы
+              const allSlotsFilled = simplifiedDropSlots.every(slot => slot.currentParticipant !== null);
+              const canLock = allSlotsFilled && simplifiedDropSlots.length > 0;
+              
+              return (
+                <div style={{ marginTop: 16, padding: 16, background: '#f8f9fa', borderRadius: 8 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: canLock ? 'pointer' : 'not-allowed', opacity: canLock ? 1 : 0.5 }}>
+                    <input
+                      type="checkbox"
+                      checked={dragDropState.isSelectionLocked}
+                      disabled={saving || !canLock}
+                      onChange={async (e) => {
+                        if (e.target.checked) {
+                          try {
+                            setSaving(true);
+                            await tournamentApi.lockParticipants(t.id);
+                            setDragDropState(prev => ({ ...prev, isSelectionLocked: true }));
+                            await reload();
+                          } catch (error) {
+                            console.error('Failed to lock participants:', error);
+                            alert('Не удалось зафиксировать участников');
+                          } finally {
+                            setSaving(false);
+                          }
+                        }
+                      }}
+                    />
+                    <span>Зафиксировать участников и сгенерировать расписание</span>
+                  </label>
+                  <p style={{ margin: '8px 0 0 0', fontSize: 13, color: '#666' }}>
+                    {canLock 
+                      ? 'После фиксации будет создано расписание матчей и турнир перейдет в статус "Идёт"'
+                      : 'Заполните все позиции в таблицах, чтобы зафиксировать участников'
+                    }
+                  </p>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      ) : (
+        /* Полные таблицы для статусов active и completed */
+        <>
       {groups.map((g, gi) => (
         <div key={g.idx} style={{ marginBottom: 22 }}>
           <div style={{ marginBottom: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -1608,12 +2091,15 @@ export const TournamentDetailPage: React.FC = () => {
           </div>
         </div>
       ))}
-        {/* Нижний DOM-футер для экспорта: скрыт на странице, показывается только при экспортe */}
-        <div data-export-only="true" style={{ padding: '12px 24px 20px 24px', borderTop: '1px solid #eee', display: 'none', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ fontSize: 14 }}>BeachPlay</div>
-          <div style={{ fontSize: 16, fontWeight: 600 }}>скоро онлайн</div>
-          {/* TODO: как появиться сайт вставить сюда URL */}
-        </div>
+      
+      {/* Нижний DOM-футер для экспорта: скрыт на странице, показывается только при экспортe */}
+      <div data-export-only="true" style={{ padding: '12px 24px 20px 24px', borderTop: '1px solid #eee', display: 'none', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ fontSize: 14 }}>BeachPlay</div>
+        <div style={{ fontSize: 16, fontWeight: 600 }}>скоро онлайн</div>
+        {/* TODO: как появиться сайт вставить сюда URL */}
+      </div>
+        </>
+      )}
       </div>
 
       {/* Регламент (круговая): селект вверху страницы, не попадает в экспорт */}
@@ -1641,7 +2127,22 @@ export const TournamentDetailPage: React.FC = () => {
         </div>
       )}
 
-      {/* Модалка выбора участника */}
+      {/* Модалка выбора участника для drag-and-drop */}
+      {canManageTournament && dragDropPickerOpen && (
+        <KnockoutParticipantPicker
+          open={true}
+          onClose={() => setDragDropPickerOpen(false)}
+          tournamentId={t.id}
+          isDoubles={t.participant_mode === 'doubles'}
+          usedPlayerIds={Array.from(distinctPlayerIds)}
+          onSaved={() => {
+            setDragDropPickerOpen(false);
+            reload();
+          }}
+        />
+      )}
+
+      {/* Модалка выбора участника (старая, для active/completed) */}
       {canManageTournament && pickerOpen && (
         <ParticipantPickerModal
           open={true}
@@ -1685,6 +2186,15 @@ export const TournamentDetailPage: React.FC = () => {
             style={{ background: '#dc3545', borderColor: '#dc3545' }}
           >
             Удалить турнир
+          </button>
+        )}
+        {canManageTournament && t.status === 'created' && (
+          <button
+            className="btn"
+            onClick={() => alert('Функционал будет реализован позже')}
+            disabled={saving}
+          >
+            Поменять настройки турнира
           </button>
         )}
         {/* REFEREE по плану не должен пользоваться кнопкой "Поделиться" */}
