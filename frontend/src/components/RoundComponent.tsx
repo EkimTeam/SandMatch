@@ -118,6 +118,35 @@ export const RoundComponent: React.FC<{
                 console.error('Error parsing dropped data:', error);
               }
             };
+
+            // Touch events для мобильных устройств
+            const handleTouchDrop = (e: Event, slot: 'team_1' | 'team_2') => {
+              if (!canDrop || !m) return;
+              const customEvent = e as CustomEvent;
+              const { participant } = customEvent.detail;
+              if (participant && onDrop) {
+                onDrop(m.id, slot, participant);
+              }
+            };
+
+            // Подписка на custom events для touch
+            React.useEffect(() => {
+              if (!canDrop || !m) return;
+              
+              const slot1Element = document.querySelector(`[data-drop-slot][data-match-id="${m.id}"][data-slot="team_1"]`);
+              const slot2Element = document.querySelector(`[data-drop-slot][data-match-id="${m.id}"][data-slot="team_2"]`);
+              
+              const handler1 = (e: Event) => handleTouchDrop(e, 'team_1');
+              const handler2 = (e: Event) => handleTouchDrop(e, 'team_2');
+              
+              slot1Element?.addEventListener('participant-drop', handler1);
+              slot2Element?.addEventListener('participant-drop', handler2);
+              
+              return () => {
+                slot1Element?.removeEventListener('participant-drop', handler1);
+                slot2Element?.removeEventListener('participant-drop', handler2);
+              };
+            }, [canDrop, m?.id]);
             // Определить фон в зависимости от статуса
             const getBackgroundColor = () => {
               if (!m) return '#fff';
@@ -145,6 +174,9 @@ export const RoundComponent: React.FC<{
               onClick={() => m && onMatchClick?.(m.id)}
             >
               <div 
+                data-drop-slot={canDrop ? 'true' : undefined}
+                data-match-id={canDrop ? String(m?.id) : undefined}
+                data-slot={canDrop ? 'team_1' : undefined}
                 style={{ 
                   display: 'flex', 
                   justifyContent: 'space-between', 
@@ -204,6 +236,9 @@ export const RoundComponent: React.FC<{
                 })()}
               </div>
               <div 
+                data-drop-slot={canDrop ? 'true' : undefined}
+                data-match-id={canDrop ? String(m?.id) : undefined}
+                data-slot={canDrop ? 'team_2' : undefined}
                 style={{ 
                   display: 'flex', 
                   justifyContent: 'space-between', 
