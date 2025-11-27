@@ -34,7 +34,8 @@ def summary_stats(request: HttpRequest) -> JsonResponse:
     d_from = _parse_date(request.GET.get('from'))
     d_to = _parse_date(request.GET.get('to'))
 
-    base_match_q = Q(status=Match.Status.COMPLETED)
+    # Исключаем матчи с BYE (где одна из команд отсутствует)
+    base_match_q = Q(status=Match.Status.COMPLETED) & Q(team_1__isnull=False) & Q(team_2__isnull=False)
     match_q = base_match_q & _date_filters(d_from, d_to)
 
     # Общая статистика
