@@ -28,7 +28,7 @@ def _get_groups_by_rows(tournament: Tournament) -> List[List[int]]:
     groups: List[List[int]] = [[] for _ in range(groups_count)]
     entries = (
         TournamentEntry.objects
-        .filter(tournament=tournament)
+        .filter(tournament=tournament, group_index__isnull=False, row_index__isnull=False)
         .values("team_id", "group_index", "row_index")
         .order_by("group_index", "row_index", "team_id")
     )
@@ -133,27 +133,36 @@ def _custom_pattern_pairings(
     Raises:
         ValueError: если количество команд не совпадает с ожидаемым в шаблоне
     """
-    if len(team_ids) != pattern.participants_count:
+    # Разрешаем использовать шаблон для N или N-1 участников (нечетное количество)
+    if len(team_ids) != pattern.participants_count and len(team_ids) != pattern.participants_count - 1:
         raise ValueError(
             f"Количество команд {len(team_ids)} != "
-            f"ожидаемому в шаблоне {pattern.participants_count}"
+            f"ожидаемому в шаблоне {pattern.participants_count} или {pattern.participants_count - 1}"
         )
     
     # Маппинг: позиция в шаблоне (1-based) -> team_id
     position_to_team = {i + 1: team_id for i, team_id in enumerate(team_ids)}
     
     rounds: List[List[Tuple[int, int]]] = []
+    max_position = len(team_ids)
     
     for round_data in pattern.custom_schedule['rounds']:
         pairs: List[Tuple[int, int]] = []
         
         for pair_positions in round_data['pairs']:
             pos1, pos2 = pair_positions
+            
+            # Пропускаем пары с участником, которого нет (при нечетном количестве)
+            if pos1 > max_position or pos2 > max_position:
+                continue
+            
             team1_id = position_to_team[pos1]
             team2_id = position_to_team[pos2]
             pairs.append((team1_id, team2_id))
         
-        rounds.append(pairs)
+        # Добавляем тур только если в нем есть пары
+        if pairs:
+            rounds.append(pairs)
     
     return rounds
 
@@ -248,7 +257,8 @@ def generate_matches_for_group(
     team_ids = list(
         TournamentEntry.objects.filter(
             tournament=tournament,
-            group_index=group_index
+            group_index=group_index,
+            row_index__isnull=False
         )
         .values_list("team_id", flat=True)
         .order_by("row_index", "team_id")

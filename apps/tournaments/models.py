@@ -326,13 +326,19 @@ class TournamentEntry(models.Model):
     tournament = models.ForeignKey(Tournament, on_delete=models.CASCADE, related_name="entries")
     team = models.ForeignKey("teams.Team", on_delete=models.CASCADE, related_name="tournament_entries")
     is_out_of_competition = models.BooleanField(default=False, verbose_name="Вне зачёта")
-    group_index = models.PositiveSmallIntegerField(default=1)
-    row_index = models.PositiveSmallIntegerField(default=1)
+    # group_index и row_index могут быть null для участников, которые зарегистрированы, но не расставлены
+    group_index = models.PositiveSmallIntegerField(null=True, blank=True, default=None)
+    row_index = models.PositiveSmallIntegerField(null=True, blank=True, default=None)
 
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["tournament", "team"], name="unique_entry_team_in_tournament"),
-            models.UniqueConstraint(fields=["tournament", "group_index", "row_index"], name="unique_entry_position"),
+            # Уникальность позиции только если group_index и row_index не null
+            models.UniqueConstraint(
+                fields=["tournament", "group_index", "row_index"],
+                name="unique_entry_position",
+                condition=models.Q(group_index__isnull=False, row_index__isnull=False)
+            ),
         ]
         verbose_name = "Участие в турнире"
         verbose_name_plural = "Участия в турнире"
