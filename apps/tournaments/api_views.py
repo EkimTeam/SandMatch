@@ -2488,7 +2488,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 # Одна группа - просто проставляем по порядку
                 for idx, entry in enumerate(sorted_entries):
                     entry.group_index = 1
-                    entry.row_index = idx
+                    entry.row_index = idx + 1  # 1-based индексация (1, 2, 3...)
                     entry.save(update_fields=['group_index', 'row_index'])
             else:
                 # Несколько групп - распределяем отрезками
@@ -2508,7 +2508,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     if row_idx == 0:
                         for i, entry in enumerate(segment):
                             entry.group_index = available_groups[i]
-                            entry.row_index = row_idx
+                            entry.row_index = row_idx + 1  # 1-based индексация (1, 2, 3...)
                             entry.save(update_fields=['group_index', 'row_index'])
                     else:
                         # Для остальных отрезков - случайный порядок групп
@@ -2517,7 +2517,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
                         for i, entry in enumerate(segment):
                             if i < len(available_groups):
                                 entry.group_index = available_groups[i]
-                                entry.row_index = row_idx
+                                entry.row_index = row_idx + 1  # 1-based индексация (1, 2, 3...)
                                 entry.save(update_fields=['group_index', 'row_index'])
             
             return Response({'ok': True, 'seeded_count': len(sorted_entries)})
