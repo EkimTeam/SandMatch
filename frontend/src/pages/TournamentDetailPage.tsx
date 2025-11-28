@@ -375,8 +375,9 @@ export const TournamentDetailPage: React.FC = () => {
       const groupSize = getGroupSize(gi);
       for (let ri = 0; ri < groupSize; ri++) {
         // Ищем участника с конкретной позицией (group_index и row_index должны быть не null)
+        // row_index в БД начинается с 1, а ri с 0, поэтому ri + 1
         const participant = tournamentData.participants.find(
-          p => p.group_index === gi + 1 && p.row_index === ri && p.group_index != null && p.row_index != null
+          p => p.group_index === gi + 1 && p.row_index === ri + 1 && p.group_index != null && p.row_index != null
         );
         
         if (participant?.team) {
@@ -495,7 +496,7 @@ export const TournamentDetailPage: React.FC = () => {
       await api.post(`/tournaments/${t.id}/set_participant_position/`, {
         entry_id: participant.id, // TournamentEntry.id
         group_index: groupIndex + 1, // Backend использует 1-based индексацию
-        row_index: rowIndex
+        row_index: rowIndex + 1 // Backend использует 1-based индексацию (1, 2, 3...)
       });
       
       // Перезагружаем данные турнира
