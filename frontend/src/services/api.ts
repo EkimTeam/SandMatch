@@ -291,6 +291,12 @@ export const tournamentApi = {
     await api.post(`/tournaments/${id}/save_participants/`, { participants });
   },
 
+  // Изменить настройки турнира (для статуса created)
+  editSettings: async (id: number, payload: any): Promise<Tournament> => {
+    const response = await api.post<Tournament>(`/tournaments/${id}/edit_settings/`, payload);
+    return response.data;
+  },
+
   // Зафиксировать участников (создать матчи по расписанию)
   lockParticipants: async (id: number): Promise<any> => {
     const response = await api.post(`/tournaments/${id}/lock_participants/`);

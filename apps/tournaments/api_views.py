@@ -192,6 +192,120 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="edit_settings", permission_classes=[IsAuthenticated])
+    def edit_settings(self, request, pk=None):
+        """Изменить базовые настройки турнира в статусе CREATED.
+
+        Позволяет организатору скорректировать параметры турнира до старта:
+        - name, date
+        - system (round_robin / knockout)
+        - set_format, ruleset
+        - groups_count, planned_participants
+        - is_rating_calc, prize_fund
+
+        При смене системы:
+        - round_robin: обнуляем позиции всех участников (group_index=row_index=None)
+        - knockout: всем участникам выставляем group_index=1 и row_index=1..N по возрастанию id
+        """
+
+        tournament: Tournament = self.get_object()
+
+        # Разрешаем редактирование только для черновиков
+        if tournament.status != Tournament.Status.CREATED:
+            return Response({"ok": False, "error": "Настройки можно изменять только для турниров в статусе CREATED"}, status=400)
+
+        # Проверка прав организатора/админа уже выполняется через get_permissions (update/partial_update)
+
+        data = request.data or {}
+
+        # Обновляем базовые поля
+        name = data.get("name")
+        if isinstance(name, str) and name.strip():
+            tournament.name = name.strip()
+
+        from datetime import date as _date
+        date_raw = data.get("date")
+        if isinstance(date_raw, str) and date_raw:
+            try:
+                tournament.date = _date.fromisoformat(date_raw)
+            except Exception:
+                return Response({"ok": False, "error": "Некорректная дата"}, status=400)
+
+        # Система проведения: только round_robin/knockout
+        system = data.get("system") or tournament.system
+        if system not in {Tournament.System.ROUND_ROBIN, Tournament.System.KNOCKOUT}:
+            return Response({"ok": False, "error": "Недопустимая система турнира"}, status=400)
+
+        # Формат и регламент
+        set_format_id = data.get("set_format_id")
+        ruleset_id = data.get("ruleset_id")
+
+        if set_format_id:
+            try:
+                sf = SetFormat.objects.get(pk=int(set_format_id))
+                tournament.set_format = sf
+            except (SetFormat.DoesNotExist, ValueError, TypeError):
+                return Response({"ok": False, "error": "Формат сетов не найден"}, status=400)
+
+        if ruleset_id:
+            try:
+                rs = Ruleset.objects.get(pk=int(ruleset_id))
+                tournament.ruleset = rs
+            except (Ruleset.DoesNotExist, ValueError, TypeError):
+                return Response({"ok": False, "error": "Регламент не найден"}, status=400)
+
+        # Количество групп и участников
+        groups_count = data.get("groups_count")
+        if groups_count is not None:
+            try:
+                tournament.groups_count = int(groups_count) or 1
+            except Exception:
+                return Response({"ok": False, "error": "Некорректное число групп"}, status=400)
+
+        planned_participants = data.get("participants") or data.get("ko_participants")
+        if planned_participants is not None:
+            try:
+                pp = int(planned_participants)
+                tournament.planned_participants = pp if pp > 0 else None
+            except Exception:
+                return Response({"ok": False, "error": "Некорректное число участников"}, status=400)
+
+        # Рейтинг и призовой фонд
+        is_rating_calc = data.get("is_rating_calc")
+        if isinstance(is_rating_calc, bool):
+            tournament.is_rating_calc = is_rating_calc
+
+        has_prize_fund = data.get("has_prize_fund")
+        prize_fund = data.get("prize_fund")
+        if has_prize_fund:
+            tournament.prize_fund = (prize_fund or "").strip() or None
+        else:
+            tournament.prize_fund = None
+
+        # Обработка смены системы и переразметка участников
+        from django.db import transaction
+
+        with transaction.atomic():
+            old_system = tournament.system
+            tournament.system = system
+            tournament.save()
+
+            entries_qs = TournamentEntry.objects.filter(tournament=tournament).order_by("id")
+
+            if system == Tournament.System.ROUND_ROBIN:
+                # Обнуляем позиции — участники останутся зарегистрированными, но не расставленными по таблицам
+                entries_qs.update(group_index=None, row_index=None)
+            elif system == Tournament.System.KNOCKOUT:
+                # Линеаризуем участников: все в группе 1, позиции 1..N
+                row = 1
+                for e in entries_qs:
+                    TournamentEntry.objects.filter(pk=e.pk).update(group_index=1, row_index=row)
+                    row += 1
+
+        serializer = self.get_serializer(tournament)
+        return Response(serializer.data)
+
+    @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="set_ruleset", permission_classes=[IsAuthenticated])
     def set_ruleset(self, request, pk=None):
         """Установить регламент турнира (ruleset_id)."""

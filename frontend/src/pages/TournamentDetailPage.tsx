@@ -14,6 +14,7 @@ import { SimplifiedGroupTable, SimplifiedDropSlot } from '../components/Simplifi
 import { DraggableParticipant, DragDropState } from '../types/dragdrop';
 import '../styles/knockout-dragdrop.css';
 import html2canvas from 'html2canvas';
+import { EditTournamentModal } from '../components/EditTournamentModal';
 
 // Константы цветов для подсветки ячеек
 const MATCH_COLORS = {
@@ -76,6 +77,9 @@ type TournamentDetail = {
   participants_count?: number;
 };
 
+type SetFormatDict = { id: number; name: string };
+type RulesetDict = { id: number; name: string };
+
 const toRoman = (num: number) => {
   const romans: [number, string][] = [
     [1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'],
@@ -127,6 +131,34 @@ export const TournamentDetailPage: React.FC = () => {
   const [schedule, setSchedule] = useState<Record<number, [number, number][][]>>({});
   const [scheduleLoaded, setScheduleLoaded] = useState(false);
   const canDeleteTournament = !!t?.can_delete;
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [setFormats, setSetFormats] = useState<SetFormatDict[]>([]);
+
+  const handleOpenEditSettings = () => {
+    if (!t) return;
+    setShowEditModal(true);
+  };
+
+  const handleEditSettingsSubmit = async (payload: any) => {
+    if (!t) return;
+    try {
+      setSaving(true);
+      const updated = await tournamentApi.editSettings(t.id, payload);
+      setShowEditModal(false);
+      // Полный редирект в зависимости от системы, чтобы страница перечитала данные с бэка
+      if (updated.system === 'round_robin') {
+        window.location.href = `/tournaments/${updated.id}`;
+      } else if (updated.system === 'knockout') {
+        window.location.href = `/tournaments/${updated.id}/knockout`;
+      } else {
+        window.location.href = `/tournaments/${updated.id}`;
+      }
+    } catch (e: any) {
+      alert(e?.response?.data?.error || 'Не удалось изменить настройки турнира');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // Универсальный поиск матча по паре ID команд в группе: учитывает разные формы сериализации
   const findGroupMatch = useCallback((groupIdx: number, teamAId?: number | null, teamBId?: number | null) => {
@@ -142,6 +174,7 @@ export const TournamentDetailPage: React.FC = () => {
       const B = b != null ? Number(b) : null;
       return (t1 === A && t2 === B) || (t1 === B && t2 === A);
     };
+
     // Сначала ищем строго по группе
     const byGroup = matches.find((mm: any) => {
       const stage = (mm.stage || '').toString().toLowerCase();
@@ -181,6 +214,20 @@ export const TournamentDetailPage: React.FC = () => {
   const [playerRatings, setPlayerRatings] = useState<Map<number, number>>(new Map());
   // Карта позиций игроков в рейтинге: playerId -> rank (место в рейтинге)
   const [playerRanks, setPlayerRanks] = useState<Map<number, number>>(new Map());
+
+  // Справочники для модалки редактирования (форматы сетов)
+  useEffect(() => {
+    const loadDictionaries = async () => {
+      try {
+        const resp = await api.get('/set-formats/');
+        setSetFormats(resp.data.set_formats || []);
+      } catch (e) {
+        console.error('Ошибка загрузки форматов сетов:', e);
+        setSetFormats([]);
+      }
+    };
+    loadDictionaries();
+  }, []);
 
   // Загрузка рейтингов всех игроков, участвующих в турнире
   useEffect(() => {
@@ -1689,6 +1736,7 @@ export const TournamentDetailPage: React.FC = () => {
           </div>
         </div>
       )}
+      </div>
 
       {/* Условный рендеринг в зависимости от статуса турнира */}
       {t.status === 'created' ? (
@@ -2209,7 +2257,6 @@ export const TournamentDetailPage: React.FC = () => {
       </div>
         </>
       )}
-      </div>
 
       {/* Регламент (круговая): селект вверху страницы, не попадает в экспорт */}
       {t?.system === 'round_robin' && (
@@ -2300,7 +2347,7 @@ export const TournamentDetailPage: React.FC = () => {
         {canManageTournament && t.status === 'created' && (
           <button
             className="btn"
-            onClick={() => alert('Функционал будет реализован позже')}
+            onClick={handleOpenEditSettings}
             disabled={saving}
           >
             Поменять настройки турнира
@@ -2311,6 +2358,17 @@ export const TournamentDetailPage: React.FC = () => {
           <button className="btn" onClick={handleShare}>Поделиться</button>
         )}
       </div>
+
+      {/* Модалка редактирования настроек турнира */}
+      {showEditModal && t && (
+        <EditTournamentModal
+          tournament={t}
+          setFormats={setFormats}
+          rulesets={rrRulesets}
+          onSubmit={handleEditSettingsSubmit}
+          onClose={() => setShowEditModal(false)}
+        />
+      )}
     </div>
   );
 };
