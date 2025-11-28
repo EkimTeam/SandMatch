@@ -177,8 +177,10 @@ export const TournamentDetailPage: React.FC = () => {
     }
   }, [id]);
 
-  // Карта рейтингов игроков: playerId -> current_rating
+  // Карта рейтингов игроков: playerId -> рейтинг (current или rating_before)
   const [playerRatings, setPlayerRatings] = useState<Map<number, number>>(new Map());
+  // Карта позиций игроков в рейтинге: playerId -> rank (место в рейтинге)
+  const [playerRanks, setPlayerRanks] = useState<Map<number, number>>(new Map());
 
   // Загрузка рейтингов всех игроков, участвующих в турнире
   useEffect(() => {
@@ -193,7 +195,7 @@ export const TournamentDetailPage: React.FC = () => {
           if (typeof p1 === 'number') ids.add(p1);
           if (typeof p2 === 'number') ids.add(p2);
         }
-        if (ids.size === 0) { setPlayerRatings(new Map()); return; }
+        if (ids.size === 0) { setPlayerRatings(new Map()); setPlayerRanks(new Map()); return; }
         const idArray = Array.from(ids);
 
         // Для завершённых турниров используем рейтинг ДО турнира (rating_before)
@@ -229,20 +231,37 @@ export const TournamentDetailPage: React.FC = () => {
             }
           }
 
+          // Вычисляем позиции в рейтинге по значениям map (чем больше рейтинг, тем выше позиция)
+          const ranks = new Map<number, number>();
+          const sorted = Array.from(map.entries()).sort((a, b) => b[1] - a[1]);
+          sorted.forEach(([pid], idx) => {
+            ranks.set(pid, idx + 1);
+          });
+
           setPlayerRatings(map);
+          setPlayerRanks(ranks);
         } else {
-          // Для незавершённых турниров используем текущий рейтинг
+          // Для незавершённых турниров используем текущий рейтинг и глобальную позицию из briefs
           const resp = await ratingApi.playerBriefs(idArray);
           const map = new Map<number, number>();
+          const ranks = new Map<number, number>();
           for (const it of (resp.results || [])) {
-            if (typeof it.id === 'number' && typeof it.current_rating === 'number') {
-              map.set(it.id, it.current_rating);
+            if (typeof it.id === 'number') {
+              if (typeof it.current_rating === 'number') {
+                map.set(it.id, it.current_rating);
+              }
+              if (typeof it.rank === 'number') {
+                ranks.set(it.id, it.rank);
+              }
             }
           }
+
           setPlayerRatings(map);
+          setPlayerRanks(ranks);
         }
-      } catch (e) {
+      } catch {
         setPlayerRatings(new Map());
+        setPlayerRanks(new Map());
       }
     };
     loadRatings();
@@ -1034,15 +1053,16 @@ export const TournamentDetailPage: React.FC = () => {
   // Загрузка регламентов для круговой системы (только для отображения селекта)
   useEffect(() => {
     const loadRulesets = async () => {
+      if (!t) return;
       try {
-        const data = await tournamentApi.getById(idNum);
-        setT(data as any);
+        // Инициализируем режим отображения имён/ФИО один раз, на основе организатора
         if (!showNamesInitializedRef.current) {
-          const organizerUsername = (data as any).organizer_username;
+          const organizerUsername = (t as any).organizer_username;
           const useDisplayName = organizerUsername === 'ArtemPara';
           setShowFullName(!useDisplayName);
           showNamesInitializedRef.current = true;
         }
+
         const list = await tournamentApi.getRulesets('round_robin');
         setRrRulesets(list);
       } catch (e) {
@@ -1050,7 +1070,7 @@ export const TournamentDetailPage: React.FC = () => {
       }
     };
     loadRulesets();
-  }, [idNum]);
+  }, [t]);
 
   const handleRrRulesetChange = async (rulesetId: number) => {
     if (!t || !canManageTournament) return;
@@ -1961,6 +1981,10 @@ export const TournamentDetailPage: React.FC = () => {
                           const p1Name = p1 ? (p1.display_name || `${p1.last_name} ${p1.first_name}`) : null;
                           const p2Name = p2 ? (p2.display_name || `${p2.last_name} ${p2.first_name}`) : null;
 
+                          const rank1 = (typeof id1 === 'number' && playerRanks.has(id1)) ? playerRanks.get(id1)! : null;
+                          const rank2 = (typeof id2 === 'number' && playerRanks.has(id2)) ? playerRanks.get(id2)! : null;
+                          const showRanks = t.status === 'active';
+
                           return (
                             <>
                               {p1Name && (
@@ -1968,7 +1992,7 @@ export const TournamentDetailPage: React.FC = () => {
                                   {p1Name}
                                   {typeof r1 === 'number' && (
                                     <span style={{ marginLeft: 4, fontSize: 10, opacity: 0.75 }}>
-                                      ({Math.round(r1)} <span style={{ fontSize: 9 }}>BP</span>)
+                                      ({showRanks && typeof rank1 === 'number' ? `#${rank1} • ${Math.round(r1)} BP` : `${Math.round(r1)} BP`})
                                     </span>
                                   )}
                                 </span>
@@ -1981,7 +2005,7 @@ export const TournamentDetailPage: React.FC = () => {
                                   {p2Name}
                                   {typeof r2 === 'number' && (
                                     <span style={{ marginLeft: 4, fontSize: 10, opacity: 0.75 }}>
-                                      ({Math.round(r2)} <span style={{ fontSize: 9 }}>BP</span>)
+                                      ({showRanks && typeof rank2 === 'number' ? `#${rank2} • ${Math.round(r2)} BP` : `${Math.round(r2)} BP`})
                                     </span>
                                   )}
                                 </span>
