@@ -327,6 +327,20 @@ export const KingPage: React.FC = () => {
     );
   }
 
+  // Временно отключаем функционал турниров Кинг на период технического обслуживания
+  return (
+    <div className="container mx-auto p-8">
+      <div className="bg-yellow-100 border border-yellow-400 text-yellow-800 px-6 py-8 rounded-lg text-center">
+        <h1 className="text-3xl font-extrabold mb-4">
+          ФУНКЦИОНАЛ НАХОДИТСЯ НА ТЕХОБСЛУЖИВАНИИ
+        </h1>
+        <p className="text-lg">
+          Раздел турниров Кинг временно недоступен. Мы работаем над доработкой и исправлением логики.
+        </p>
+      </div>
+    </div>
+  );
+
   const completed = tournament.status === 'completed';
   const effectiveLocked = lockParticipants || tournament.status === 'active' || completed;
   // Для КИНГ: как только турнир активирован, разблокировка не поддерживается — чекбокс отключаем
@@ -972,7 +986,8 @@ export const KingPage: React.FC = () => {
                           {/* Предварительный расчет очков по турам для участника + вывод всех ячеек строки */}
                           {(() => {
                             const scheduleRounds: any[] = groupData.rounds || [];
-                            const allMatches: any[] = (tournament as any)?.matches || [];
+                            // Собираем все матчи из rounds (они уже содержат полные данные с sets)
+                            const allMatches: any[] = scheduleRounds.flatMap((r: any) => r.matches || []);
 
                             const pointsByRound: Array<number | null> = [];
                             const oppPointsByRound: Array<number | null> = [];
