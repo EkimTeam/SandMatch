@@ -194,14 +194,53 @@ export const TournamentDetailPage: React.FC = () => {
           if (typeof p2 === 'number') ids.add(p2);
         }
         if (ids.size === 0) { setPlayerRatings(new Map()); return; }
-        const resp = await ratingApi.playerBriefs(Array.from(ids));
-        const map = new Map<number, number>();
-        for (const it of (resp.results || [])) {
-          if (typeof it.id === 'number' && typeof it.current_rating === 'number') {
-            map.set(it.id, it.current_rating);
+        const idArray = Array.from(ids);
+
+        // Для завершённых турниров используем рейтинг ДО турнира (rating_before)
+        if (t.status === 'completed') {
+          const map = new Map<number, number>();
+
+          // Сначала пытаемся получить rating_before по каждому игроку
+          await Promise.all(idArray.map(async (pid) => {
+            try {
+              const hist = await ratingApi.playerHistory(pid);
+              const rows = hist?.history || [];
+              const row = rows.find((r: any) => r.tournament_id === t.id && typeof r.rating_before === 'number');
+              if (row) {
+                map.set(pid, row.rating_before);
+              }
+            } catch {
+              // Игнорируем ошибки по отдельным игрокам, fallback сделаем ниже
+            }
+          }));
+
+          // Для тех, у кого нет rating_before, добираем current_rating как раньше
+          const missing = idArray.filter(pid => !map.has(pid));
+          if (missing.length > 0) {
+            try {
+              const respBriefs = await ratingApi.playerBriefs(missing);
+              for (const it of (respBriefs.results || [])) {
+                if (typeof it.id === 'number' && typeof it.current_rating === 'number' && !map.has(it.id)) {
+                  map.set(it.id, it.current_rating);
+                }
+              }
+            } catch {
+              // Если briefs не доступны, просто оставляем то, что удалось получить
+            }
           }
+
+          setPlayerRatings(map);
+        } else {
+          // Для незавершённых турниров используем текущий рейтинг
+          const resp = await ratingApi.playerBriefs(idArray);
+          const map = new Map<number, number>();
+          for (const it of (resp.results || [])) {
+            if (typeof it.id === 'number' && typeof it.current_rating === 'number') {
+              map.set(it.id, it.current_rating);
+            }
+          }
+          setPlayerRatings(map);
         }
-        setPlayerRatings(map);
       } catch (e) {
         setPlayerRatings(new Map());
       }
@@ -1911,6 +1950,51 @@ export const TournamentDetailPage: React.FC = () => {
                           const cnt = (team.player_1 ? 1 : 0) + (team.player_2 ? 1 : 0);
                           rating = cnt > 0 ? Math.round(team.rating_sum / cnt) : Math.round(team.rating_sum);
                         }
+
+                        const isDoublesWithNames =
+                          !!t && (t.status === 'active' || t.status === 'completed') &&
+                          (t as any).participant_mode === 'doubles' && !showFullName;
+
+                        if (isDoublesWithNames && (team.player_1 || team.player_2)) {
+                          const p1: any = typeof team.player_1 === 'object' ? team.player_1 : null;
+                          const p2: any = typeof team.player_2 === 'object' ? team.player_2 : null;
+                          const p1Name = p1 ? (p1.display_name || `${p1.last_name} ${p1.first_name}`) : null;
+                          const p2Name = p2 ? (p2.display_name || `${p2.last_name} ${p2.first_name}`) : null;
+
+                          return (
+                            <>
+                              {p1Name && (
+                                <span>
+                                  {p1Name}
+                                  {typeof r1 === 'number' && (
+                                    <span style={{ marginLeft: 4, fontSize: 10, opacity: 0.75 }}>
+                                      ({Math.round(r1)} <span style={{ fontSize: 9 }}>BP</span>)
+                                    </span>
+                                  )}
+                                </span>
+                              )}
+                              {p1Name && p2Name && (
+                                <span style={{ margin: '0 4px' }}>/</span>
+                              )}
+                              {p2Name && (
+                                <span>
+                                  {p2Name}
+                                  {typeof r2 === 'number' && (
+                                    <span style={{ marginLeft: 4, fontSize: 10, opacity: 0.75 }}>
+                                      ({Math.round(r2)} <span style={{ fontSize: 9 }}>BP</span>)
+                                    </span>
+                                  )}
+                                </span>
+                              )}
+                              {typeof rating === 'number' && (
+                                <span style={{ marginLeft: 6, fontSize: 10, opacity: 0.75 }}>
+                                  {rating} <span style={{ fontSize: 9 }}>BP</span>
+                                </span>
+                              )}
+                            </>
+                          );
+                        }
+
                         return (
                           <>
                             <span>{name}</span>
