@@ -238,13 +238,26 @@ export const EditTournamentModal: React.FC<EditTournamentModalProps> = ({
 
             <div className="form-row">
               <label>Система проведения</label>
+              {/* TODO: проработать логику превращения кругового турнира в олимпийский */}
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  <input type="radio" name="system" value="round_robin" checked={formData.system === 'round_robin'} onChange={handleChange} />
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: 0.7 }}>
+                  <input
+                    type="radio"
+                    name="system"
+                    value="round_robin"
+                    checked={formData.system === 'round_robin'}
+                    disabled
+                  />
                   <span>Круговая</span>
                 </label>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  <input type="radio" name="system" value="knockout" checked={formData.system === 'knockout'} onChange={handleChange} />
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: 0.7 }}>
+                  <input
+                    type="radio"
+                    name="system"
+                    value="knockout"
+                    checked={formData.system === 'knockout'}
+                    disabled
+                  />
                   <span>Олимпийская</span>
                 </label>
               </div>
