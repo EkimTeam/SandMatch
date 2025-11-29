@@ -282,12 +282,35 @@ class TournamentViewSet(viewsets.ModelViewSet):
         else:
             tournament.prize_fund = None
 
-        # Обработка смены системы и переразметка участников
+        # Обработка смены системы, расписания и переразметка участников
         from django.db import transaction
 
         with transaction.atomic():
             old_system = tournament.system
             tournament.system = system
+            # Обновляем group_schedule_patterns в зависимости от системы
+            if system == Tournament.System.KNOCKOUT:
+                # Для олимпийки шаблоны расписания групп не используются
+                tournament.group_schedule_patterns = {}
+            elif system == Tournament.System.ROUND_ROBIN:
+                # Для круговой системы заполняем шаблоны по системному расписанию
+                groups_value = tournament.groups_count or 1
+                try:
+                    base_pattern = SchedulePattern.objects.filter(
+                        tournament_system=SchedulePattern.TournamentSystem.ROUND_ROBIN,
+                        is_system=True,
+                    ).order_by("id").first()
+                except Exception:
+                    base_pattern = None
+
+                if base_pattern and groups_value > 0:
+                    tournament.group_schedule_patterns = {
+                        f"Группа {gi}": base_pattern.id for gi in range(1, groups_value + 1)
+                    }
+                else:
+                    # Если нет подходящего системного шаблона — оставляем пустым
+                    tournament.group_schedule_patterns = {}
+
             tournament.save()
 
             entries_qs = TournamentEntry.objects.filter(tournament=tournament).order_by("id")
