@@ -1500,6 +1500,13 @@ export const TournamentDetailPage: React.FC = () => {
               if (t?.status === 'completed') return;
               
               if (!scoreInput) return;
+              
+              // API ожидает id_team_first/id_team_second как победитель/проигравший
+              // и games_first/games_second как очки победителя/проигравшего
+              // winnerTeamId/loserTeamId уже правильные (реальные ID команд)
+              // gamesWinner/gamesLoser уже правильные (очки победителя/проигравшего)
+              // Просто передаём их напрямую
+              
               await api.post(`/tournaments/${t.id}/match_save_score/`, {
                 match_id: scoreInput.matchId,
                 id_team_first: winnerTeamId,
@@ -1721,6 +1728,8 @@ export const TournamentDetailPage: React.FC = () => {
                           matchId: scoreDialog.matchId!,
                           team1: { id: aTeam.id, name: fmt(aTeam) },
                           team2: { id: bTeam.id, name: fmt(bTeam) },
+                          matchTeam1Id: scoreDialog.matchTeam1Id ?? null,
+                          matchTeam2Id: scoreDialog.matchTeam2Id ?? null,
                           existingSets: existingSets,
                         });
                         setScoreDialog(null);
@@ -1736,7 +1745,6 @@ export const TournamentDetailPage: React.FC = () => {
           </div>
         </div>
       )}
-      </div>
 
       {/* Условный рендеринг в зависимости от статуса турнира */}
       {t.status === 'created' ? (
@@ -2251,12 +2259,13 @@ export const TournamentDetailPage: React.FC = () => {
       
       {/* Нижний DOM-футер для экспорта: скрыт на странице, показывается только при экспортe */}
       <div data-export-only="true" style={{ padding: '12px 24px 20px 24px', borderTop: '1px solid #eee', display: 'none', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ fontSize: 14 }}>BeachPlay</div>
-        <div style={{ fontSize: 16, fontWeight: 600 }}>скоро онлайн</div>
+        <div style={{ fontSize: 14 }}>BeachPlay.ru</div>
+        <div style={{ fontSize: 16, fontWeight: 600 }}>всегда онлайн!</div>
         {/* TODO: как появиться сайт вставить сюда URL */}
       </div>
         </>
       )}
+      </div>
 
       {/* Регламент (круговая): селект вверху страницы, не попадает в экспорт */}
       {t?.system === 'round_robin' && (

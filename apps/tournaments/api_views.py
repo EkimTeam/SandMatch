@@ -231,9 +231,9 @@ class TournamentViewSet(viewsets.ModelViewSet):
             except Exception:
                 return Response({"ok": False, "error": "Некорректная дата"}, status=400)
 
-        # Система проведения: только round_robin/knockout
+        # Система проведения: round_robin/knockout/king
         system = data.get("system") or tournament.system
-        if system not in {Tournament.System.ROUND_ROBIN, Tournament.System.KNOCKOUT}:
+        if system not in {Tournament.System.ROUND_ROBIN, Tournament.System.KNOCKOUT, Tournament.System.KING}:
             return Response({"ok": False, "error": "Недопустимая система турнира"}, status=400)
 
         # Формат и регламент
@@ -310,12 +310,30 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 else:
                     # Если нет подходящего системного шаблона — оставляем пустым
                     tournament.group_schedule_patterns = {}
+            elif system == Tournament.System.KING:
+                # Для King системы заполняем шаблоны по системному расписанию King
+                groups_value = tournament.groups_count or 1
+                try:
+                    base_pattern = SchedulePattern.objects.filter(
+                        tournament_system=SchedulePattern.TournamentSystem.KING,
+                        is_system=True,
+                    ).order_by("id").first()
+                except Exception:
+                    base_pattern = None
+
+                if base_pattern and groups_value > 0:
+                    tournament.group_schedule_patterns = {
+                        f"Группа {gi}": base_pattern.id for gi in range(1, groups_value + 1)
+                    }
+                else:
+                    # Если нет подходящего системного шаблона — оставляем пустым
+                    tournament.group_schedule_patterns = {}
 
             tournament.save()
 
             entries_qs = TournamentEntry.objects.filter(tournament=tournament).order_by("id")
 
-            if system == Tournament.System.ROUND_ROBIN:
+            if system == Tournament.System.ROUND_ROBIN or system == Tournament.System.KING:
                 # Обнуляем позиции — участники останутся зарегистрированными, но не расставленными по таблицам
                 entries_qs.update(group_index=None, row_index=None)
             elif system == Tournament.System.KNOCKOUT:
@@ -877,16 +895,17 @@ class TournamentViewSet(viewsets.ModelViewSet):
     def lock_participants(self, request, pk=None):
         """Зафиксировать участников: создать матчи в группах по выбранным шаблонам расписания.
         Использует group_schedule_patterns для определения алгоритма каждой группы.
+        Поддерживает круговую систему и King.
         """
         tournament: Tournament = self.get_object()
         
         # Блокировка для завершённых турниров
         if tournament.status == Tournament.Status.COMPLETED:
             return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
-        if tournament.system != Tournament.System.ROUND_ROBIN:
-            return Response({"ok": False, "error": "Турнир не круговой системы"}, status=400)
+        
+        if tournament.system not in [Tournament.System.ROUND_ROBIN, Tournament.System.KING]:
+            return Response({"ok": False, "error": "Турнир не круговой системы и не King"}, status=400)
 
-        # Используем новую систему генерации с шаблонами
         try:
             # ВАЖНО: сначала удаляем старые "scheduled" матчи, чтобы генератор не считал их существующими
             Match.objects.filter(
@@ -895,11 +914,24 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 status=Match.Status.SCHEDULED
             ).delete()
 
-            # Теперь генерируем новое расписание, существующие пары не будут блокировать создание
-            generated = generate_round_robin_matches(tournament)
-
-            # Создаем новые матчи
-            created = persist_generated_matches(tournament, generated)
+            # Генерируем расписание в зависимости от системы
+            if tournament.system == Tournament.System.KING:
+                # Валидация для King: 4-16 участников в каждой группе
+                groups_count = max(1, tournament.groups_count or 1)
+                for group_idx in range(1, groups_count + 1):
+                    entries_count = tournament.entries.filter(group_index=group_idx).count()
+                    if not (4 <= entries_count <= 16):
+                        return Response({
+                            'error': f'Группа {group_idx}: должно быть от 4 до 16 участников, найдено {entries_count}'
+                        }, status=400)
+                
+                from apps.tournaments.services.king import generate_king_matches, persist_king_matches
+                generated = generate_king_matches(tournament)
+                created = persist_king_matches(tournament, generated)
+            else:
+                # Round Robin
+                generated = generate_round_robin_matches(tournament)
+                created = persist_generated_matches(tournament, generated)
             
             # Изменить статус турнира на active при фиксации
             if tournament.status == Tournament.Status.CREATED:
@@ -925,11 +957,11 @@ class TournamentViewSet(viewsets.ModelViewSet):
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="unlock_participants", permission_classes=[IsAuthenticated])
     def unlock_participants(self, request, pk=None):
-        """Снять фиксацию участников в круговой системе - изменить статус турнира на created."""
+        """Снять фиксацию участников в круговой системе или King - изменить статус турнира на created."""
         tournament: Tournament = self.get_object()
         
-        if tournament.system != Tournament.System.ROUND_ROBIN:
-            return Response({"ok": False, "error": "Турнир не круговой системы"}, status=400)
+        if tournament.system not in [Tournament.System.ROUND_ROBIN, Tournament.System.KING]:
+            return Response({"ok": False, "error": "Турнир не круговой системы и не King"}, status=400)
         
         # Изменить статус турнира на created при снятии фиксации
         if tournament.status == Tournament.Status.ACTIVE:
@@ -1078,6 +1110,17 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     'team2_players': team2_players,
                     'score': score_str,
                     'status': match.status,
+                    'sets': [
+                        {
+                            'index': s.index,
+                            'games_1': s.games_1,
+                            'games_2': s.games_2,
+                            'tb_1': s.tb_1,
+                            'tb_2': s.tb_2,
+                            'is_tiebreak_only': s.is_tiebreak_only,
+                        }
+                        for s in match.sets.all().order_by('index')
+                    ],
                 })
             
             # Формируем итоговый список туров
@@ -1464,11 +1507,25 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if games_first == games_second:
             return Response({"ok": False, "error": "Нельзя сохранить ничью. Исправьте счёт."}, status=400)
         winner_id = id_team_first if games_first > games_second else id_team_second
-        # Счёт от победителя: games_1 — очки победителя, games_2 — очки проигравшего
-        winner_games = max(games_first, games_second)
-        loser_games = min(games_first, games_second)
+        
+        # Определяем, какая команда матча (team_1 или team_2) победила
+        # winner_id — это ID команды-победителя (реальный ID из БД)
+        # Нужно определить, это team_1 или team_2 матча
+        team1_is_winner = (winner_id == m.team_1_id)
+        
+        # games_1 и games_2 должны соответствовать team_1 и team_2 матча
+        # id_team_first/games_first — это победитель и его очки
+        # id_team_second/games_second — это проигравший и его очки
+        if team1_is_winner:
+            # team_1 победил → games_1 = очки победителя, games_2 = очки проигравшего
+            games_1_value = games_first
+            games_2_value = games_second
+        else:
+            # team_2 победил → games_1 = очки проигравшего, games_2 = очки победителя
+            games_1_value = games_second
+            games_2_value = games_first
 
-        sf = getattr(t, 'set_format', None)
+        sf = getattr(tournament, 'set_format', None)
         only_tiebreak_mode = False
         if sf is not None:
             try:
@@ -1481,17 +1538,17 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if s.is_tiebreak_only:
             if only_tiebreak_mode:
                 # В режиме "только тай-брейк" сохраняем TB очки в games
-                s.games_1 = winner_games
-                s.games_2 = loser_games
+                s.games_1 = games_1_value
+                s.games_2 = games_2_value
             else:
                 # Чемпионский TB как 1:0/0:1
-                if winner_games > loser_games:
+                if team1_is_winner:
                     s.games_1, s.games_2 = 1, 0
                 else:
                     s.games_1, s.games_2 = 0, 1
         else:
-            s.games_1 = winner_games
-            s.games_2 = loser_games
+            s.games_1 = games_1_value
+            s.games_2 = games_2_value
         s.tb_1 = None
         s.tb_2 = None
         s.is_tiebreak_only = False
@@ -1823,9 +1880,9 @@ class TournamentViewSet(viewsets.ModelViewSet):
             )
         
         # Проверка системы турнира
-        if tournament.system != Tournament.System.ROUND_ROBIN:
+        if tournament.system not in [Tournament.System.ROUND_ROBIN, Tournament.System.KING]:
             return Response(
-                {'error': 'Этот endpoint только для круговой системы'},
+                {'error': 'Этот endpoint только для круговой системы и King'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -1854,9 +1911,11 @@ class TournamentViewSet(viewsets.ModelViewSet):
             )
         
         # Проверка системы турнира в шаблоне
-        if pattern.tournament_system != SchedulePattern.TournamentSystem.ROUND_ROBIN:
+        expected_system = SchedulePattern.TournamentSystem.KING if tournament.system == Tournament.System.KING else SchedulePattern.TournamentSystem.ROUND_ROBIN
+        if pattern.tournament_system != expected_system:
+            system_name = 'King' if tournament.system == Tournament.System.KING else 'круговой системы'
             return Response(
-                {'error': 'Шаблон не предназначен для круговой системы'},
+                {'error': f'Шаблон не предназначен для {system_name}'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -2116,9 +2175,9 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     )
                     team = Team.objects.create(player_1=player)
                 
-                # Для круговой системы в статусе created участники добавляются БЕЗ позиции
+                # Для круговой системы и King в статусе created участники добавляются БЕЗ позиции
                 # (они попадут в левый список для drag-and-drop)
-                if tournament.system == Tournament.System.ROUND_ROBIN and tournament.status == Tournament.Status.CREATED:
+                if tournament.system in [Tournament.System.ROUND_ROBIN, Tournament.System.KING] and tournament.status == Tournament.Status.CREATED:
                     entry = TournamentEntry.objects.create(
                         tournament=tournament,
                         team=team,
@@ -2495,8 +2554,8 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if tournament.status == Tournament.Status.COMPLETED:
             return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
         
-        if tournament.system != Tournament.System.ROUND_ROBIN:
-            return Response({'ok': False, 'error': 'Автопосев доступен только для круговой системы'}, status=400)
+        if tournament.system not in [Tournament.System.ROUND_ROBIN, Tournament.System.KING]:
+            return Response({'ok': False, 'error': 'Автопосев доступен только для круговой системы и King'}, status=400)
         
         try:
             import random
@@ -2674,8 +2733,8 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if tournament.status == Tournament.Status.COMPLETED:
             return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
         
-        if tournament.system != Tournament.System.ROUND_ROBIN:
-            return Response({'ok': False, 'error': 'Очистка таблиц доступна только для круговой системы'}, status=400)
+        if tournament.system not in [Tournament.System.ROUND_ROBIN, Tournament.System.KING]:
+            return Response({'ok': False, 'error': 'Очистка таблиц доступна только для круговой системы и King'}, status=400)
         
         try:
             # Обновляем всех участников - убираем позиции
@@ -2688,6 +2747,88 @@ class TournamentViewSet(viewsets.ModelViewSet):
             
             return Response({'ok': True, 'cleared_count': updated_count})
             
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response({'ok': False, 'error': str(e)}, status=500)
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="assign_participant", permission_classes=[IsAuthenticated])
+    def assign_participant_to_table(self, request, pk=None):
+        """Назначить участника в позицию таблицы (для круговой системы и King)."""
+        tournament: Tournament = self.get_object()
+        
+        # Блокировка для завершённых турниров
+        if tournament.status == Tournament.Status.COMPLETED:
+            return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
+        
+        if tournament.system not in [Tournament.System.ROUND_ROBIN, Tournament.System.KING]:
+            return Response({'ok': False, 'error': 'Этот эндпоинт доступен только для круговой системы и King'}, status=400)
+        
+        entry_id = request.data.get('entry_id')
+        group_index = request.data.get('group_index')
+        row_index = request.data.get('row_index')
+        
+        if not all([entry_id, group_index is not None, row_index is not None]):
+            return Response({'ok': False, 'error': 'Недостаточно параметров'}, status=400)
+        
+        try:
+            entry = TournamentEntry.objects.get(id=entry_id, tournament=tournament)
+            
+            # Проверяем, не занята ли позиция
+            existing = TournamentEntry.objects.filter(
+                tournament=tournament,
+                group_index=group_index,
+                row_index=row_index
+            ).exclude(id=entry_id).first()
+            
+            if existing:
+                return Response({'ok': False, 'error': 'Эта позиция уже занята'}, status=400)
+            
+            # Назначаем позицию
+            entry.group_index = group_index
+            entry.row_index = row_index
+            entry.save(update_fields=['group_index', 'row_index'])
+            
+            return Response({'ok': True})
+            
+        except TournamentEntry.DoesNotExist:
+            return Response({'ok': False, 'error': 'Участник не найден'}, status=404)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response({'ok': False, 'error': str(e)}, status=500)
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="remove_participant_from_slot", permission_classes=[IsAuthenticated])
+    def remove_participant_from_slot(self, request, pk=None):
+        """Удалить участника из позиции таблицы (для круговой системы и King)."""
+        tournament: Tournament = self.get_object()
+        
+        # Блокировка для завершённых турниров
+        if tournament.status == Tournament.Status.COMPLETED:
+            return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
+        
+        if tournament.system not in [Tournament.System.ROUND_ROBIN, Tournament.System.KING]:
+            return Response({'ok': False, 'error': 'Этот эндпоинт доступен только для круговой системы и King'}, status=400)
+        
+        entry_id = request.data.get('entry_id')
+        
+        if not entry_id:
+            return Response({'ok': False, 'error': 'Не указан entry_id'}, status=400)
+        
+        try:
+            entry = TournamentEntry.objects.get(id=entry_id, tournament=tournament)
+            
+            # Убираем позицию
+            entry.group_index = None
+            entry.row_index = None
+            entry.save(update_fields=['group_index', 'row_index'])
+            
+            return Response({'ok': True})
+            
+        except TournamentEntry.DoesNotExist:
+            return Response({'ok': False, 'error': 'Участник не найден'}, status=404)
         except Exception as e:
             import traceback
             traceback.print_exc()
