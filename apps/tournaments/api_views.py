@@ -96,14 +96,22 @@ class TournamentViewSet(viewsets.ModelViewSet):
     def _ensure_can_view_tournament(self, request, tournament: Tournament) -> None:
         """Ограничение просмотра турнира для гостей.
 
-        - ANONYMOUS: может смотреть только турниры в статусе CREATED/ACTIVE.
-        - Аутентифицированные пользователи (REGISTERED и выше): без ограничений.
+        - ANONYMOUS: может смотреть турниры в статусах CREATED/ACTIVE,
+          а также завершённые турниры круговой и олимпийской систем.
+          Завершённые турниры Кинг доступны только аутентифицированным пользователям.
+        - Аутентифицированные пользователи (REGISTERED и выше): без ограничений,
+          кроме черновиков для роли REGISTERED.
         """
 
         user = getattr(request, "user", None)
         if not user or not user.is_authenticated:
-            if tournament.status == Tournament.Status.COMPLETED:
-                raise PermissionDenied("Authentication required to view completed tournaments")
+            # Гостям разрешаем смотреть завершённые турниры круговой и олимпийской систем,
+            # но завершённые турниры Кинг по-прежнему требуют аутентификации.
+            if (
+                tournament.status == Tournament.Status.COMPLETED
+                and tournament.system == Tournament.System.KING
+            ):
+                raise PermissionDenied("Authentication required to view completed King tournaments")
             return
 
         # Аутентифицированный пользователь
@@ -2917,10 +2925,11 @@ def tournament_list(request):
     active_qs = Tournament.objects.filter(status__in=[Tournament.Status.CREATED, Tournament.Status.ACTIVE])
     history_qs = Tournament.objects.filter(status=Tournament.Status.COMPLETED)
 
-    # Ограничение для гостей: завершённые турниры не показываем (см. ROLES_AND_AUTH_PLAN)
+    # Ограничение для гостей: показываем только завершённые турниры круговой и олимпийской систем.
+    # Завершённые турниры Кинг оставляем только для аутентифицированных пользователей.
     user = getattr(request, "user", None)
     if not user or not user.is_authenticated:
-        history_qs = history_qs.none()
+        history_qs = history_qs.filter(system__in=[Tournament.System.ROUND_ROBIN, Tournament.System.KNOCKOUT])
     
     # Применяем фильтры (поиск по имени без учета регистра)
     if name_filter:
