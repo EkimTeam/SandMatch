@@ -7,6 +7,7 @@ import { TournamentDetailPage } from './pages/TournamentDetailPage';
 import { PlayersPage } from './pages/PlayersPage';
 import { KnockoutPage } from './pages/KnockoutPage';
 import { KingPage } from './pages/KingPage';
+import { KingPage as KingPageOld } from './pages/KingPage_old';
 import { StatsPage } from './pages/StatsPage';
 import { PlayerCardPage } from './pages/PlayerCardPage';
 import { BTRPlayerCardPage } from './pages/BTRPlayerCardPage';
@@ -18,13 +19,26 @@ import { PasswordResetConfirmPage } from './pages/PasswordResetConfirmPage';
 import { ForbiddenPage } from './pages/ForbiddenPage';
 import { UserRolesPage } from './pages/UserRolesPage';
 import { getAccessToken } from './services/auth';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const token = getAccessToken();
   const location = useLocation();
   if (!token) {
     return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+  return children;
+}
+
+function RequireAdmin({ children }: { children: JSX.Element }) {
+  const token = getAccessToken();
+  const { user } = useAuth();
+  const location = useLocation();
+  if (!token) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+  if (user?.role !== 'ADMIN') {
+    return <Navigate to="/forbidden" replace />;
   }
   return children;
 }
@@ -50,6 +64,7 @@ function App() {
             <Route path="/tournaments/:id" element={<TournamentDetailPage />} />
             <Route path="/tournaments/:id/knockout" element={<KnockoutPage />} />
             <Route path="/tournaments/:id/king" element={<KingPage />} />
+            <Route path="/tournaments/:id/king-old" element={<RequireAdmin><KingPageOld /></RequireAdmin>} />
 
             {/* BTR Player Card - публичная страница */}
             <Route path="/btr/players/:id" element={<BTRPlayerCardPage />} />

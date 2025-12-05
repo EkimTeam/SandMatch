@@ -45,7 +45,7 @@ export const EditTournamentModal: React.FC<EditTournamentModalProps> = ({
     date: tournament.date || '',
     participant_mode: tournament.participant_mode || 'doubles',
     set_format_id: initialSetFormatId,
-    system: (tournament.system === 'round_robin' || tournament.system === 'knockout') ? tournament.system : 'round_robin',
+    system: (tournament.system === 'round_robin' || tournament.system === 'knockout' || tournament.system === 'king') ? tournament.system : 'round_robin',
     ruleset_id: initialRulesetId,
     groups_count: tournament.groups_count || 1,
     participants: tournament.planned_participants || '',
@@ -95,6 +95,19 @@ export const EditTournamentModal: React.FC<EditTournamentModalProps> = ({
       } else if (participants > 512) {
         newErrors.ko_participants = 'Количество участников не может превышать 512';
       }
+    } else if (formData.system === 'king') {
+      const participants = parseInt((formData.participants as any) || '0', 10);
+      const groups = parseInt(formData.groups_count.toString(), 10);
+      if (!participants || participants < 4) {
+        newErrors.participants = 'Минимум 4 участника для турнира King';
+      } else if (groups < 1) {
+        newErrors.groups_count = 'Минимум 1 группа';
+      } else {
+        const participantsPerGroup = Math.floor(participants / groups);
+        if (participantsPerGroup < 4) {
+          newErrors.participants = `Не менее 4 участников на группу. При ${groups} группах нужно минимум ${groups * 4} участников.`;
+        }
+      }
     }
 
     setErrors(newErrors);
@@ -109,7 +122,7 @@ export const EditTournamentModal: React.FC<EditTournamentModalProps> = ({
       set_format_id: Number(formData.set_format_id),
       ruleset_id: Number(formData.ruleset_id),
       groups_count: Number(formData.groups_count) || 1,
-      participants: formData.system === 'round_robin' ? (formData.participants ? Number(formData.participants) : undefined) : undefined,
+      participants: (formData.system === 'round_robin' || formData.system === 'king') ? (formData.participants ? Number(formData.participants) : undefined) : undefined,
       ko_participants: formData.system === 'knockout' ? (formData.ko_participants ? Number(formData.ko_participants) : undefined) : undefined,
       schedule_pattern_id: formData.schedule_pattern_id ? Number(formData.schedule_pattern_id) : undefined,
       is_rating_calc: formData.is_rating_calc,
@@ -121,8 +134,9 @@ export const EditTournamentModal: React.FC<EditTournamentModalProps> = ({
 
   const isRoundRobin = formData.system === 'round_robin';
   const isKnockout = formData.system === 'knockout';
+  const isKing = formData.system === 'king';
 
-  // Загрузка регламентов по системе (round_robin | knockout)
+  // Загрузка регламентов по системе (round_robin | knockout | king)
   useEffect(() => {
     const load = async () => {
       try {
@@ -131,6 +145,9 @@ export const EditTournamentModal: React.FC<EditTournamentModalProps> = ({
           setLocalRulesets(list);
         } else if (isKnockout) {
           const list = await tournamentApi.getRulesets('knockout');
+          setLocalRulesets(list);
+        } else if (isKing) {
+          const list = await tournamentApi.getRulesets('king');
           setLocalRulesets(list);
         } else {
           setLocalRulesets([]);
@@ -236,32 +253,34 @@ export const EditTournamentModal: React.FC<EditTournamentModalProps> = ({
               </select>
             </div>
 
-            <div className="form-row">
-              <label>Система проведения</label>
-              {/* TODO: проработать логику превращения кругового турнира в олимпийский */}
-              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: 0.7 }}>
-                  <input
-                    type="radio"
-                    name="system"
-                    value="round_robin"
-                    checked={formData.system === 'round_robin'}
-                    disabled
-                  />
-                  <span>Круговая</span>
-                </label>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: 0.7 }}>
-                  <input
-                    type="radio"
-                    name="system"
-                    value="knockout"
-                    checked={formData.system === 'knockout'}
-                    disabled
-                  />
-                  <span>Олимпийская</span>
-                </label>
+            {!isKing && (
+              <div className="form-row">
+                <label>Система проведения</label>
+                {/* TODO: проработать логику превращения кругового турнира в олимпийский */}
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: 0.7 }}>
+                    <input
+                      type="radio"
+                      name="system"
+                      value="round_robin"
+                      checked={formData.system === 'round_robin'}
+                      disabled
+                    />
+                    <span>Круговая</span>
+                  </label>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: 0.7 }}>
+                    <input
+                      type="radio"
+                      name="system"
+                      value="knockout"
+                      checked={formData.system === 'knockout'}
+                      disabled
+                    />
+                    <span>Олимпийская</span>
+                  </label>
+                </div>
               </div>
-            </div>
+            )}
 
             {isRoundRobin && (
               <div id="rr-fields">
@@ -319,6 +338,51 @@ export const EditTournamentModal: React.FC<EditTournamentModalProps> = ({
                     onChange={handleChange}
                   />
                   {errors.ko_participants && <div className="error">{errors.ko_participants}</div>}
+                </div>
+              </div>
+            )}
+
+            {isKing && (
+              <div id="king-fields">
+                <div style={{ padding: '12px', background: '#e3f2fd', borderRadius: '6px', marginBottom: '16px', fontSize: '14px', color: '#1976d2' }}>
+                  ⚠️ Для турнира King требуется <strong>не менее 4 участников на группу</strong>
+                </div>
+                <div className="form-row">
+                  <label htmlFor="participants">Число участников</label>
+                  <input
+                    type="number"
+                    id="participants"
+                    name="participants"
+                    min={4}
+                    step={1}
+                    placeholder="Например, 12"
+                    value={formData.participants}
+                    onChange={handleChange}
+                  />
+                  {errors.participants && <div className="error">{errors.participants}</div>}
+                </div>
+                <div className="form-row">
+                  <label htmlFor="groups_count">Число групп</label>
+                  <input
+                    type="number"
+                    id="groups_count"
+                    name="groups_count"
+                    min={1}
+                    step={1}
+                    value={formData.groups_count}
+                    onChange={handleChange}
+                  />
+                  {errors.groups_count && <div className="error">{errors.groups_count}</div>}
+                </div>
+                <div className="form-row">
+                  <label htmlFor="ruleset_id">Регламент</label>
+                  <select id="ruleset_id" name="ruleset_id" value={formData.ruleset_id} onChange={handleChange}>
+                    {effectiveRulesets.map(ruleset => (
+                      <option key={ruleset.id} value={ruleset.id}>
+                        {ruleset.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
             )}

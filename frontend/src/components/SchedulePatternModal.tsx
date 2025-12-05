@@ -40,16 +40,19 @@ const SchedulePatternModal: React.FC<SchedulePatternModalProps> = ({
     try {
       let filtered: SchedulePattern[] = [];
       if (tournamentSystem === 'king') {
-        // KING: только точное совпадение количества участников и только системные шаблоны
+        // KING: системные шаблоны + кастомные с точным совпадением participants_count
         const baseList = await schedulePatternApi.getByParticipants(participantsCount, 'king');
         filtered = baseList.filter(pattern => {
+          // Всегда включаем текущий выбранный шаблон
           if (currentPatternId && pattern.id === currentPatternId) return true;
-          // Для системных king-шаблонов participants_count может быть равен participantsCount или быть null
+          
+          // Системные шаблоны всегда показываем
+          if (pattern.is_system === true) return true;
+          
+          // Кастомные шаблоны только с точным совпадением participants_count
           const pcRaw: any = (pattern as any).participants_count;
           const pcNum = pcRaw == null ? null : Number(pcRaw);
-          const pcOk = pcNum == null || pcNum === participantsCount || pcNum === 0;
-          // Мы уже запросили by_participants с system=king, поэтому не требуем явного флага tournament_system в сущности
-          return pattern.is_system === true && pcOk;
+          return pcNum === participantsCount;
         });
       } else {
         // Round-robin/knockout: прежняя логика, при нечетном N подмешиваем N+1
@@ -155,7 +158,7 @@ const SchedulePatternModal: React.FC<SchedulePatternModalProps> = ({
         try { cs = JSON.parse(cs); } catch { cs = {}; }
       }
       const rounds = Array.isArray(cs?.rounds) ? cs.rounds : [];
-      const isKing = (pattern as any)?.tournament_system === 'king';
+      const isKing = tournamentSystem === 'king';
       // Вычисляем базу индексации (0 или 1) по минимальному индексу во всех парах
       const detectIndexBase = (roundsData: any[]): 0 | 1 => {
         let minVal: number | null = null;

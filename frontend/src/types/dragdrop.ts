@@ -5,8 +5,13 @@ export interface DraggableParticipant {
   name: string;
   fullName?: string; // полное имя (Фамилия Имя) для отображения
   teamId?: number; // для существующих команд
+  teamName?: string; // имя команды
+  displayName?: string; // отображаемое имя
   isInBracket: boolean; // находится ли участник в сетке
   currentRating?: number; // текущий рейтинг игрока (для отображения)
+  rating?: number; // рейтинг для круговой системы и King
+  groupIndex?: number | null; // индекс группы (для круговой и King)
+  rowIndex?: number | null; // индекс строки в группе (для круговой и King)
 }
 
 export interface DropSlot {
