@@ -1390,6 +1390,7 @@ export const TournamentDetailPage: React.FC = () => {
             {t.date ? formatDate(t.date) : ''}
             {t.get_system_display ? ` • ${t.get_system_display}` : ''}
             {t.get_participant_mode_display ? ` • ${t.get_participant_mode_display}` : ''}
+            {(t as any)?.set_format?.name ? ` • Формат счёта: ${(t as any).set_format.name}` : ''}
             {t.organizer_name ? ` • Организатор: ${t.organizer_name}` : ''}
           </div>
           {/* 3-я строка: статус, число участников, число групп, средний рейтинг, коэффициент, призовой фонд */}
@@ -1996,6 +1997,7 @@ export const TournamentDetailPage: React.FC = () => {
                 {g.rows.map((rIdx, rI) => {
                   const placeByRow = computePlacements(g as any);
                   const stats = computeRowStats(g as any, rIdx, rI);
+                  const isFreeFormat = (t as any)?.set_format?.games_to === 0 && (t as any)?.set_format?.max_sets === 0;
                   return (
                   <tr key={rIdx}>
                     <td style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{rIdx}</td>
@@ -2147,7 +2149,39 @@ export const TournamentDetailPage: React.FC = () => {
                         </td>
                       )
                     ))}
-                    <td className={showTech[0] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{stats.wins}</td>
+                    <td
+                      className={showTech[0] ? '' : 'hidden-col'}
+                      style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center', whiteSpace: 'nowrap' }}
+                    >
+                      <span>{stats.wins}</span>
+                      {isFreeFormat && (
+                        <span
+                          title={
+                            'Т.к. турнир проводится со счётом в свободном формате,\n' +
+                            'в котором возможны ничьи и чётное количество сетов,\n' +
+                            'количество побед не подсчитывается,\n' +
+                            'и при определении мест этот критерий игнорируется.'
+                          }
+                          onClick={(e) => { e.stopPropagation(); }}
+                          style={{
+                            display: 'inline-block',
+                            width: 14,
+                            height: 14,
+                            marginLeft: 4,
+                            borderRadius: 3,
+                            backgroundColor: '#007bff',
+                            color: '#fff',
+                            fontSize: 10,
+                            lineHeight: '14px',
+                            textAlign: 'center',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          i
+                        </span>
+                      )}
+                    </td>
                     <td className={showTech[0] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{stats.sets}</td>
                     <td className={showTech[0] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{stats.setsRatio}</td>
                     <td style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{stats.games}</td>

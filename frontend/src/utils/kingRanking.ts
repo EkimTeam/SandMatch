@@ -8,11 +8,14 @@ export function computeKingGroupRanking(
   groupData: any,
   groupIndex: string | number,
   calculationMode: KingCalculationMode,
+  statsByRow?: Record<number, any>,
 ): Map<number, number> {
   if (!groupData || !groupData.participants) return new Map();
 
   const scheduleRounds: any[] = groupData.rounds || [];
-  const allMatches: any[] = (tournament as any)?.matches || [];
+  // Для King используем матчи из расписания (king_schedule), а не tournament.matches,
+  // чтобы ранжирование совпадало с таблицей результатов.
+  const allMatches: any[] = scheduleRounds.flatMap((r: any) => r.matches || []);
 
   // Map playerId -> row_index in this group
   const playerToRow = new Map<number, number>();
@@ -27,13 +30,19 @@ export function computeKingGroupRanking(
   });
 
   const computeStats = (pt: any, subsetRows?: Set<number>, options?: { rawBetween?: boolean }) => {
-    // Collect player IDs for this participant
+    // Собираем playerIds через tournament.participants (как в KingPage_old)
     const playerIds = new Set<number>();
     const gi = parseInt(String(groupIndex), 10);
-    const entry = (tournament.participants as any[] | undefined)?.find((e: any) => e.group_index === gi && e.row_index === pt.row_index);
+    const entry = (tournament.participants as any[] | undefined)?.find(
+      (e: any) => e.group_index === gi && e.row_index === pt.row_index
+    );
     const pTeam: any = entry?.team || {};
-    if (Array.isArray(pTeam.players)) pTeam.players.forEach((pl: any) => { if (pl?.id) playerIds.add(Number(pl.id)); });
-    else { if (pTeam.player_1) playerIds.add(Number(pTeam.player_1)); if (pTeam.player_2) playerIds.add(Number(pTeam.player_2)); }
+    if (Array.isArray(pTeam.players)) {
+      pTeam.players.forEach((pl: any) => { if (pl?.id) playerIds.add(Number(pl.id)); });
+    } else {
+      if (pTeam.player_1) playerIds.add(Number(pTeam.player_1));
+      if (pTeam.player_2) playerIds.add(Number(pTeam.player_2));
+    }
 
     const myPerRound: Array<number | null> = [];
     const opPerRound: Array<number | null> = [];
@@ -55,6 +64,8 @@ export function computeKingGroupRanking(
       const full = allMatches.find((fm: any) => fm.id === schedMatch.id);
       const sets = (full?.sets || []) as any[];
       if (!sets.length) { myPerRound[rIdx] = null; opPerRound[rIdx] = null; return; }
+      const totalSets = sets.length;
+      const onlyTB = totalSets === 1 && !!sets[0].is_tiebreak_only;
       let my = 0, op = 0, hadAnySet = false, mSetsMy = 0, mSetsOp = 0;
       sets.forEach((s: any) => {
         const isTBOnly = !!s.is_tiebreak_only;
@@ -63,8 +74,15 @@ export function computeKingGroupRanking(
         if (isTBOnly) {
           hadAnySet = true;
           const t1 = Number(s.tb_1 ?? 0), t2 = Number(s.tb_2 ?? 0);
-          const a = iAmTeam1 ? t1 : t2; const b = iAmTeam1 ? t2 : t1;
-          my += a; op += b;
+          if (onlyTB) {
+            // Матч состоит только из тайбрейка: считаем tb как геймы
+            const a = iAmTeam1 ? t1 : t2; const b = iAmTeam1 ? t2 : t1; my += a; op += b;
+          } else {
+            // Тайбрейк-only как отдельный сет в многоcетовом матче: учитываем как 1:0/0:1
+            const a = iAmTeam1 ? (t1 > t2 ? 1 : 0) : (t2 > t1 ? 1 : 0);
+            const b = iAmTeam1 ? (t2 > t1 ? 1 : 0) : (t1 > t2 ? 1 : 0);
+            my += a; op += b;
+          }
           if (t1 > t2) { if (iAmTeam1) mSetsMy += 1; else mSetsOp += 1; } else if (t2 > t1) { if (iAmTeam1) mSetsOp += 1; else mSetsMy += 1; }
         } else if (hasTB && idx === 3) {
           hadAnySet = true;
@@ -143,7 +161,35 @@ export function computeKingGroupRanking(
     : ['wins','sets_fraction','games_ratio','name_asc'];
   if (!ordering.includes('name_asc')) ordering.push('name_asc');
 
-  const items = (groupData.participants || []).map((pt: any) => ({ pt, base: computeStats(pt) }));
+  const items = (groupData.participants || []).map((pt: any) => {
+    const rowIndex = Number(pt.row_index);
+    let base;
+    if (statsByRow && rowIndex in statsByRow) {
+      const s = statsByRow[rowIndex] as any;
+      const suffix = calculationMode === 'g_minus' ? '_g' : calculationMode === 'm_plus' ? '_m' : '';
+      const winsKey = `wins${suffix}`;
+      const setsWonKey = `sets_won${suffix}`;
+      const setsLostKey = `sets_lost${suffix}`;
+      const gamesWonKey = `games_won${suffix}`;
+      const gamesLostKey = `games_lost${suffix}`;
+      const gamesRatioKey = `games_ratio${suffix}`;
+      const setsRatioKey = `sets_ratio_value${suffix}`;
+
+      base = {
+        wins: Number(s[winsKey] ?? 0),
+        setsWon: Number(s[setsWonKey] ?? 0),
+        setsLost: Number(s[setsLostKey] ?? 0),
+        gamesWon: Number(s[gamesWonKey] ?? 0),
+        gamesLost: Number(s[gamesLostKey] ?? 0),
+        gamesRatio: Number(s[gamesRatioKey] ?? 0),
+        setsRatioValue: Number(s[setsRatioKey] ?? 0),
+      };
+    } else {
+      // Fallback: пересчёт базовых статов на фронтенде (как раньше)
+      base = computeStats(pt);
+    }
+    return { pt, base };
+  });
 
   const compareWithCriteria = (a: any, b: any, subset?: Set<number>): number => {
     const getVal = (obj: any, key: string) => {

@@ -1144,16 +1144,138 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     {
                         'id': e.id,
                         'team_id': e.team_id,
-                        'name': f"{e.team.player_1.last_name} {e.team.player_1.first_name}",
-                        'display_name': e.team.player_1.display_name or e.team.player_1.first_name,
-                        'row_index': e.row_index
+                        # базовый игрок в группе (team.player_1)
+                        'player_id': e.team.player_1_id if e.team and e.team.player_1_id is not None else None,
+                        'name': f"{e.team.player_1.last_name} {e.team.player_1.first_name}" if e.team and e.team.player_1 else '',
+                        'display_name': (e.team.player_1.display_name or e.team.player_1.first_name) if e.team and e.team.player_1 else '',
+                        'row_index': e.row_index,
                     }
                     for e in entries
                 ],
-                'rounds': rounds_list
+                'rounds': rounds_list,
             }
         
         return Response({'ok': True, 'schedule': schedule})
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=['get'], url_path='king_stats', permission_classes=[AllowAny])
+    def king_stats(self, request, pk=None):
+        """
+        Получить статистику по всем группам King турнира.
+        Возвращает агрегаты и ранжирование для каждой группы.
+        """
+        tournament = self.get_object()
+        self._ensure_can_view_tournament(request, tournament)
+        
+        if tournament.system != Tournament.System.KING:
+            return Response({'error': 'Не турнир Кинг'}, status=400)
+        
+        from apps.tournaments.services.king_stats import (
+            _aggregate_for_king_group,
+            compute_king_group_ranking
+        )
+        
+        # Получаем расписание для всех групп (используем ту же логику, что в king_schedule)
+        groups_count = max(1, tournament.groups_count or 1)
+        calculation_mode = getattr(tournament, 'king_calculation_mode', 'no') or 'no'
+        
+        result = {'groups': {}}
+        
+        for group_idx in range(1, groups_count + 1):
+            # Получаем участников группы
+            entries = list(
+                tournament.entries.filter(group_index=group_idx)
+                .select_related('team__player_1', 'team__player_2')
+                .order_by('row_index')
+            )
+            
+            if not entries:
+                continue
+            
+            # Получаем матчи группы
+            matches = Match.objects.filter(
+                tournament=tournament,
+                stage=Match.Stage.GROUP,
+                group_index=group_idx
+            ).prefetch_related('sets').order_by('round_index', 'order_in_round')
+            
+            # Формируем структуру group_data для передачи в king_stats
+            rounds_dict = {}
+            for m in matches:
+                round_idx = m.round_index or 1
+                if round_idx not in rounds_dict:
+                    rounds_dict[round_idx] = []
+                
+                team1_players = []
+                team2_players = []
+                # Для King туров матч содержит временные пары: берем игроков напрямую из m.team_1/m.team_2
+                if m.team_1:
+                    if m.team_1.player_1:
+                        team1_players.append({
+                            'id': m.team_1.player_1.id,
+                            'name': f"{m.team_1.player_1.last_name} {m.team_1.player_1.first_name}"
+                        })
+                    if m.team_1.player_2:
+                        team1_players.append({
+                            'id': m.team_1.player_2.id,
+                            'name': f"{m.team_1.player_2.last_name} {m.team_1.player_2.first_name}"
+                        })
+
+                if m.team_2:
+                    if m.team_2.player_1:
+                        team2_players.append({
+                            'id': m.team_2.player_1.id,
+                            'name': f"{m.team_2.player_1.last_name} {m.team_2.player_1.first_name}"
+                        })
+                    if m.team_2.player_2:
+                        team2_players.append({
+                            'id': m.team_2.player_2.id,
+                            'name': f"{m.team_2.player_2.last_name} {m.team_2.player_2.first_name}"
+                        })
+                
+                rounds_dict[round_idx].append({
+                    'id': m.id,
+                    'team1_players': team1_players,
+                    'team2_players': team2_players,
+                })
+            
+            rounds_list = [{'round': r, 'matches': rounds_dict[r]} for r in sorted(rounds_dict.keys())]
+            
+            participants_data = []
+            for e in entries:
+                participants_data.append({
+                    'row_index': e.row_index,
+                    'team': {
+                        'player_1': e.team.player_1_id if e.team else None,
+                        'player_2': e.team.player_2_id if e.team else None,
+                    },
+                    'display_name': e.team.player_1.display_name if e.team and e.team.player_1 else '',
+                    'name': f"{e.team.player_1.last_name} {e.team.player_1.first_name}" if e.team and e.team.player_1 else '',
+                })
+            
+            group_data = {
+                'participants': participants_data,
+                'rounds': rounds_list
+            }
+            
+            # Рассчитываем агрегаты для всех трёх режимов (NO, G-, M+)
+            stats, compute_stats_fn = _aggregate_for_king_group(tournament, group_idx, group_data)
+            
+            # Рассчитываем ранжирование для текущего режима
+            placements = compute_king_group_ranking(
+                tournament, group_idx, calculation_mode, group_data, stats, compute_stats_fn
+            )
+            
+            # Формируем результат для группы (включаем все поля для всех режимов)
+            result['groups'][str(group_idx)] = {
+                'stats': {
+                    str(row_idx): s  # Возвращаем все поля (NO, G-, M+)
+                    for row_idx, s in stats.items()
+                },
+                'placements': {str(row_idx): rank for row_idx, rank in placements.items()}
+            }
+        
+        return Response({'ok': True, 'groups': result['groups']})
 
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=['post'], url_path='set_king_calculation_mode', permission_classes=[IsAuthenticated])

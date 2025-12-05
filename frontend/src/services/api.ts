@@ -547,6 +547,12 @@ export const schedulePatternApi = {
     return [] as SchedulePattern[];
   },
 
+  // Получить шаблон по ID
+  getById: async (id: number): Promise<SchedulePattern> => {
+    const response = await api.get<SchedulePattern>(`/schedule-patterns/${id}/`);
+    return response.data;
+  },
+
   // Получить шаблоны по количеству участников
   getByParticipants: async (count: number, system: string = 'round_robin'): Promise<SchedulePattern[]> => {
     const response = await api.get<any>('/schedule-patterns/by_participants/', {
