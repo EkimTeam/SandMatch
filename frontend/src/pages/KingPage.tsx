@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { formatDate } from '../services/date';
-import api, { tournamentApi, Ruleset as ApiRuleset, ratingApi, schedulePatternApi, SchedulePattern, KingScheduleResponse, KingCalculationMode } from '../services/api';
+import api, { tournamentApi, Ruleset as ApiRuleset, ratingApi, schedulePatternApi, SchedulePattern, KingScheduleResponse, KingCalculationMode, matchApi } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { KnockoutParticipantPicker } from '../components/KnockoutParticipantPicker';
 import SchedulePatternModal from '../components/SchedulePatternModal';
@@ -12,6 +12,7 @@ import '../styles/knockout-dragdrop.css';
 import html2canvas from 'html2canvas';
 import { EditTournamentModal } from '../components/EditTournamentModal';
 import { MatchScoreModal } from '../components/MatchScoreModal';
+import FreeFormatScoreModal from '../components/FreeFormatScoreModal';
 import { computeKingGroupRanking } from '../utils/kingRanking';
 
 type Participant = {
@@ -1959,7 +1960,38 @@ export const KingPage: React.FC = () => {
         </div>
       )}
 
-      {scoreInput && (
+      {scoreInput && t && (t as any)?.set_format?.games_to === 0 && (t as any)?.set_format?.max_sets !== 1 ? (
+        <FreeFormatScoreModal
+          match={{
+            id: scoreInput.matchId,
+            team_1: {
+              id: scoreInput.team1.id,
+              name: scoreInput.team1.name,
+              display_name: scoreInput.team1.name,
+            },
+            team_2: {
+              id: scoreInput.team2.id,
+              name: scoreInput.team2.name,
+              display_name: scoreInput.team2.name,
+            },
+            sets: scoreInput.existingSets || [],
+          }}
+          tournament={t}
+          onClose={() => setScoreInput(null)}
+          onSave={async (sets) => {
+            if (!t || !scoreInput) return;
+            await matchApi.saveFreeFormatScore(t.id, scoreInput.matchId, sets);
+            setScoreInput(null);
+            await reload();
+            if (t.status === 'active' || t.status === 'completed') {
+              const data = await tournamentApi.getKingSchedule(t.id);
+              setKingSchedule(data);
+            }
+          }}
+        />
+      ) : null}
+
+      {scoreInput && t && !((t as any)?.set_format?.games_to === 0 && (t as any)?.set_format?.max_sets !== 1) && (
         <MatchScoreModal
           isOpen={true}
           onClose={() => setScoreInput(null)}
