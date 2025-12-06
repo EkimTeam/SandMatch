@@ -323,6 +323,9 @@ export const TournamentDetailPage: React.FC = () => {
   // Регламенты для круговой системы
   const [rrRulesets, setRrRulesets] = useState<ApiRuleset[]>([]);
   const [savingRrRuleset, setSavingRrRuleset] = useState(false);
+  // Тултип с пояснением, почему победы не считаются в свободном формате
+  const winsTipRef = useRef<HTMLDivElement | null>(null);
+  const [showWinsTip, setShowWinsTip] = useState(false);
 
   // Динамическая загрузка html2canvas с CDN
   const ensureHtml2Canvas = async (): Promise<any> => {
@@ -1988,30 +1991,73 @@ export const TournamentDetailPage: React.FC = () => {
                   <th className={showTech[0] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 80 }}>
                     Победы
                     {(t as any)?.set_format?.games_to === 0 && (t as any)?.set_format?.max_sets === 0 && (
-                      <span
-                        title={
-                          'Т.к. турнир проводится со счётом в свободном формате,\n' +
-                          'в котором возможны ничьи и чётное количество сетов,\n' +
-                          'количество побед не подсчитывается,\n' +
-                          'и при определении мест этот критерий игнорируется.'
-                        }
-                        style={{
-                          display: 'inline-block',
-                          width: 14,
-                          height: 14,
-                          marginLeft: 4,
-                          borderRadius: 3,
-                          backgroundColor: '#007bff',
-                          color: '#fff',
-                          fontSize: 10,
-                          lineHeight: '14px',
-                          textAlign: 'center',
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                        }}
+                      <div
+                        ref={winsTipRef}
+                        style={{ display: 'inline-block', marginLeft: 4, position: 'relative' }}
+                        onMouseEnter={() => setShowWinsTip(true)}
+                        onMouseLeave={() => setShowWinsTip(false)}
                       >
-                        i
-                      </span>
+                        <button
+                          type="button"
+                          aria-label="Пояснение по учёту побед в свободном формате"
+                          aria-expanded={showWinsTip}
+                          style={{
+                            display: 'inline-block',
+                            width: 14,
+                            height: 14,
+                            border: 'none',
+                            padding: 0,
+                            borderRadius: 3,
+                            backgroundColor: '#007bff',
+                            color: '#fff',
+                            fontSize: 10,
+                            lineHeight: '14px',
+                            textAlign: 'center',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowWinsTip(v => !v);
+                          }}
+                          onBlur={(e) => {
+                            const next = e.relatedTarget as Node | null;
+                            if (!next || (winsTipRef.current && !winsTipRef.current.contains(next))) {
+                              setShowWinsTip(false);
+                            }
+                          }}
+                        >
+                          i
+                        </button>
+                        {showWinsTip && (
+                          <div
+                            role="dialog"
+                            aria-live="polite"
+                            style={{
+                              position: 'absolute',
+                              zIndex: 20,
+                              marginTop: 4,
+                              left: 0,
+                              minWidth: 220,
+                              maxWidth: 280,
+                              padding: 8,
+                              borderRadius: 4,
+                              border: '1px solid #e5e7eb',
+                              backgroundColor: '#ffffff',
+                              boxShadow: '0 4px 10px rgba(15, 23, 42, 0.12)',
+                              fontSize: 12,
+                              lineHeight: 1.4,
+                              textAlign: 'left',
+                              whiteSpace: 'pre-line',
+                            }}
+                          >
+                            {'Т.к. турнир проводится со счётом в свободном формате,\n' +
+                             'в котором возможны ничьи и чётное количество сетов,\n' +
+                             'количество побед не подсчитывается,\n' +
+                             'и при определении мест этот критерий игнорируется.'}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </th>
                   <th className={showTech[0] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 60 }}>Сеты</th>
