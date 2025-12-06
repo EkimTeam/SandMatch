@@ -1985,7 +1985,35 @@ export const TournamentDetailPage: React.FC = () => {
                   {g.cols.map((i) => (
                     <th key={i} style={{ border: '1px solid #e7e7ea', padding: '6px 8px' }}>{i}</th>
                   ))}
-                  <th className={showTech[0] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 80 }}>Победы</th>
+                  <th className={showTech[0] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 80 }}>
+                    Победы
+                    {(t as any)?.set_format?.games_to === 0 && (t as any)?.set_format?.max_sets === 0 && (
+                      <span
+                        title={
+                          'Т.к. турнир проводится со счётом в свободном формате,\n' +
+                          'в котором возможны ничьи и чётное количество сетов,\n' +
+                          'количество побед не подсчитывается,\n' +
+                          'и при определении мест этот критерий игнорируется.'
+                        }
+                        style={{
+                          display: 'inline-block',
+                          width: 14,
+                          height: 14,
+                          marginLeft: 4,
+                          borderRadius: 3,
+                          backgroundColor: '#007bff',
+                          color: '#fff',
+                          fontSize: 10,
+                          lineHeight: '14px',
+                          textAlign: 'center',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        i
+                      </span>
+                    )}
+                  </th>
                   <th className={showTech[0] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 60 }}>Сеты</th>
                   <th className={showTech[0] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 60 }}>Сеты<br />соот.</th>
                   <th style={{ border: '1px solid #e7e7ea', padding: '6px 8px', width: 60 }}>Геймы</th>
@@ -1997,7 +2025,6 @@ export const TournamentDetailPage: React.FC = () => {
                 {g.rows.map((rIdx, rI) => {
                   const placeByRow = computePlacements(g as any);
                   const stats = computeRowStats(g as any, rIdx, rI);
-                  const isFreeFormat = (t as any)?.set_format?.games_to === 0 && (t as any)?.set_format?.max_sets === 0;
                   return (
                   <tr key={rIdx}>
                     <td style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{rIdx}</td>
@@ -2154,33 +2181,6 @@ export const TournamentDetailPage: React.FC = () => {
                       style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center', whiteSpace: 'nowrap' }}
                     >
                       <span>{stats.wins}</span>
-                      {isFreeFormat && (
-                        <span
-                          title={
-                            'Т.к. турнир проводится со счётом в свободном формате,\n' +
-                            'в котором возможны ничьи и чётное количество сетов,\n' +
-                            'количество побед не подсчитывается,\n' +
-                            'и при определении мест этот критерий игнорируется.'
-                          }
-                          onClick={(e) => { e.stopPropagation(); }}
-                          style={{
-                            display: 'inline-block',
-                            width: 14,
-                            height: 14,
-                            marginLeft: 4,
-                            borderRadius: 3,
-                            backgroundColor: '#007bff',
-                            color: '#fff',
-                            fontSize: 10,
-                            lineHeight: '14px',
-                            textAlign: 'center',
-                            fontWeight: 700,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          i
-                        </span>
-                      )}
                     </td>
                     <td className={showTech[0] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{stats.sets}</td>
                     <td className={showTech[0] ? '' : 'hidden-col'} style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{stats.setsRatio}</td>

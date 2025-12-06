@@ -1147,15 +1147,27 @@ export const KingPage: React.FC = () => {
                                 Победы
                                 {calculationMode === 'm_plus' && (
                                   <span 
+                                    title={
+                                      'Для режима M+ число побед не учитывается,\n' +
+                                      'так как игроки сыграли разное количество игр,\n' +
+                                      'и может возникнуть дисбаланс.'
+                                    }
                                     style={{ 
-                                      marginLeft: 4, 
-                                      color: '#3b82f6', 
-                                      cursor: 'help',
-                                      fontSize: '0.9em'
+                                      display: 'inline-block',
+                                      width: 14,
+                                      height: 14,
+                                      marginLeft: 4,
+                                      borderRadius: 3,
+                                      backgroundColor: '#007bff',
+                                      color: '#fff',
+                                      fontSize: 10,
+                                      lineHeight: '14px',
+                                      textAlign: 'center',
+                                      fontWeight: 700,
+                                      cursor: 'pointer',
                                     }}
-                                    title="Для режима M+ число побед не учитывается, т.к. игроки сыграли разное количество игр и может возникнуть дисбаланс"
                                   >
-                                    ⓘ
+                                    i
                                   </span>
                                 )}
                               </th>

@@ -67,7 +67,7 @@
 
 - [ ] Настроить Sentry для отслеживания ошибок
 - [ ] Настроить логирование в файлы
-- [ ] Добавить health check endpoint
+- [x] Добавить health check endpoint (`/api/health/`)
 - [ ] Настроить мониторинг через Yandex Monitoring
 
 ## Этап 2: Деплой в Yandex Cloud
