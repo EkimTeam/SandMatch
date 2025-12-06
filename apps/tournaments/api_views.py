@@ -27,7 +27,7 @@ from .models import Tournament, TournamentEntry, SetFormat, Ruleset, KnockoutBra
 from apps.players.services import rating_service
 from apps.teams.models import Team
 from apps.matches.models import Match, MatchSet
-from apps.players.models import Player
+from apps.players.models import Player, PlayerRatingDynamic
 from .serializers import (
     TournamentSerializer,
     ParticipantSerializer,
@@ -595,6 +595,22 @@ class TournamentViewSet(viewsets.ModelViewSet):
 
         rounds_info = calculate_rounds_structure(bracket.size, bracket.has_third_place)
 
+        # Для завершённых турниров используем рейтинг ДО турнира (PlayerRatingDynamic.rating_before),
+        # для всех остальных — текущий рейтинг игрока (Player.current_rating).
+        use_before_rating = tournament.status == Tournament.Status.COMPLETED
+        before_map: dict[int, float] = {}
+        if use_before_rating:
+            dyn_qs = PlayerRatingDynamic.objects.filter(tournament_id=tournament.id)
+            before_map = {int(d.player_id): float(d.rating_before) for d in dyn_qs}
+
+        def _player_base_rating(p: Player) -> float:
+            pid = getattr(p, "id", None)
+            if use_before_rating and pid is not None:
+                # Если есть запись динамики — используем её, иначе падаем обратно на current_rating
+                if pid in before_map:
+                    return before_map[pid]
+            return float(getattr(p, "current_rating", 0) or 0)
+
         def serialize_team(team):
             if not team:
                 return None
@@ -603,26 +619,31 @@ class TournamentViewSet(viewsets.ModelViewSet):
             display_name = name
             full_name = name
             rating = 0
-            
+
             if team.player_1:
                 p1 = team.player_1
-                # Текущий рейтинг берём по первому игроку
-                try:
-                    rating = int(getattr(p1, "current_rating", 0) or 0)
-                except Exception:
-                    rating = 0
+                p1_rating = _player_base_rating(p1)
                 if team.player_2:
-                    # Пара
+                    # Пара: считаем средний рейтинг двух игроков
                     p2 = team.player_2
+                    p2_rating = _player_base_rating(p2)
+                    try:
+                        rating = int(round((float(p1_rating) + float(p2_rating)) / 2.0))
+                    except Exception:
+                        rating = int(p1_rating) if p1_rating is not None else 0
                     display_name = f"{p1.display_name or p1.first_name} / {p2.display_name or p2.first_name}"
                     full_name = f"{p1.last_name} {p1.first_name} / {p2.last_name} {p2.first_name}"
                 else:
-                    # Одиночка
+                    # Одиночка: используем рейтинг единственного игрока
+                    try:
+                        rating = int(p1_rating)
+                    except Exception:
+                        rating = 0
                     display_name = p1.display_name or p1.first_name
                     full_name = f"{p1.last_name} {p1.first_name}"
-            
+
             return {
-                "id": team.id, 
+                "id": team.id,
                 "name": name,
                 "display_name": display_name,
                 "full_name": full_name,
