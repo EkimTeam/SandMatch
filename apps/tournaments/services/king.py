@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Tuple
 from django.db import transaction
 from apps.tournaments.models import Tournament, SchedulePattern, TournamentEntry
 from apps.teams.models import Team
-from apps.matches.models import Match
+from apps.matches.models import Match, MatchSet
 
 
 class KingMatchGenerator:
@@ -322,21 +322,39 @@ def persist_king_matches(tournament: Tournament, generated: List[Dict[str, Any]]
         int: Количество созданных матчей
     """
     created = 0
-    
+
+    # Загружаем все существующие групповые матчи этого турнира (для King)
+    existing_qs = Match.objects.filter(
+        tournament=tournament,
+        stage=Match.Stage.GROUP,
+    )
+
+    # Индекс по паре команд (team_low_id, team_high_id)
+    existing_by_pair: Dict[tuple[int, int], Match] = {}
+    for m in existing_qs.select_related("team_1", "team_2"):
+        if m.team_low_id and m.team_high_id:
+            key = (int(m.team_low_id), int(m.team_high_id))
+            # Если по какой-то причине несколько матчей с одинаковой парой,
+            # оставляем первый, остальные будут удалены как "лишние" ниже.
+            if key not in existing_by_pair:
+                existing_by_pair[key] = m
+
+    used_match_ids: set[int] = set()
+
     for match_data in generated:
         round_num = match_data['round']
         group_idx = match_data['group_index']
         team1_entry_ids = match_data['team1_entry_ids']
         team2_entry_ids = match_data['team2_entry_ids']
-        
+
         # Получаем TournamentEntry для каждого игрока
         team1_entries = TournamentEntry.objects.filter(id__in=team1_entry_ids).select_related('team__player_1')
         team2_entries = TournamentEntry.objects.filter(id__in=team2_entry_ids).select_related('team__player_1')
-        
+
         # Извлекаем player_1_id (для турниров Кинг всегда singles)
         team1_player_ids = sorted([e.team.player_1_id for e in team1_entries])
         team2_player_ids = sorted([e.team.player_1_id for e in team2_entries])
-        
+
         # Создаем или получаем виртуальные Team для пар
         team1, _ = Team.objects.get_or_create(
             player_1_id=team1_player_ids[0],
@@ -346,31 +364,67 @@ def persist_king_matches(tournament: Tournament, generated: List[Dict[str, Any]]
             player_1_id=team2_player_ids[0],
             player_2_id=team2_player_ids[1]
         )
-        
-        # Нормализация для уникальности
+
+        # Нормализация для пары команд
         team_low_id = min(team1.id, team2.id)
         team_high_id = max(team1.id, team2.id)
-        
-        # Создаем матч
-        order_in_round = (round_num - 1) * 100 + 1  # Нумерация: 1, 101, 201, ...
-        
-        match, created_flag = Match.objects.get_or_create(
-            tournament=tournament,
-            stage=Match.Stage.GROUP,
-            group_index=group_idx,
-            team_low_id=team_low_id,
-            team_high_id=team_high_id,
-            defaults={
-                'team_1': team1,
-                'team_2': team2,
-                'round_index': round_num,
-                'round_name': f'Группа {group_idx}',
-                'order_in_round': order_in_round,
-                'status': Match.Status.SCHEDULED,
-            }
-        )
-        
-        if created_flag:
+        key = (int(team_low_id), int(team_high_id))
+
+        # Нумерация: 1, 101, 201, ... (как и раньше)
+        order_in_round = (round_num - 1) * 100 + 1
+
+        existing_match = existing_by_pair.get(key)
+        if existing_match:
+            # Пара уже существует в БД — сохраняем матч, только обновляем метаданные тура/группы.
+            changed = False
+            if existing_match.group_index != group_idx:
+                existing_match.group_index = group_idx
+                changed = True
+            if existing_match.round_index != round_num:
+                existing_match.round_index = round_num
+                changed = True
+            # Для King round_name всегда "Группа X"
+            new_round_name = f'Группа {group_idx}'
+            if existing_match.round_name != new_round_name:
+                existing_match.round_name = new_round_name
+                changed = True
+            if existing_match.order_in_round != order_in_round:
+                existing_match.order_in_round = order_in_round
+                changed = True
+
+            if changed:
+                existing_match.save(update_fields=[
+                    'group_index', 'round_index', 'round_name', 'order_in_round'
+                ])
+
+            used_match_ids.add(existing_match.id)
+        else:
+            # Новая пара команд — создаем матч с нуля
+            match = Match.objects.create(
+                tournament=tournament,
+                stage=Match.Stage.GROUP,
+                group_index=group_idx,
+                team_low_id=team_low_id,
+                team_high_id=team_high_id,
+                team_1=team1,
+                team_2=team2,
+                round_index=round_num,
+                round_name=f'Группа {group_idx}',
+                order_in_round=order_in_round,
+                status=Match.Status.SCHEDULED,
+            )
             created += 1
-    
+            used_match_ids.add(match.id)
+
+    # Все матчи, для которых больше нет соответствующей пары team_low/team_high в новом расписании,
+    # удаляем вместе с сетами.
+    if used_match_ids:
+        to_delete_qs = existing_qs.exclude(id__in=used_match_ids)
+    else:
+        to_delete_qs = existing_qs
+
+    if to_delete_qs.exists():
+        MatchSet.objects.filter(match__in=to_delete_qs).delete()
+        to_delete_qs.delete()
+
     return created
