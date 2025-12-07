@@ -6,7 +6,7 @@ import json
 
 from django.db import transaction
 
-from apps.matches.models import Match
+from apps.matches.models import Match, MatchSet
 from apps.tournaments.models import SchedulePattern, Tournament, TournamentEntry
 
 
@@ -183,10 +183,6 @@ def generate_round_robin_matches(tournament: Tournament) -> List[GeneratedMatch]
     if all(len(g) == 0 for g in groups):
         return []
 
-    existing = set(
-        Match.objects.filter(tournament=tournament).values_list("team_1_id", "team_2_id", "round_name")
-    )
-
     generated: List[GeneratedMatch] = []
     
     for gi, group in enumerate(groups):
@@ -228,10 +224,6 @@ def generate_round_robin_matches(tournament: Tournament) -> List[GeneratedMatch]
         for tour_idx, tour_pairs in enumerate(rr, start=1):
             base = (tour_idx - 1) * 100
             for pair_idx, (t1, t2) in enumerate(tour_pairs, start=1):
-                key = (t1, t2, round_name)
-                key_rev = (t2, t1, round_name)
-                if key in existing or key_rev in existing:
-                    continue
                 generated.append(GeneratedMatch(t1, t2, round_name, base + pair_idx))
 
     return generated
@@ -290,6 +282,25 @@ def generate_matches_for_group(
 @transaction.atomic
 def persist_generated_matches(tournament: Tournament, matches: Iterable[GeneratedMatch]) -> int:
     created = 0
+
+    # Загружаем все существующие групповые матчи этого турнира (круговая система)
+    existing_qs = Match.objects.filter(
+        tournament=tournament,
+        stage=Match.Stage.GROUP,
+    )
+
+    # Индекс по паре команд (team_low_id, team_high_id)
+    existing_by_pair: dict[tuple[int, int], Match] = {}
+    for m in existing_qs.select_related("team_1", "team_2"):
+        if m.team_low_id and m.team_high_id:
+            key = (int(m.team_low_id), int(m.team_high_id))
+            # Если по какой-то причине несколько матчей с одинаковой парой,
+            # оставляем первый, остальные будут удалены как "лишние" ниже.
+            if key not in existing_by_pair:
+                existing_by_pair[key] = m
+
+    used_match_ids: set[int] = set()
+
     for m in matches:
         # Определяем group_index из round_name вида "Группа X"
         group_index: Optional[int] = None
@@ -310,40 +321,58 @@ def persist_generated_matches(tournament: Tournament, matches: Iterable[Generate
         # Нормализованные команды
         low_id = min(m.team1_id, m.team2_id)
         high_id = max(m.team1_id, m.team2_id)
+        key = (int(low_id), int(high_id))
 
-        # Уникальность в БД по (tournament, stage, group_index, team_low, team_high)
-        obj, was_created = Match.objects.get_or_create(
-            tournament=tournament,
-            stage=Match.Stage.GROUP,
-            group_index=group_index,
-            team_low_id=low_id,
-            team_high_id=high_id,
-            defaults={
-                "team_1_id": m.team1_id,
-                "team_2_id": m.team2_id,
-                "round_name": m.round_name,
-                "round_index": round_index,
-                "order_in_round": m.order_in_round,
-                "status": Match.Status.SCHEDULED,
-            },
-        )
-        if was_created:
-            created += 1
-        else:
-            # Обновляем недостающие поля у существующего матча при необходимости
-            need_save = False
-            if not obj.team_1_id:
-                obj.team_1_id = m.team1_id; need_save = True
-            if not obj.team_2_id:
-                obj.team_2_id = m.team2_id; need_save = True
-            if not obj.round_name and m.round_name:
-                obj.round_name = m.round_name; need_save = True
-            if not obj.round_index and round_index:
-                obj.round_index = round_index; need_save = True
-            if obj.order_in_round != m.order_in_round:
-                obj.order_in_round = m.order_in_round; need_save = True
-            if need_save:
-                obj.save(update_fields=[
-                    "team_1", "team_2", "round_name", "round_index", "order_in_round"
+        existing_match = existing_by_pair.get(key)
+        if existing_match:
+            # Пара уже существует в БД — сохраняем матч, только обновляем метаданные тура/группы.
+            changed = False
+            if existing_match.group_index != group_index:
+                existing_match.group_index = group_index
+                changed = True
+            if existing_match.round_index != round_index:
+                existing_match.round_index = round_index
+                changed = True
+            if existing_match.round_name != m.round_name:
+                existing_match.round_name = m.round_name
+                changed = True
+            if existing_match.order_in_round != m.order_in_round:
+                existing_match.order_in_round = m.order_in_round
+                changed = True
+
+            if changed:
+                existing_match.save(update_fields=[
+                    "group_index", "round_index", "round_name", "order_in_round"
                 ])
+
+            used_match_ids.add(existing_match.id)
+        else:
+            # Новая пара команд — создаем матч с нуля
+            match = Match.objects.create(
+                tournament=tournament,
+                stage=Match.Stage.GROUP,
+                group_index=group_index,
+                team_low_id=low_id,
+                team_high_id=high_id,
+                team_1_id=m.team1_id,
+                team_2_id=m.team2_id,
+                round_name=m.round_name,
+                round_index=round_index,
+                order_in_round=m.order_in_round,
+                status=Match.Status.SCHEDULED,
+            )
+            created += 1
+            used_match_ids.add(match.id)
+
+    # Все матчи, для которых больше нет соответствующей пары team_low/team_high в новом расписании,
+    # удаляем вместе с сетами.
+    if used_match_ids:
+        to_delete_qs = existing_qs.exclude(id__in=used_match_ids)
+    else:
+        to_delete_qs = existing_qs
+
+    if to_delete_qs.exists():
+        MatchSet.objects.filter(match__in=to_delete_qs).delete()
+        to_delete_qs.delete()
+
     return created

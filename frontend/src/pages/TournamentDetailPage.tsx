@@ -1938,43 +1938,8 @@ export const TournamentDetailPage: React.FC = () => {
             </button>
             {gi === 0 && canManageTournament && (
               <div style={{ marginLeft: 'auto' }} data-export-exclude="true">
-                <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={effectiveLocked}
-                    disabled={lockDisabled}
-                    onChange={async (e) => {
-                      const next = e.target.checked;
-                      if (next) {
-                        try {
-                          setSaving(true);
-                          await tournamentApi.lockParticipants(t.id);
-                          setLockParticipants(true);
-                          await reload();
-                        } catch (error) {
-                          console.error('Failed to lock participants:', error);
-                          alert('Не удалось зафиксировать участников');
-                        } finally {
-                          setSaving(false);
-                        }
-                      } else {
-                        // Снятие фиксации - вызываем API для изменения статуса турнира
-                        try {
-                          setSaving(true);
-                          await tournamentApi.unlockParticipants(t.id);
-                          setLockParticipants(false);
-                          await reload();
-                        } catch (error) {
-                          console.error('Failed to unlock participants:', error);
-                          alert('Не удалось снять фиксацию участников');
-                        } finally {
-                          setSaving(false);
-                        }
-                      }
-                    }}
-                  />
-                  <span>Зафиксировать участников</span>
-                </label>
+                {/* Раньше здесь был чекбокс "Зафиксировать участников".
+                    Теперь управление статусом перенесено в нижнюю панель действий. */}
               </div>
             )}
           </div>
@@ -2431,6 +2396,27 @@ export const TournamentDetailPage: React.FC = () => {
             style={{ background: '#dc3545', borderColor: '#dc3545' }}
           >
             Удалить турнир
+          </button>
+        )}
+        {canManageTournament && t.status === 'active' && (
+          <button
+            className="btn"
+            onClick={async () => {
+              try {
+                setSaving(true);
+                await tournamentApi.unlockParticipants(t.id);
+                setLockParticipants(false);
+                await reload();
+              } catch (error) {
+                console.error('Failed to unlock participants:', error);
+                alert('Не удалось вернуть турнир в статус "Регистрация"');
+              } finally {
+                setSaving(false);
+              }
+            }}
+            disabled={saving}
+          >
+            Вернуть статус "Регистрация"
           </button>
         )}
         {canManageTournament && t.status === 'created' && (

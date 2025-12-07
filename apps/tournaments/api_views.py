@@ -936,13 +936,6 @@ class TournamentViewSet(viewsets.ModelViewSet):
             return Response({"ok": False, "error": "Турнир не круговой системы и не King"}, status=400)
 
         try:
-            # ВАЖНО: сначала удаляем старые "scheduled" матчи, чтобы генератор не считал их существующими
-            Match.objects.filter(
-                tournament=tournament,
-                stage=Match.Stage.GROUP,
-                status=Match.Status.SCHEDULED
-            ).delete()
-
             # Генерируем расписание в зависимости от системы
             if tournament.system == Tournament.System.KING:
                 # Валидация для King: 4-16 участников в каждой группе
@@ -1022,14 +1015,9 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 }, status=400)
         
         try:
-            # Удаляем старые незавершенные матчи
-            Match.objects.filter(
-                tournament=tournament,
-                stage=Match.Stage.GROUP,
-                status=Match.Status.SCHEDULED
-            ).delete()
-            
-            # Генерация и сохранение матчей
+            # Генерация и сохранение матчей.
+            # Старые матчи теперь обрабатываются внутри persist_king_matches:
+            # существующие пары команд сохраняются, "лишние" матчи и их сеты удаляются.
             from apps.tournaments.services.king import generate_king_matches, persist_king_matches
             generated = generate_king_matches(tournament)
             created = persist_king_matches(tournament, generated)

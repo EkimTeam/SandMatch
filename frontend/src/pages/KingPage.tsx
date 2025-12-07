@@ -1745,6 +1745,28 @@ export const KingPage: React.FC = () => {
               {(t as any).can_delete && (
                 <button className="btn" onClick={deleteTournament} disabled={saving} style={{ background: '#dc3545', borderColor: '#dc3545' }}>Удалить турнир</button>
               )}
+              {canManageTournament && t.status === 'active' && (
+                <button
+                  className="btn"
+                  onClick={async () => {
+                    if (!t) return;
+                    try {
+                      setSaving(true);
+                      // Аналогично RR: возвращаем турнир в статус "Регистрация"
+                      await tournamentApi.unlockParticipants(t.id);
+                      await reload();
+                    } catch (error: any) {
+                      console.error('Failed to return tournament to registration status:', error);
+                      alert(error?.response?.data?.error || 'Не удалось вернуть турнир в статус "Регистрация"');
+                    } finally {
+                      setSaving(false);
+                    }
+                  }}
+                  disabled={saving}
+                >
+                  Вернуть статус "Регистрация"
+                </button>
+              )}
               <button className="btn" onClick={handleShare}>Поделиться</button>
             </div>
           </div>
