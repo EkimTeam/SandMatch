@@ -80,7 +80,7 @@ const MiniAppHome = () => {
       <div className="bg-gray-100 rounded-lg p-4">
         <h3 className="font-semibold text-gray-900 mb-2">ℹ️ Информация</h3>
         <p className="text-sm text-gray-600">
-          Это Mini App для управления турнирами по пляжному волейболу.
+          Это Mini App для управления турнирами по пляжному теннису.
           Здесь вы можете просматривать турниры, регистрироваться на них
           и следить за своей статистикой.
         </p>
