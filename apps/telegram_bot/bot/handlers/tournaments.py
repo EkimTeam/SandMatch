@@ -1,6 +1,7 @@
 """
 Обработчики команд для работы с турнирами
 """
+import os
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -13,6 +14,9 @@ from apps.tournaments.models import Tournament, TournamentEntry
 from apps.teams.models import Team
 
 router = Router()
+
+# URL веб-приложения из переменной окружения
+WEB_APP_URL = os.getenv('WEB_APP_URL', 'https://beachplay.ru')
 
 
 @sync_to_async
@@ -154,7 +158,7 @@ async def cmd_tournaments(message: Message):
             [
                 InlineKeyboardButton(
                     text="📋 Подробнее",
-                    url=f"http://localhost:8080/tournaments/{tournament.id}"
+                    url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
                 )
             ]
         ])
@@ -218,7 +222,7 @@ async def cmd_my_tournaments(message: Message):
             [
                 InlineKeyboardButton(
                     text="📋 Подробнее",
-                    url=f"http://localhost:8080/tournaments/{tournament.id}"
+                    url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
                 )
             ]
         ])
@@ -260,7 +264,7 @@ async def callback_register(callback: CallbackQuery):
         [
             InlineKeyboardButton(
                 text="📝 Зарегистрироваться на сайте",
-                url=f"http://localhost:8080/tournaments/{tournament_id}"
+                url=f"{WEB_APP_URL}/tournaments/{tournament_id}"
             )
         ]
     ])
