@@ -29,7 +29,7 @@ def get_active_tournaments():
     """Получение списка активных турниров"""
     return list(
         Tournament.objects.filter(
-            Q(status='created') | Q(status='in_progress')
+            Q(status='created') | Q(status='active')
         ).annotate(
             participants_count=Count('entries')
         ).order_by('-date', '-created_at')[:10]
@@ -87,7 +87,7 @@ def format_tournament_info(tournament, is_registered=False):
     
     status_names = {
         'created': '📝 Набор участников',
-        'in_progress': '▶️ В процессе',
+        'active': '▶️ В процессе',
         'completed': '✅ Завершён',
     }
     
