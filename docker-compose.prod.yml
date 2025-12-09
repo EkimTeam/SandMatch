@@ -10,15 +10,45 @@ services:
 #       - db_data:/var/lib/postgresql/data
 #     # ports не нужны - контейнеры общаются внутри сети
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    container_name: sandmatch_redis
+    ports:
+      - "6379:6379"
+
   web:
     image: ${WEB_IMAGE:-ghcr.io/ekimteam/sandmatch/web}:${WEB_IMAGE_TAG:-latest}
     restart: unless-stopped
+    container_name: sandmatch_web
     env_file:
       - .env
     ports:
       - "8000:8000"
     volumes:
       - ./static:/app/static
+    depends_on:
+      - redis
+
+  celery:
+    image: ${WEB_IMAGE:-ghcr.io/ekimteam/sandmatch/web}:${WEB_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    container_name: sandmatch_celery
+    env_file:
+      - .env
+    command: celery -A sandmatch worker -l info
+    depends_on:
+      - redis
+
+  celery-beat:
+    image: ${WEB_IMAGE:-ghcr.io/ekimteam/sandmatch/web}:${WEB_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    container_name: sandmatch_celery_beat
+    env_file:
+      - .env
+    command: celery -A sandmatch beat -l info
+    depends_on:
+      - celery
 #     depends_on:
 #       - db
 #
