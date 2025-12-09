@@ -18,6 +18,7 @@ import { PasswordResetRequestPage } from './pages/PasswordResetRequestPage';
 import { PasswordResetConfirmPage } from './pages/PasswordResetConfirmPage';
 import { ForbiddenPage } from './pages/ForbiddenPage';
 import { UserRolesPage } from './pages/UserRolesPage';
+import ProfilePage from './pages/ProfilePage';
 import { getAccessToken } from './services/auth';
 import { AuthProvider, useAuth } from './context/AuthContext';
 
@@ -70,6 +71,7 @@ function App() {
             <Route path="/btr/players/:id" element={<BTRPlayerCardPage />} />
 
             {/* Остальное требует авторизации */}
+            <Route path="/profile" element={<RequireAuth><ProfilePage /></RequireAuth>} />
             <Route path="/referee" element={<RequireAuth><RefereePage /></RequireAuth>} />
             <Route path="/players" element={<RequireAuth><PlayersPage /></RequireAuth>} />
             <Route path="/players/:id" element={<RequireAuth><PlayerCardPage /></RequireAuth>} />

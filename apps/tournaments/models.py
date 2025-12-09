@@ -312,6 +312,14 @@ class Tournament(models.Model):
         related_name='tournaments_refereed',
         verbose_name="Судьи",
     )
+    venue = models.ForeignKey(
+        'venues.Venue',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='tournaments',
+        verbose_name="Площадка",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
