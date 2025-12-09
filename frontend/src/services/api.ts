@@ -836,3 +836,158 @@ export const btrApi = {
     return data;
   },
 };
+
+// ===========================
+// Profile API
+// ===========================
+export interface UserProfile {
+  id: number;
+  username: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  player?: {
+    id: number;
+    last_name: string;
+    first_name: string;
+    patronymic?: string;
+    birth_date?: string;
+    gender?: 'male' | 'female';
+    phone?: string;
+    display_name?: string;
+    city?: string;
+    current_rating: number;
+    level?: string;
+    is_profi: boolean;
+    created_at: string;
+  };
+}
+
+export interface UpdateProfileData {
+  email?: string;
+  first_name?: string;
+  last_name?: string;
+  patronymic?: string;
+  birth_date?: string;
+  gender?: 'male' | 'female';
+  phone?: string;
+  display_name?: string;
+  city?: string;
+  level?: string;
+}
+
+export interface ChangePasswordData {
+  old_password: string;
+  new_password: string;
+  new_password_confirm: string;
+}
+
+export interface PlayerSearchResult {
+  id: number;
+  first_name: string;
+  last_name: string;
+  display_name: string;
+  patronymic?: string;
+  current_rating?: number;
+  level?: string;
+  city?: string;
+  is_profi?: boolean;
+}
+
+export interface PlayerCandidate {
+  id: number;
+  first_name: string;
+  last_name: string;
+  patronymic: string;
+  city: string;
+  current_rating: number;
+}
+
+export const profileApi = {
+  // Получение профиля
+  getProfile: async (): Promise<UserProfile> => {
+    const { data } = await api.get('/auth/profile/');
+    return data;
+  },
+
+  // Обновление профиля
+  updateProfile: async (profileData: UpdateProfileData): Promise<UserProfile> => {
+    const { data } = await api.patch('/auth/profile/update/', profileData);
+    return data;
+  },
+
+  // Смена пароля
+  changePassword: async (passwordData: ChangePasswordData): Promise<{ detail: string }> => {
+    const { data } = await api.post('/auth/profile/change-password/', passwordData);
+    return data;
+  },
+
+  // Автоподбор кандидатов игрока по ФИО пользователя
+  getPlayerCandidates: async (): Promise<{ candidates: PlayerCandidate[] }> => {
+    const { data } = await api.get('/auth/profile/player-candidates/');
+    return data;
+  },
+
+  // Поиск игроков для связывания: используем общий эндпоинт, как в модалке участников
+  searchPlayers: async (query: string): Promise<{ players: PlayerSearchResult[] }> => {
+    const { data } = await api.get('/players/search/', { params: { q: query } });
+    return data;
+  },
+
+  // Связывание с игроком
+  linkPlayer: async (playerId: number): Promise<UserProfile> => {
+    const { data } = await api.post('/auth/profile/link-player/', { player_id: playerId });
+    return data;
+  },
+  // Отвязка игрока
+  unlinkPlayer: async (): Promise<UserProfile> => {
+    const { data } = await api.post('/auth/profile/unlink-player/');
+    return data;
+  },
+};
+
+// ===========================
+// Telegram API
+// ===========================
+export interface TelegramLinkCode {
+  code: string;
+  expires_at: string;
+  instructions: string;
+}
+
+export interface TelegramStatus {
+  is_linked: boolean;
+  telegram_user?: {
+    telegram_id: number;
+    username?: string;
+    first_name: string;
+    is_linked: boolean;
+    created_at: string;
+  };
+  pending_code?: {
+    code: string;
+    created_at: string;
+    expires_at: string;
+    expires_in_minutes: number;
+  };
+}
+
+export const telegramApi = {
+  // Генерация кода для связывания
+  generateCode: async (): Promise<TelegramLinkCode> => {
+    const { data } = await api.post('/telegram/generate-code/');
+    return data;
+  },
+
+  // Проверка статуса связывания
+  getStatus: async (): Promise<TelegramStatus> => {
+    const { data } = await api.get('/telegram/status/');
+    return data;
+  },
+
+  // Отвязка Telegram
+  unlink: async (): Promise<{ message: string }> => {
+    const { data } = await api.post('/telegram/unlink/');
+    return data;
+  },
+};

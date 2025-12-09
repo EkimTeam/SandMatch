@@ -58,6 +58,8 @@ urlpatterns = [
     path("api/rating/", include("apps.players.api_urls")),
     path("api/btr/", include("apps.btr.api_urls")),
     path("api/auth/", include("apps.accounts.api_urls")),
+    path("api/telegram/", include("apps.telegram_bot.urls")),
+    path("api/mini-app/", include("apps.telegram_bot.api_urls_mini_app")),
     # Health check
     path("api/health/", health, name="health"),
     # Auth (JWT)

@@ -243,3 +243,253 @@ def password_reset_confirm(request):
     user.save(update_fields=["password"])
 
     return Response({"detail": "Пароль успешно изменён"})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def get_profile(request):
+    """
+    Получение профиля текущего пользователя
+    
+    GET /api/auth/profile/
+    """
+    from .serializers import UserProfileSerializer
+    
+    serializer = UserProfileSerializer(request.user)
+    return Response(serializer.data)
+
+
+@api_view(["PUT", "PATCH"])
+@permission_classes([IsAuthenticated])
+def update_profile(request):
+    """
+    Обновление профиля текущего пользователя
+    
+    PUT/PATCH /api/auth/profile/
+    """
+    from .serializers import UpdateProfileSerializer, UserProfileSerializer
+    
+    serializer = UpdateProfileSerializer(
+        request.user,
+        data=request.data,
+        partial=request.method == "PATCH"
+    )
+    
+    if serializer.is_valid():
+        user = serializer.save()
+        return Response(UserProfileSerializer(user).data)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def unlink_player(request):
+    """Отвязать игрока от текущего пользователя (без влияния на Telegram-связь)."""
+    from apps.telegram_bot.models import TelegramUser
+    from .serializers import UserProfileSerializer
+
+    try:
+        telegram_user = TelegramUser.objects.get(user=request.user)
+    except TelegramUser.DoesNotExist:
+        return Response({"detail": "Telegram профиль не найден"}, status=status.HTTP_404_NOT_FOUND)
+
+    if not telegram_user.player:
+        return Response({"detail": "Связь с игроком отсутствует"}, status=status.HTTP_400_BAD_REQUEST)
+
+    telegram_user.player = None
+    telegram_user.save(update_fields=["player"])
+
+    return Response(UserProfileSerializer(request.user).data)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def change_password(request):
+    """
+    Смена пароля текущего пользователя
+    
+    POST /api/auth/profile/change-password/
+    Body: {
+        "old_password": "...",
+        "new_password": "...",
+        "new_password_confirm": "..."
+    }
+    """
+    from .serializers import ChangePasswordSerializer
+    
+    serializer = ChangePasswordSerializer(
+        data=request.data,
+        context={'request': request}
+    )
+    
+    if serializer.is_valid():
+        # Устанавливаем новый пароль
+        request.user.set_password(serializer.validated_data['new_password'])
+        request.user.save()
+        
+        return Response({
+            "detail": "Пароль успешно изменён"
+        })
+    
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def profile_player_candidates(request):
+    """Автоподбор кандидатов Player по ФИО пользователя.
+
+    GET /api/auth/profile/player-candidates/
+    """
+    from apps.players.models import Player
+    from apps.telegram_bot.models import TelegramUser
+    from django.db.models import Q
+
+    user = request.user
+
+    # Если уже есть связанный игрок — кандидаты не нужны
+    if TelegramUser.objects.filter(user=user, player__isnull=False).exists():
+        return Response({"candidates": []})
+
+    first = (user.first_name or "").strip()
+    last = (user.last_name or "").strip()
+    if not first or not last:
+        return Response({"candidates": []})
+
+    qs = Player.objects.filter(
+        Q(first_name__iexact=first),
+        Q(last_name__iexact=last),
+    )
+
+    # Исключаем игроков, уже связанных с кем-то через TelegramUser
+    qs = qs.filter(telegram_profile__isnull=True)
+
+    candidates = []
+    for p in qs[:10]:
+        candidates.append({
+            "id": p.id,
+            "first_name": p.first_name,
+            "last_name": p.last_name,
+            "patronymic": p.patronymic or "",
+            "city": p.city or "",
+            "current_rating": p.current_rating,
+        })
+
+    return Response({"candidates": candidates})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def search_players_for_link(request):
+    """
+    Поиск игроков для связывания с пользователем
+    
+    GET /api/auth/profile/search-players/?q=Иван+Иванов
+    """
+    from apps.players.models import Player
+    from django.db.models import Q
+    
+    query = request.GET.get('q', '').strip()
+    if not query or len(query) < 2:
+        return Response({"players": []})
+    
+    # Разбиваем запрос на слова (первое слово - имя, второе - фамилия)
+    parts = query.split()
+    first = parts[0]
+    last = parts[1] if len(parts) > 1 else ''
+    
+    # Ищем по имени и фамилии
+    q_filter = Q()
+    if first:
+        q_filter &= Q(first_name__icontains=first)
+    if last:
+        q_filter &= Q(last_name__icontains=last)
+    
+    # Исключаем игроков, уже связанных с кем-то через TelegramUser
+    players = Player.objects.filter(q_filter).filter(telegram_profile__isnull=True)[:20]
+    
+    results = []
+    for player in players:
+        results.append({
+            'id': player.id,
+            'first_name': player.first_name,
+            'last_name': player.last_name,
+            'patronymic': player.patronymic or '',
+            'display_name': player.display_name or '',
+            'current_rating': player.current_rating,
+            'level': player.level or '',
+            'city': player.city or '',
+            'is_profi': player.is_profi,
+        })
+    
+    return Response({"players": results})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def link_player(request):
+    """
+    Связывание пользователя с игроком
+    
+    POST /api/auth/profile/link-player/
+    Body: { "player_id": 123 }
+    """
+    from apps.players.models import Player
+    from .serializers import UserProfileSerializer
+    
+    player_id = request.data.get('player_id')
+    if not player_id:
+        return Response(
+            {"detail": "player_id обязателен"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    try:
+        player = Player.objects.get(id=player_id)
+    except Player.DoesNotExist:
+        return Response(
+            {"detail": "Игрок не найден"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    user = request.user
+    
+    # Проверяем, не связан ли уже этот User с другим Player и не занят ли выбранный Player
+    from apps.telegram_bot.models import TelegramUser
+
+    # 1) выбраный игрок уже связан с кем-то другим
+    occupied = TelegramUser.objects.filter(player=player).exclude(user=user).first()
+    if occupied:
+        return Response(
+            {"detail": "Этот игрок уже связан с другим пользователем. Обратись к администратору, если это ошибка."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    try:
+        telegram_user = TelegramUser.objects.get(user=user)
+        if telegram_user.player and telegram_user.player != player:
+            return Response(
+                {"detail": f"Ты уже связан с игроком {telegram_user.player.first_name} {telegram_user.player.last_name}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Связываем
+        telegram_user.player = player
+        telegram_user.save()
+    except TelegramUser.DoesNotExist:
+        # Создаём TelegramUser без telegram_id (только для связи User-Player)
+        TelegramUser.objects.create(
+            telegram_id=None,  # Будет установлено при связывании с Telegram
+            user=user,
+            player=player,
+            first_name=user.first_name or '',
+            last_name=user.last_name or '',
+        )
+    
+    # Синхронизируем данные User и Player
+    if user.first_name:
+        player.first_name = user.first_name
+    if user.last_name:
+        player.last_name = user.last_name
+    player.save()
+    
+    return Response(UserProfileSerializer(user).data)

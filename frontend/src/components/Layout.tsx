@@ -102,12 +102,15 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
               {/* Auth controls */}
               {user ? (
                 <>
-                  <span className="text-xs text-gray-600 mr-1">
+                  <Link
+                    to="/profile"
+                    className="text-sm text-gray-700 hover:text-primary-600 transition-colors"
+                  >
                     {user.username}
                     {user.role && user.role !== 'REGISTERED' && (
                       <span className="ml-1 text-gray-400">[{user.role}]</span>
                     )}
-                  </span>
+                  </Link>
                   <button
                     onClick={() => {
                       logout();
@@ -211,12 +214,16 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
               {/* Auth controls */}
               {user ? (
                 <>
-                  <span className="text-xs text-gray-600 px-3">
+                  <Link
+                    to="/profile"
+                    className="px-3 py-2 text-sm text-gray-700 hover:text-primary-600 transition-colors"
+                    onClick={() => setMobileOpen(false)}
+                  >
                     {user.username}
                     {user.role && user.role !== 'REGISTERED' && (
                       <span className="ml-1 text-gray-400">[{user.role}]</span>
                     )}
-                  </span>
+                  </Link>
                   <button
                     onClick={() => {
                       logout();

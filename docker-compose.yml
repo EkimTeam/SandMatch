@@ -10,15 +10,53 @@ services:
   #     - "5432:5432"
   #   volumes:
   #     - db_data:/var/lib/postgresql/data
+  redis:
+    image: redis:7-alpine
+    container_name: sandmatch_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
   web:
     build: .
+    container_name: sandmatch_web
     restart: unless-stopped
     env_file:
       - .env
     ports:
       - "8000:8000"
+    depends_on:
+      - redis
     # volumes:
     #   - .:/app  # Включить после настройки File Sharing (Docker Desktop → Settings → Resources → File Sharing)
 
+  celery:
+    build: .
+    container_name: sandmatch_celery
+    restart: unless-stopped
+    command: celery -A sandmatch worker -l info
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    # volumes:
+    #   - .:/app
+
+  celery-beat:
+    build: .
+    container_name: sandmatch_celery_beat
+    restart: unless-stopped
+    command: celery -A sandmatch beat -l info
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - celery
+    # volumes:
+    #   - .:/app
+
 volumes:
   db_data:
+  redis_data:

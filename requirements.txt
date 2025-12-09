@@ -13,3 +13,15 @@ requests~=2.31
 # Security hardening
 django-csp~=3.8
 django-ratelimit~=4.1
+
+# Telegram Bot
+aiogram~=3.4
+aiohttp~=3.9
+
+# Celery & Redis
+celery~=5.3
+redis~=5.0
+celery[redis]
+
+# Image processing
+Pillow~=10.2
