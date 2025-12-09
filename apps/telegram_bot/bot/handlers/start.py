@@ -57,6 +57,7 @@ async def cmd_start(message: Message):
             f"С возвращением, {hbold(message.from_user.first_name)}! 👋\n\n"
             f"Чем могу помочь?\n\n"
             f"/tournaments - список турниров\n"
-            f"/rating - мой рейтинг\n"
-            f"/settings - настройки"
+            f"/mytournaments - мои турниры\n"
+            f"/profile - мой профиль\n"
+            f"/help - справка по командам"
         )
