@@ -41,8 +41,8 @@ fi
 export WEB_IMAGE
 export WEB_IMAGE_TAG
 
-log "Pulling image..."
-docker compose pull web
+log "Pulling images..."
+docker compose pull web celery celery-beat
 
 # Очистка старой структуры статики и подготовка новой
 log "Cleaning old static structure..."
@@ -54,8 +54,8 @@ log "Clearing old frontend assets on host (./static/frontend)..."
 mkdir -p static/frontend || true
 rm -rf static/frontend/* || true
 
-log "Starting containers..."
-docker compose up -d web
+log "Starting all containers..."
+docker compose up -d
 
 # ============================================================================
 # 1. МИГРАЦИИ С ОТКАТОМ
@@ -170,6 +170,10 @@ until curl -fsS --max-time 2 "$HEALTH_URL" >/dev/null; do
 done
 
 log "✅ Basic health check passed"
+
+# Проверка Celery
+log "Checking Celery..."
+docker compose ps celery celery-beat || log "⚠️ Celery check skipped"
 
 # ============================================================================
 # 3. ПРОДВИНУТЫЕ HEALTH CHECKS
@@ -319,6 +323,12 @@ log "  - API endpoints: smoke tested"
 log "  - Health checks: passed"
 log "  - Main page: accessible"
 log ""
+
+# Проверка всех контейнеров
+log "📦 Container status:"
+docker compose ps --format "table {{.Service}}\t{{.Status}}" || docker compose ps
+log ""
+
 log "🚀 Application is ready at: https://beachplay.ru"
 if [ -n "$BACKUP_FILE" ] && [ -s "$BACKUP_FILE" ]; then
   log "💾 Latest backup: $BACKUP_FILE ($BACKUP_SIZE lines)"
