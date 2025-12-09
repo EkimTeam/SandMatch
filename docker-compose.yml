@@ -12,6 +12,7 @@ services:
   #     - db_data:/var/lib/postgresql/data
   redis:
     image: redis:7-alpine
+    container_name: sandmatch_redis
     restart: unless-stopped
     ports:
       - "6379:6379"
@@ -20,6 +21,7 @@ services:
 
   web:
     build: .
+    container_name: sandmatch_web
     restart: unless-stopped
     env_file:
       - .env
@@ -32,25 +34,26 @@ services:
 
   celery:
     build: .
+    container_name: sandmatch_celery
     restart: unless-stopped
     command: celery -A sandmatch worker -l info
     env_file:
       - .env
     depends_on:
       - redis
-      - web
     # volumes:
     #   - .:/app
 
   celery-beat:
     build: .
+    container_name: sandmatch_celery_beat
     restart: unless-stopped
     command: celery -A sandmatch beat -l info
     env_file:
       - .env
     depends_on:
       - redis
-      - web
+      - celery
     # volumes:
     #   - .:/app
 
