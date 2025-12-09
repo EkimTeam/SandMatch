@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { profileApi, telegramApi, UserProfile, UpdateProfileData, ChangePasswordData, TelegramStatus, PlayerSearchResult } from '../services/api';
+import { profileApi, telegramApi, UserProfile, UpdateProfileData, ChangePasswordData, TelegramStatus, PlayerSearchResult, PlayerCandidate } from '../services/api';
 
 // Уровни игры от слабого к сильному
 const GAME_LEVELS = [
@@ -42,10 +42,28 @@ const ProfilePage: React.FC = () => {
   const [searching, setSearching] = useState(false);
   const [showPlayerSearch, setShowPlayerSearch] = useState(false);
 
+  // Автокандидаты игрока по ФИО пользователя
+  const [playerCandidates, setPlayerCandidates] = useState<PlayerCandidate[]>([]);
+  const [loadingCandidates, setLoadingCandidates] = useState(false);
+
   useEffect(() => {
     loadProfile();
     loadTelegramStatus();
+    loadPlayerCandidates();
   }, []);
+
+  // Дебаунсированный автопоиск при вводе
+  useEffect(() => {
+    if (!showPlayerSearch) return;
+    if (!searchQuery || searchQuery.length < 2) {
+      setSearchResults([]);
+      return;
+    }
+    const t = setTimeout(() => {
+      handleSearchPlayers();
+    }, 400);
+    return () => clearTimeout(t);
+  }, [searchQuery, showPlayerSearch]);
 
   const loadProfile = async () => {
     try {
@@ -59,7 +77,6 @@ const ProfilePage: React.FC = () => {
         first_name: data.first_name,
         last_name: data.last_name,
         patronymic: data.player?.patronymic || '',
-        middle_name: data.player?.middle_name || '',
         birth_date: data.player?.birth_date || '',
         gender: data.player?.gender || undefined,
         phone: data.player?.phone || '',
@@ -71,6 +88,18 @@ const ProfilePage: React.FC = () => {
       setError(err.response?.data?.detail || 'Ошибка загрузки профиля');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadPlayerCandidates = async () => {
+    try {
+      setLoadingCandidates(true);
+      const { candidates } = await profileApi.getPlayerCandidates();
+      setPlayerCandidates(candidates);
+    } catch (err) {
+      console.error('Ошибка загрузки кандидатов игрока:', err);
+    } finally {
+      setLoadingCandidates(false);
     }
   };
 
@@ -101,12 +130,30 @@ const ProfilePage: React.FC = () => {
     setError(null);
     setSuccess(null);
 
+    // Не отправляем пустую дату рождения на сервер, чтобы избежать ошибки валидации
+    const payload: UpdateProfileData = { ...formData };
+    if (!payload.birth_date) {
+      delete (payload as any).birth_date;
+    }
+
     try {
-      const updated = await profileApi.updateProfile(formData);
+      const updated = await profileApi.updateProfile(payload);
       setProfile(updated);
       setSuccess('Профиль успешно обновлён');
+      
+      // Перезагружаем кандидатов и статус Telegram после обновления профиля
+      await loadPlayerCandidates();
+      await loadTelegramStatus();
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Ошибка сохранения профиля');
+      const data = err.response?.data;
+      // Пытаемся вытащить понятное сообщение об ошибке
+      const firstValue = data && (Object.values(data)[0] as any);
+      const detail =
+        (typeof data === 'string' && data) ||
+        data?.detail ||
+        (Array.isArray(firstValue) ? firstValue[0] : firstValue) ||
+        'Ошибка сохранения профиля';
+      setError(String(detail));
     } finally {
       setSaving(false);
     }
@@ -199,11 +246,53 @@ const ProfilePage: React.FC = () => {
       const updated = await profileApi.linkPlayer(playerId);
       setProfile(updated);
       setSuccess('Профиль успешно связан с игроком');
+      // Пробрасываем player-поля в форму
+      if (updated.player) {
+        setFormData((prev) => ({
+          ...prev,
+          patronymic: updated.player?.patronymic || '',
+          birth_date: updated.player?.birth_date || '',
+          gender: (updated.player?.gender as any) || undefined,
+          phone: updated.player?.phone || '',
+          display_name: updated.player?.display_name || '',
+          city: updated.player?.city || '',
+          level: updated.player?.level || '',
+        }));
+      }
       setShowPlayerSearch(false);
       setSearchQuery('');
       setSearchResults([]);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Ошибка связывания с игроком');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleUnlinkPlayer = async () => {
+    if (!confirm('Отвязать профиль игрока?')) return;
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const updated = await profileApi.unlinkPlayer();
+      setProfile(updated);
+      setSuccess('Связь с игроком успешно удалена');
+      // Очищаем Player-поля формы
+      setFormData((prev) => ({
+        ...prev,
+        patronymic: '',
+        birth_date: '',
+        gender: undefined,
+        phone: '',
+        display_name: '',
+        city: '',
+        level: '',
+      }));
+      // После отвязки — показать новых кандидатов
+      await loadPlayerCandidates();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Ошибка отвязки игрока');
     } finally {
       setSaving(false);
     }
@@ -301,19 +390,22 @@ const ProfilePage: React.FC = () => {
               />
             </div>
 
-            {/* Отчество */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Отчество
-              </label>
-              <input
-                type="text"
-                name="patronymic"
-                value={formData.patronymic || ''}
-                onChange={handleInputChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
+            {/* Поля игрока показываем только если есть связанный Player */}
+            {profile.player && (
+              <>
+                {/* Отчество */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Отчество
+                  </label>
+                  <input
+                    type="text"
+                    name="patronymic"
+                    value={formData.patronymic || ''}
+                    onChange={handleInputChange}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
 
             {/* Телефон */}
             <div>
@@ -407,19 +499,19 @@ const ProfilePage: React.FC = () => {
               </select>
             </div>
 
-            {/* Рейтинг (read-only) */}
-            {profile.player && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Текущий рейтинг
-                </label>
-                <input
-                  type="number"
-                  value={profile.player.current_rating}
-                  disabled
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 cursor-not-allowed"
-                />
-              </div>
+                {/* Рейтинг (read-only) */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Текущий рейтинг
+                  </label>
+                  <input
+                    type="number"
+                    value={profile.player.current_rating}
+                    disabled
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 cursor-not-allowed"
+                  />
+                </div>
+              </>
             )}
           </div>
 
@@ -455,9 +547,18 @@ const ProfilePage: React.FC = () => {
                 )}
               </div>
             </div>
-            <p className="text-sm text-gray-600">
-              Все изменения в профиле автоматически синхронизируются с профилем игрока.
-            </p>
+            <div className="flex items-center gap-3">
+              <p className="text-sm text-gray-600 flex-1">
+                Все изменения в профиле автоматически синхронизируются с профилем игрока.
+              </p>
+              <button
+                onClick={handleUnlinkPlayer}
+                disabled={saving}
+                className="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 disabled:bg-gray-400"
+              >
+                Отвязать профиль игрока
+              </button>
+            </div>
           </div>
         ) : (
           <div>
@@ -470,6 +571,50 @@ const ProfilePage: React.FC = () => {
               </p>
             </div>
             
+            {/* Автокандидаты по ФИО пользователя */}
+            {loadingCandidates ? (
+              <p className="text-sm text-gray-500 mb-4">Поиск подходящих игроков...</p>
+            ) : playerCandidates.length > 0 ? (
+              <div className="mb-6">
+                <p className="text-sm text-gray-700 mb-2">
+                  Мы нашли игроков с таким же ФИО. Если один из них — ты, нажми «Да, это я».
+                </p>
+                <div className="border border-gray-200 rounded-md overflow-hidden">
+                  <div className="bg-gray-50 px-4 py-2 border-b border-gray-200">
+                    <p className="text-sm font-medium text-gray-700">
+                      Найдено кандидатов: {playerCandidates.length}
+                    </p>
+                  </div>
+                  <div className="divide-y divide-gray-100">
+                    {playerCandidates.map((candidate) => (
+                      <div
+                        key={candidate.id}
+                        className="px-4 py-3 flex justify-between items-center hover:bg-gray-50"
+                      >
+                        <div>
+                          <p className="font-medium text-gray-900">
+                            {candidate.last_name} {candidate.first_name}
+                            {candidate.patronymic && ` ${candidate.patronymic}`}
+                          </p>
+                          <div className="text-sm text-gray-600 mt-1">
+                            {candidate.city && <span className="mr-3">📍 {candidate.city}</span>}
+                            <span className="mr-3">⭐ Рейтинг: {candidate.current_rating}</span>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleLinkPlayer(candidate.id)}
+                          disabled={saving}
+                          className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:bg-gray-400"
+                        >
+                          Да, это я
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
             {!showPlayerSearch ? (
               <button
                 onClick={() => setShowPlayerSearch(true)}
@@ -488,7 +633,7 @@ const ProfilePage: React.FC = () => {
                       type="text"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      onKeyPress={(e) => e.key === 'Enter' && handleSearchPlayers()}
+                      onKeyDown={(e) => e.key === 'Enter' && handleSearchPlayers()}
                       placeholder="Например: Иван Иванов"
                       className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
                     />

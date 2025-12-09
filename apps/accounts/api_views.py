@@ -278,8 +278,28 @@ def update_profile(request):
     if serializer.is_valid():
         user = serializer.save()
         return Response(UserProfileSerializer(user).data)
-    
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def unlink_player(request):
+    """Отвязать игрока от текущего пользователя (без влияния на Telegram-связь)."""
+    from apps.telegram_bot.models import TelegramUser
+    from .serializers import UserProfileSerializer
+
+    try:
+        telegram_user = TelegramUser.objects.get(user=request.user)
+    except TelegramUser.DoesNotExist:
+        return Response({"detail": "Telegram профиль не найден"}, status=status.HTTP_404_NOT_FOUND)
+
+    if not telegram_user.player:
+        return Response({"detail": "Связь с игроком отсутствует"}, status=status.HTTP_400_BAD_REQUEST)
+
+    telegram_user.player = None
+    telegram_user.save(update_fields=["player"])
+
+    return Response(UserProfileSerializer(request.user).data)
 
 
 @api_view(["POST"])
@@ -316,6 +336,50 @@ def change_password(request):
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+def profile_player_candidates(request):
+    """Автоподбор кандидатов Player по ФИО пользователя.
+
+    GET /api/auth/profile/player-candidates/
+    """
+    from apps.players.models import Player
+    from apps.telegram_bot.models import TelegramUser
+    from django.db.models import Q
+
+    user = request.user
+
+    # Если уже есть связанный игрок — кандидаты не нужны
+    if TelegramUser.objects.filter(user=user, player__isnull=False).exists():
+        return Response({"candidates": []})
+
+    first = (user.first_name or "").strip()
+    last = (user.last_name or "").strip()
+    if not first or not last:
+        return Response({"candidates": []})
+
+    qs = Player.objects.filter(
+        Q(first_name__iexact=first),
+        Q(last_name__iexact=last),
+    )
+
+    # Исключаем игроков, уже связанных с кем-то через TelegramUser
+    qs = qs.filter(telegram_profile__isnull=True)
+
+    candidates = []
+    for p in qs[:10]:
+        candidates.append({
+            "id": p.id,
+            "first_name": p.first_name,
+            "last_name": p.last_name,
+            "patronymic": p.patronymic or "",
+            "city": p.city or "",
+            "current_rating": p.current_rating,
+        })
+
+    return Response({"candidates": candidates})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def search_players_for_link(request):
     """
     Поиск игроков для связывания с пользователем
@@ -323,21 +387,26 @@ def search_players_for_link(request):
     GET /api/auth/profile/search-players/?q=Иван+Иванов
     """
     from apps.players.models import Player
+    from django.db.models import Q
     
     query = request.GET.get('q', '').strip()
     if not query or len(query) < 2:
         return Response({"players": []})
     
-    # Разбиваем запрос на слова
-    words = query.split()
+    # Разбиваем запрос на слова (первое слово - имя, второе - фамилия)
+    parts = query.split()
+    first = parts[0]
+    last = parts[1] if len(parts) > 1 else ''
     
     # Ищем по имени и фамилии
-    from django.db.models import Q
     q_filter = Q()
-    for word in words:
-        q_filter |= Q(first_name__icontains=word) | Q(last_name__icontains=word)
+    if first:
+        q_filter &= Q(first_name__icontains=first)
+    if last:
+        q_filter &= Q(last_name__icontains=last)
     
-    players = Player.objects.filter(q_filter).select_related('btr_player')[:20]
+    # Исключаем игроков, уже связанных с кем-то через TelegramUser
+    players = Player.objects.filter(q_filter).filter(telegram_profile__isnull=True)[:20]
     
     results = []
     for player in players:
@@ -385,8 +454,16 @@ def link_player(request):
     
     user = request.user
     
-    # Проверяем, не связан ли уже этот User с другим Player
+    # Проверяем, не связан ли уже этот User с другим Player и не занят ли выбранный Player
     from apps.telegram_bot.models import TelegramUser
+
+    # 1) выбраный игрок уже связан с кем-то другим
+    occupied = TelegramUser.objects.filter(player=player).exclude(user=user).first()
+    if occupied:
+        return Response(
+            {"detail": "Этот игрок уже связан с другим пользователем. Обратись к администратору, если это ошибка."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
     try:
         telegram_user = TelegramUser.objects.get(user=user)
         if telegram_user.player and telegram_user.player != player:

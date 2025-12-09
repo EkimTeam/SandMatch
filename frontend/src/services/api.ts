@@ -851,7 +851,6 @@ export interface UserProfile {
     last_name: string;
     first_name: string;
     patronymic?: string;
-    middle_name?: string;
     birth_date?: string;
     gender?: 'male' | 'female';
     phone?: string;
@@ -869,7 +868,6 @@ export interface UpdateProfileData {
   first_name?: string;
   last_name?: string;
   patronymic?: string;
-  middle_name?: string;
   birth_date?: string;
   gender?: 'male' | 'female';
   phone?: string;
@@ -888,12 +886,21 @@ export interface PlayerSearchResult {
   id: number;
   first_name: string;
   last_name: string;
-  patronymic: string;
   display_name: string;
-  current_rating: number;
-  level: string;
+  patronymic?: string;
+  current_rating?: number;
+  level?: string;
+  city?: string;
+  is_profi?: boolean;
+}
+
+export interface PlayerCandidate {
+  id: number;
+  first_name: string;
+  last_name: string;
+  patronymic: string;
   city: string;
-  is_profi: boolean;
+  current_rating: number;
 }
 
 export const profileApi = {
@@ -915,15 +922,26 @@ export const profileApi = {
     return data;
   },
 
-  // Поиск игроков для связывания
+  // Автоподбор кандидатов игрока по ФИО пользователя
+  getPlayerCandidates: async (): Promise<{ candidates: PlayerCandidate[] }> => {
+    const { data } = await api.get('/auth/profile/player-candidates/');
+    return data;
+  },
+
+  // Поиск игроков для связывания: используем общий эндпоинт, как в модалке участников
   searchPlayers: async (query: string): Promise<{ players: PlayerSearchResult[] }> => {
-    const { data } = await api.get('/auth/profile/search-players/', { params: { q: query } });
+    const { data } = await api.get('/players/search/', { params: { q: query } });
     return data;
   },
 
   // Связывание с игроком
   linkPlayer: async (playerId: number): Promise<UserProfile> => {
     const { data } = await api.post('/auth/profile/link-player/', { player_id: playerId });
+    return data;
+  },
+  // Отвязка игрока
+  unlinkPlayer: async (): Promise<UserProfile> => {
+    const { data } = await api.post('/auth/profile/unlink-player/');
     return data;
   },
 };

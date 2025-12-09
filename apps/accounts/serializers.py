@@ -12,7 +12,7 @@ class PlayerProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = Player
         fields = [
-            'id', 'last_name', 'first_name', 'patronymic', 'middle_name',
+            'id', 'last_name', 'first_name', 'patronymic',
             'birth_date', 'gender', 'phone', 'display_name', 'city',
             'current_rating', 'level', 'is_profi', 'created_at'
         ]
@@ -49,7 +49,6 @@ class UpdateProfileSerializer(serializers.Serializer):
     
     # Player fields
     patronymic = serializers.CharField(max_length=100, required=False, allow_blank=True)
-    middle_name = serializers.CharField(max_length=100, required=False, allow_blank=True)
     birth_date = serializers.DateField(required=False, allow_null=True)
     gender = serializers.ChoiceField(choices=['male', 'female'], required=False, allow_blank=True)
     phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
@@ -58,37 +57,46 @@ class UpdateProfileSerializer(serializers.Serializer):
     level = serializers.CharField(max_length=50, required=False, allow_blank=True)
     
     def update(self, instance, validated_data):
-        """Обновление пользователя и связанного игрока"""
+        """Обновление пользователя и связанного игрока (через TelegramUser)."""
         user = instance
-        
+
         # Обновляем User
         user.email = validated_data.get('email', user.email)
         user.first_name = validated_data.get('first_name', user.first_name)
         user.last_name = validated_data.get('last_name', user.last_name)
         user.save()
-        
-        # Обновляем Player (если есть)
+
+        # Обновляем Player, если есть связанный TelegramUser и у него задан player
         try:
-            player = user.player
+            from apps.telegram_bot.models import TelegramUser
+
+            telegram_user = (
+                TelegramUser.objects.select_related('player')
+                .get(user=user)
+            )
+            player = telegram_user.player
+            if player is None:
+                return user
+
             player.patronymic = validated_data.get('patronymic', player.patronymic)
-            player.middle_name = validated_data.get('middle_name', player.middle_name)
             player.birth_date = validated_data.get('birth_date', player.birth_date)
             player.gender = validated_data.get('gender', player.gender)
             player.phone = validated_data.get('phone', player.phone)
             player.display_name = validated_data.get('display_name', player.display_name)
             player.city = validated_data.get('city', player.city)
             player.level = validated_data.get('level', player.level)
-            
+
             # Синхронизируем имя/фамилию с User
             if user.first_name:
                 player.first_name = user.first_name
             if user.last_name:
                 player.last_name = user.last_name
-            
+
             player.save()
-        except Player.DoesNotExist:
+        except Exception:
+            # Если TelegramUser или Player отсутствуют — просто пропускаем обновление игрока
             pass
-        
+
         return user
 
 
