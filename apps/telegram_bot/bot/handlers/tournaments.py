@@ -29,11 +29,11 @@ def get_telegram_user(telegram_id):
 
 
 @sync_to_async
-def get_active_tournaments():
-    """Получение списка активных турниров"""
+def get_live_tournaments():
+    """Получение турниров в процессе (live)"""
     return list(
         Tournament.objects.filter(
-            Q(status='created') | Q(status='active')
+            status='active'
         ).annotate(
             participants_count=Count('entries')
         ).order_by('-date', '-created_at')[:10]
@@ -41,8 +41,20 @@ def get_active_tournaments():
 
 
 @sync_to_async
+def get_registration_tournaments():
+    """Получение турниров для регистрации"""
+    return list(
+        Tournament.objects.filter(
+            status='created'
+        ).annotate(
+            participants_count=Count('entries')
+        ).order_by('date', 'created_at')[:10]
+    )
+
+
+@sync_to_async
 def get_user_tournaments(player_id):
-    """Получение турниров пользователя"""
+    """Получение турниров пользователя с приоритетом и лимитами"""
     if not player_id:
         return []
     
@@ -56,13 +68,47 @@ def get_user_tournaments(player_id):
         team_id__in=team_ids
     ).values_list('tournament_id', flat=True).distinct()
     
-    return list(
+    # Получаем турниры по статусам
+    active_tournaments = list(
         Tournament.objects.filter(
-            id__in=tournament_ids
+            id__in=tournament_ids,
+            status='active'
         ).annotate(
             participants_count=Count('entries')
-        ).order_by('-date', '-created_at')[:10]
+        ).order_by('-date', '-created_at')
     )
+    
+    created_tournaments = list(
+        Tournament.objects.filter(
+            id__in=tournament_ids,
+            status='created'
+        ).annotate(
+            participants_count=Count('entries')
+        ).order_by('date', 'created_at')
+    )
+    
+    # Считаем сколько осталось места для completed
+    active_count = len(active_tournaments)
+    created_count = len(created_tournaments)
+    total_shown = active_count + created_count
+    
+    # Определяем сколько completed показать (минимум 1, если есть место)
+    if total_shown < 5:
+        completed_limit = 5 - total_shown
+    else:
+        completed_limit = 1
+    
+    completed_tournaments = list(
+        Tournament.objects.filter(
+            id__in=tournament_ids,
+            status='completed'
+        ).annotate(
+            participants_count=Count('entries')
+        ).order_by('-date', '-created_at')[:completed_limit]
+    )
+    
+    # Объединяем: active + created + completed
+    return active_tournaments + created_tournaments + completed_tournaments
 
 
 @sync_to_async
@@ -125,7 +171,7 @@ def format_tournament_info(tournament, is_registered=False):
 async def cmd_tournaments(message: Message):
     """
     Обработка команды /tournaments
-    Показывает список активных турниров
+    Показывает турниры Live и турниры для регистрации
     """
     telegram_user = await get_telegram_user(message.from_user.id)
     
@@ -136,43 +182,67 @@ async def cmd_tournaments(message: Message):
         )
         return
     
-    tournaments = await get_active_tournaments()
+    player_id = telegram_user.player_id if telegram_user.player else None
     
-    if not tournaments:
+    # Получаем турниры Live
+    live_tournaments = await get_live_tournaments()
+    
+    # Получаем турниры для регистрации
+    registration_tournaments = await get_registration_tournaments()
+    
+    if not live_tournaments and not registration_tournaments:
         await message.answer(
             "📋 Активных турниров пока нет.\n\n"
             "Следи за обновлениями на сайте beachplay.ru"
         )
         return
     
-    player_id = telegram_user.player_id if telegram_user.player else None
-    
-    await message.answer(f"{hbold('🏆 Активные турниры')}\n")
-    
-    for tournament in tournaments:
-        is_registered = await check_registration(tournament.id, player_id)
-        text = format_tournament_info(tournament, is_registered)
+    # Показываем турниры Live
+    if live_tournaments:
+        await message.answer(f"{hbold('🔴 Турниры Live')}\n")
         
-        # Создаём inline-кнопки
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="📋 Подробнее",
-                    url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
-                )
-            ]
-        ])
-        
-        # Добавляем кнопку регистрации, если турнир в статусе набора и игрок не зарегистрирован
-        if tournament.status == 'created' and player_id and not is_registered:
-            keyboard.inline_keyboard.insert(0, [
-                InlineKeyboardButton(
-                    text="✅ Зарегистрироваться",
-                    callback_data=f"register_{tournament.id}"
-                )
+        for tournament in live_tournaments:
+            is_registered = await check_registration(tournament.id, player_id)
+            text = format_tournament_info(tournament, is_registered)
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📋 Подробнее",
+                        url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
+                    )
+                ]
             ])
+            
+            await message.answer(text, reply_markup=keyboard)
+    
+    # Показываем турниры для регистрации
+    if registration_tournaments:
+        await message.answer(f"\n{hbold('📝 Турниры для регистрации')}\n")
         
-        await message.answer(text, reply_markup=keyboard)
+        for tournament in registration_tournaments:
+            is_registered = await check_registration(tournament.id, player_id)
+            text = format_tournament_info(tournament, is_registered)
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📋 Подробнее",
+                        url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
+                    )
+                ]
+            ])
+            
+            # Добавляем кнопку регистрации, если игрок не зарегистрирован
+            if player_id and not is_registered:
+                keyboard.inline_keyboard.insert(0, [
+                    InlineKeyboardButton(
+                        text="✅ Зарегистрироваться",
+                        callback_data=f"register_{tournament.id}"
+                    )
+                ])
+            
+            await message.answer(text, reply_markup=keyboard)
 
 
 @router.message(Command("mytournaments"))
@@ -228,6 +298,11 @@ async def cmd_my_tournaments(message: Message):
         ])
         
         await message.answer(text, reply_markup=keyboard)
+    
+    # Добавляем сообщение о полном списке
+    await message.answer(
+        f"\n📋 Все турниры вы можете посмотреть на {hbold('BeachPlay.ru')}"
+    )
 
 
 @router.callback_query(F.data.startswith("register_"))
