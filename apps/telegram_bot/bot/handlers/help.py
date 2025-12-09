@@ -1,12 +1,16 @@
 """
 Обработчик команды /help - справка по командам
 """
+import os
 from aiogram import Router
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.utils.markdown import hbold, hcode
 
 router = Router()
+
+# URL веб-приложения
+WEB_APP_URL = os.getenv('WEB_APP_URL', 'https://beachplay.ru')
 
 
 @router.message(Command("help"))
@@ -37,4 +41,14 @@ async def cmd_help(message: Message):
     
     help_text += f"По всем вопросам обращайся к администратору"
     
-    await message.answer(help_text)
+    # Создаём клавиатуру с Web App кнопками
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🏐 Открыть BeachPlay",
+                web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/")
+            )
+        ]
+    ])
+    
+    await message.answer(help_text, reply_markup=keyboard)

@@ -1,15 +1,19 @@
 """
 Обработчик команды /start
 """
+import os
 from aiogram import Router, F
 from aiogram.filters import CommandStart
-from aiogram.types import Message
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.utils.markdown import hbold
 from asgiref.sync import sync_to_async
 
 from apps.telegram_bot.models import TelegramUser
 
 router = Router()
+
+# URL веб-приложения
+WEB_APP_URL = os.getenv('WEB_APP_URL', 'https://beachplay.ru')
 
 
 @sync_to_async
@@ -40,6 +44,28 @@ async def cmd_start(message: Message):
         language_code=message.from_user.language_code,
     )
     
+    # Создаём клавиатуру с Web App кнопкой
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🏐 Открыть BeachPlay",
+                web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/")
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🏆 Турниры",
+                web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments")
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="👤 Мой профиль",
+                web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/profile")
+            )
+        ]
+    ])
+    
     if created:
         await message.answer(
             f"Привет, {hbold(message.from_user.first_name)}! 👋\n\n"
@@ -50,14 +76,16 @@ async def cmd_start(message: Message):
             f"• Следить за расписанием и результатами\n"
             f"• Получать уведомления о турнирах\n\n"
             f"Для начала свяжи свой Telegram с аккаунтом на beachplay.ru\n"
-            f"Используй команду /link"
+            f"Используй команду /link",
+            reply_markup=keyboard
         )
     else:
         await message.answer(
             f"С возвращением, {hbold(message.from_user.first_name)}! 👋\n\n"
-            f"Чем могу помочь?\n\n"
+            f"Используй кнопки ниже для быстрого доступа или команды:\n\n"
             f"/tournaments - список турниров\n"
             f"/mytournaments - мои турниры\n"
             f"/profile - мой профиль\n"
-            f"/help - справка по командам"
+            f"/help - справка по командам",
+            reply_markup=keyboard
         )

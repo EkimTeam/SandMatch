@@ -22,6 +22,14 @@ import ProfilePage from './pages/ProfilePage';
 import { getAccessToken } from './services/auth';
 import { AuthProvider, useAuth } from './context/AuthContext';
 
+// Telegram Mini App pages
+import MiniAppLayout from './pages/MiniApp/MiniAppLayout';
+import MiniAppHome from './pages/MiniApp/MiniAppHome';
+import MiniAppTournaments from './pages/MiniApp/MiniAppTournaments';
+import MiniAppTournamentDetail from './pages/MiniApp/MiniAppTournamentDetail';
+import MiniAppProfile from './pages/MiniApp/MiniAppProfile';
+import MiniAppMyTournaments from './pages/MiniApp/MiniAppMyTournaments';
+
 function RequireAuth({ children }: { children: JSX.Element }) {
   const token = getAccessToken();
   const location = useLocation();
@@ -48,39 +56,54 @@ function App() {
   return (
     <Router>
       <AuthProvider>
-        <Layout>
-          <Routes>
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
-            <Route path="/reset-password" element={<PasswordResetRequestPage />} />
-            <Route path="/reset-password/confirm" element={<PasswordResetConfirmPage />} />
-            {/* Публичные страницы: турнирный обзор, рейтинг и сводная статистика */}
-            <Route path="/" element={<TournamentListPage />} />
-            <Route path="/tournaments" element={<TournamentListPage />} />
-            <Route path="/rating" element={<RatingPage />} />
-            <Route path="/stats" element={<StatsPage />} />
+        <Routes>
+          {/* Telegram Mini App routes - БЕЗ основного Layout */}
+          <Route path="/mini-app" element={<MiniAppLayout />}>
+            <Route index element={<MiniAppHome />} />
+            <Route path="tournaments" element={<MiniAppTournaments />} />
+            <Route path="tournaments/:id" element={<MiniAppTournamentDetail />} />
+            <Route path="profile" element={<MiniAppProfile />} />
+            <Route path="my-tournaments" element={<MiniAppMyTournaments />} />
+          </Route>
 
-            {/* Детали турниров доступны анонимам в режиме read-only, UI-гейтинг по ролям внутри страниц */}
-            <Route path="/tournaments/:id/round_robin" element={<TournamentDetailPage />} />
-            <Route path="/tournaments/:id" element={<TournamentDetailPage />} />
-            <Route path="/tournaments/:id/knockout" element={<KnockoutPage />} />
-            <Route path="/tournaments/:id/king" element={<KingPage />} />
-            <Route path="/tournaments/:id/king-old" element={<RequireAdmin><KingPageOld /></RequireAdmin>} />
+          {/* Все остальные routes с основным Layout */}
+          <Route path="/*" element={
+            <Layout>
+              <Routes>
+                <Route path="/login" element={<LoginPage />} />
+                <Route path="/register" element={<RegisterPage />} />
+                <Route path="/reset-password" element={<PasswordResetRequestPage />} />
+                <Route path="/reset-password/confirm" element={<PasswordResetConfirmPage />} />
+                {/* Публичные страницы: турнирный обзор, рейтинг и сводная статистика */}
+                <Route path="/" element={<TournamentListPage />} />
+                <Route path="/tournaments" element={<TournamentListPage />} />
+                <Route path="/rating" element={<RatingPage />} />
+                <Route path="/stats" element={<StatsPage />} />
 
-            {/* BTR Player Card - публичная страница */}
-            <Route path="/btr/players/:id" element={<BTRPlayerCardPage />} />
+                {/* Детали турниров доступны анонимам в режиме read-only, UI-гейтинг по ролям внутри страниц */}
+                <Route path="/tournaments/:id/round_robin" element={<TournamentDetailPage />} />
+                <Route path="/tournaments/:id" element={<TournamentDetailPage />} />
+                <Route path="/tournaments/:id/knockout" element={<KnockoutPage />} />
+                <Route path="/tournaments/:id/king" element={<KingPage />} />
+                <Route path="/tournaments/:id/king-old" element={<RequireAdmin><KingPageOld /></RequireAdmin>} />
 
-            {/* Остальное требует авторизации */}
-            <Route path="/profile" element={<RequireAuth><ProfilePage /></RequireAuth>} />
-            <Route path="/referee" element={<RequireAuth><RefereePage /></RequireAuth>} />
-            <Route path="/players" element={<RequireAuth><PlayersPage /></RequireAuth>} />
-            <Route path="/players/:id" element={<RequireAuth><PlayerCardPage /></RequireAuth>} />
-            <Route path="/players/h2h/:id1/:id2" element={<RequireAuth><PlayersH2HPage /></RequireAuth>} />
-            <Route path="/admin/roles" element={<RequireAuth><UserRolesPage /></RequireAuth>} />
-            <Route path="/forbidden" element={<ForbiddenPage />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </Layout>
+                {/* BTR Player Card - публичная страница */}
+                <Route path="/btr/players/:id" element={<BTRPlayerCardPage />} />
+
+                {/* Остальное требует авторизации */}
+                <Route path="/profile" element={<RequireAuth><ProfilePage /></RequireAuth>} />
+                <Route path="/referee" element={<RequireAuth><RefereePage /></RequireAuth>} />
+                <Route path="/players" element={<RequireAuth><PlayersPage /></RequireAuth>} />
+                <Route path="/players/:id" element={<RequireAuth><PlayerCardPage /></RequireAuth>} />
+                <Route path="/players/h2h/:id1/:id2" element={<RequireAuth><PlayersH2HPage /></RequireAuth>} />
+                <Route path="/admin/roles" element={<RequireAuth><UserRolesPage /></RequireAuth>} />
+                <Route path="/forbidden" element={<ForbiddenPage />} />
+                
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </Layout>
+          } />
+        </Routes>
       </AuthProvider>
     </Router>
   );
