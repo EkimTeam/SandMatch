@@ -42,7 +42,8 @@ export WEB_IMAGE
 export WEB_IMAGE_TAG
 
 log "Pulling images..."
-docker compose pull web celery celery-beat
+# web, celery, celery-beat и telegram-bot используют один и тот же образ WEB_IMAGE
+docker compose pull web celery celery-beat telegram-bot
 
 # Очистка старой структуры статики и подготовка новой
 log "Cleaning old static structure..."

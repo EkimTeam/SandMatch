@@ -28,6 +28,16 @@ services:
     depends_on:
       - redis
 
+  telegram-bot:
+    image: ${WEB_IMAGE:-ghcr.io/ekimteam/sandmatch/web}:${WEB_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: python manage.py run_bot
+    depends_on:
+      - web
+      - redis
+
   celery:
     image: ${WEB_IMAGE:-ghcr.io/ekimteam/sandmatch/web}:${WEB_IMAGE_TAG:-latest}
     restart: unless-stopped
