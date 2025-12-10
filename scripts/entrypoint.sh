@@ -25,7 +25,10 @@ fi
 
 python manage.py collectstatic --noinput || true
 
-# PROD: gunicorn (WSGI)
+if [ "${RUN_TELEGRAM_BOT:-}" = "true" ]; then
+  exec python manage.py run_bot
+fi
+
 exec gunicorn sandmatch.wsgi:application \
   --bind 0.0.0.0:8000 \
   --workers "${GUNICORN_WORKERS:-3}" \
