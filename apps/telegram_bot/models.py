@@ -53,6 +53,11 @@ class TelegramUser(models.Model):
         verbose_name_plural = "Telegram пользователи"
         ordering = ['-created_at']
     
+    @property
+    def player_id(self):
+        """Возвращает ID связанного игрока или None"""
+        return self.player.id if self.player else None
+    
     def __str__(self):
         if self.username:
             return f"@{self.username} ({self.telegram_id})"
