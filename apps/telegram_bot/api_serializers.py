@@ -106,10 +106,13 @@ class TournamentDetailSerializer(serializers.ModelSerializer):
 
 
 class PlayerSerializer(serializers.ModelSerializer):
-    """Сериализатор игрока"""
-    
+    """Сериализатор игрока для Mini App"""
+
     full_name = serializers.SerializerMethodField()
-    
+    rating = serializers.IntegerField(source='current_rating', read_only=True)
+    tournaments_played = serializers.SerializerMethodField()
+    tournaments_won = serializers.SerializerMethodField()
+
     class Meta:
         model = Player
         fields = [
@@ -119,10 +122,15 @@ class PlayerSerializer(serializers.ModelSerializer):
             'tournaments_played',
             'tournaments_won',
         ]
-    
+
     def get_full_name(self, obj):
-        """Полное имя игрока"""
         return f"{obj.first_name} {obj.last_name}".strip()
+
+    def get_tournaments_played(self, obj):
+        return 0
+
+    def get_tournaments_won(self, obj):
+        return 0
 
 
 class TeamSerializer(serializers.ModelSerializer):
