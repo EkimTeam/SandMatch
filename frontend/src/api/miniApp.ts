@@ -74,7 +74,14 @@ class MiniAppAPI {
     const response = await this.api.get('/tournaments/', {
       params: { status },
     })
-    return response.data
+    const data = response.data
+    // DRF ViewSet по умолчанию возвращает пагинированный ответ
+    // { count, next, previous, results: [...] }
+    if (data && Array.isArray(data.results)) {
+      return data.results
+    }
+    // Для кастомных действий (my_tournaments) возвращается сразу массив
+    return data
   }
 
   /**

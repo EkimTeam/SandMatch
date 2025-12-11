@@ -9,7 +9,7 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     """Главное меню"""
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text="🏐 Турниры", callback_data="tournaments"),
+        InlineKeyboardButton(text="🎾 Турниры", callback_data="tournaments"),
         InlineKeyboardButton(text="📊 Рейтинг", callback_data="rating"),
     )
     builder.row(

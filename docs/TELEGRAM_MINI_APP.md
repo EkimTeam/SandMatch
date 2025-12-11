@@ -160,7 +160,7 @@ X-Telegram-Init-Data: <initData>
 ### Web App кнопки в боте
 
 В команде `/start` добавлены кнопки:
-- **🏐 Открыть BeachPlay** → `/mini-app/`
+- **🎾 Открыть BeachPlay** → `/mini-app/`
 - **🏆 Турниры** → `/mini-app/tournaments`
 - **👤 Мой профиль** → `/mini-app/profile`
 
@@ -169,7 +169,7 @@ X-Telegram-Init-Data: <initData>
 keyboard = InlineKeyboardMarkup(inline_keyboard=[
     [
         InlineKeyboardButton(
-            text="🏐 Открыть BeachPlay",
+            text="🎾 Открыть BeachPlay",
             web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/")
         )
     ]
