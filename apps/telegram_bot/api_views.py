@@ -135,7 +135,7 @@ class MiniAppTournamentViewSet(viewsets.ReadOnlyModelViewSet):
         """Получение списка турниров"""
         queryset = Tournament.objects.annotate(
             participants_count=Count('entries')
-        ).select_related('venue', 'organizer')
+        ).select_related('venue', 'created_by')
         
         # Фильтр по статусу
         status_filter = self.request.query_params.get('status')
