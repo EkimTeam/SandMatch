@@ -306,14 +306,21 @@ def mini_app_profile(request):
     try:
         user, telegram_user = auth.authenticate(request)
     except Exception as e:
+        # Ошибка на этапе валидации initData или поиска TelegramUser
         return Response({
             'error': str(e)
         }, status=status.HTTP_401_UNAUTHORIZED)
-    
-    if not telegram_user:
+
+    try:
+        if not telegram_user:
+            return Response({
+                'error': 'Telegram пользователь не найден'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ProfileSerializer(telegram_user)
+        return Response(serializer.data)
+    except Exception as e:
+        # Временный блок для дебага продакшена: показать текст ошибки вместо немого 500
         return Response({
-            'error': 'Telegram пользователь не найден'
-        }, status=status.HTTP_404_NOT_FOUND)
-    
-    serializer = ProfileSerializer(telegram_user)
-    return Response(serializer.data)
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
