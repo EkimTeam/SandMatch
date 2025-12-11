@@ -14,6 +14,8 @@ class TournamentListSerializer(serializers.ModelSerializer):
     participants_count = serializers.IntegerField(read_only=True)
     is_registered = serializers.SerializerMethodField()
     venue_name = serializers.CharField(source='venue.name', read_only=True)
+    # В модели Tournament нет max_teams, используем planned_participants как вместимость
+    max_teams = serializers.IntegerField(source='planned_participants', read_only=True)
     
     class Meta:
         model = Tournament
@@ -58,6 +60,9 @@ class TournamentDetailSerializer(serializers.ModelSerializer):
     venue_name = serializers.CharField(source='venue.name', read_only=True)
     venue_address = serializers.CharField(source='venue.address', read_only=True)
     organizer_name = serializers.SerializerMethodField()
+    # Безопасные поля для Mini App: в модели Tournament нет description и entry_fee
+    description = serializers.SerializerMethodField()
+    entry_fee = serializers.SerializerMethodField()
     
     class Meta:
         model = Tournament
@@ -102,6 +107,14 @@ class TournamentDetailSerializer(serializers.ModelSerializer):
         """Имя организатора"""
         if obj.organizer:
             return obj.organizer.get_full_name() or obj.organizer.username
+        return None
+
+    def get_description(self, obj):
+        # В текущей модели Tournament нет текстового описания — возвращаем None
+        return None
+
+    def get_entry_fee(self, obj):
+        # В текущей модели Tournament нет отдельного поля entry_fee — можно брать из prize_fund или вернуть None
         return None
 
 
