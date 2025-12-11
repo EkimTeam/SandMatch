@@ -45,7 +45,7 @@ async def cmd_help(message: Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
-                text="🏐 Открыть BeachPlay",
+                text="🎾 Открыть BeachPlay",
                 web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/")
             )
         ]

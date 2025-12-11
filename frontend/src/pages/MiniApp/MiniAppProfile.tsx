@@ -133,7 +133,7 @@ const MiniAppProfile = () => {
             <>
               <div className="bg-white rounded-lg shadow-sm p-6">
                 <h2 className="font-semibold text-gray-900 text-lg mb-4">
-                  🏐 Игровая статистика
+                  🎾 Игровая статистика
                 </h2>
                 <div className="space-y-3">
                   <div>
