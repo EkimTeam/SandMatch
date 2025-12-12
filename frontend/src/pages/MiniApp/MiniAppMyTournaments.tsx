@@ -78,12 +78,19 @@ const MiniAppMyTournaments = () => {
 
   return (
     <div className="p-4 space-y-4">
-      {/* Заголовок */}
-      <div className="bg-white rounded-lg shadow-sm p-4">
-        <h1 className="text-2xl font-bold text-gray-900">📋 Мои турниры</h1>
+      {/* Заголовок с логотипом */}
+      <div className="bg-white rounded-lg shadow-sm p-4 flex items-center justify-between">
+        <div className="flex items-center">
+          <img
+            src="/static/img/logo.png"
+            alt="BeachPlay"
+            className="h-8 w-8 rounded-md mr-3 object-contain"
+          />
+          <h1 className="text-2xl font-bold text-gray-900">📋 Мои турниры</h1>
+        </div>
         {!loading && !error && (
           <p className="text-sm text-gray-600 mt-1">
-            Всего турниров: {tournaments.length}
+            Всего: {tournaments.length}
           </p>
         )}
       </div>
