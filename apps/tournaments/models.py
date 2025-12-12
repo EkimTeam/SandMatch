@@ -1,6 +1,9 @@
 from django.core.exceptions import ValidationError
 from django.db import models
 
+# Импортируем модели регистрации
+from .registration_models import TournamentRegistration, PairInvitation
+
 
 class SchedulePattern(models.Model):
     """Шаблон расписания для турниров"""

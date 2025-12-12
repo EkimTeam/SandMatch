@@ -81,6 +81,20 @@ const MiniAppHome = () => {
           </div>
           <span className="text-xl">→</span>
         </button>
+
+        <button
+          onClick={() => handleNavigate('/mini-app/invitations')}
+          className="w-full bg-orange-600 text-white rounded-lg p-4 flex items-center justify-between hover:bg-orange-700 transition-colors"
+        >
+          <div className="flex items-center space-x-3">
+            <span className="text-2xl">📬</span>
+            <div className="text-left">
+              <div className="font-semibold">Приглашения</div>
+              <div className="text-sm text-orange-100">Приглашения в пару от других игроков</div>
+            </div>
+          </div>
+          <span className="text-xl">→</span>
+        </button>
       </div>
 
       {/* Информация */}
