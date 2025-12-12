@@ -76,8 +76,13 @@ const MiniAppProfile = () => {
 
   return (
     <div className="p-4 space-y-4">
-      {/* Заголовок */}
-      <div className="bg-white rounded-lg shadow-sm p-6">
+      {/* Заголовок с логотипом */}
+      <div className="bg-white rounded-lg shadow-sm p-6 flex items-center">
+        <img
+          src="/static/img/logo.png"
+          alt="BeachPlay"
+          className="h-8 w-8 rounded-md mr-3 object-contain"
+        />
         <h1 className="text-2xl font-bold text-gray-900">👤 Мой профиль</h1>
       </div>
 
