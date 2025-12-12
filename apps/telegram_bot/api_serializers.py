@@ -60,6 +60,8 @@ class TournamentDetailSerializer(serializers.ModelSerializer):
     venue_name = serializers.CharField(source='venue.name', read_only=True)
     venue_address = serializers.CharField(source='venue.address', read_only=True)
     organizer_name = serializers.SerializerMethodField()
+    # В модели Tournament нет max_teams, используем planned_participants
+    max_teams = serializers.IntegerField(source='planned_participants', read_only=True)
     # Безопасные поля для Mini App: в модели Tournament нет description и entry_fee
     description = serializers.SerializerMethodField()
     entry_fee = serializers.SerializerMethodField()
@@ -105,8 +107,9 @@ class TournamentDetailSerializer(serializers.ModelSerializer):
     
     def get_organizer_name(self, obj):
         """Имя организатора"""
-        if obj.organizer:
-            return obj.organizer.get_full_name() or obj.organizer.username
+        # В модели Tournament есть created_by, а не organizer
+        if obj.created_by:
+            return obj.created_by.get_full_name() or obj.created_by.username
         return None
 
     def get_description(self, obj):
@@ -140,10 +143,46 @@ class PlayerSerializer(serializers.ModelSerializer):
         return f"{obj.first_name} {obj.last_name}".strip()
 
     def get_tournaments_played(self, obj):
-        return 0
+        """Количество турниров, в которых игрок участвовал (через команды)."""
+        team_ids = Team.objects.filter(
+            Q(player_1=obj) | Q(player_2=obj)
+        ).values_list('id', flat=True)
+
+        if not team_ids:
+            return 0
+
+        return (
+            TournamentEntry.objects
+            .filter(team_id__in=team_ids)
+            .values('tournament_id')
+            .distinct()
+            .count()
+        )
 
     def get_tournaments_won(self, obj):
-        return 0
+        """Приблизительное количество выигранных турниров.
+
+        Используем TournamentEntryStats: считаем турниры, где команда игрока
+        имеет хотя бы одну победу и турнир завершён.
+        """
+        team_ids = Team.objects.filter(
+            Q(player_1=obj) | Q(player_2=obj)
+        ).values_list('id', flat=True)
+
+        if not team_ids:
+            return 0
+
+        return (
+            TournamentEntry.objects
+            .filter(
+                team_id__in=team_ids,
+                tournament__status='completed',
+                stats__wins__gt=0,
+            )
+            .values('tournament_id')
+            .distinct()
+            .count()
+        )
 
 
 class TeamSerializer(serializers.ModelSerializer):
