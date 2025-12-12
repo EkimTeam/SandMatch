@@ -159,22 +159,22 @@ const MiniAppProfile = () => {
                       <div className="text-2xl font-bold text-yellow-600">
                         {profile.player.tournaments_won}
                       </div>
-                      <div className="text-xs text-gray-500 mt-1">Побед</div>
+                      <div className="text-xs text-gray-500 mt-1">Побед (матчи)</div>
                     </div>
                   </div>
                 </div>
               </div>
 
               {/* Процент побед */}
-              {profile.player.tournaments_played > 0 && (
+              {profile.player.matches_played > 0 && (
                 <div className="bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg shadow-sm p-6 text-white">
                   <div className="text-center">
                     <div className="text-4xl font-bold mb-2">
                       {Math.round(
-                        (profile.player.tournaments_won / profile.player.tournaments_played) * 100
+                        (profile.player.tournaments_won / profile.player.matches_played) * 100
                       )}%
                     </div>
-                    <div className="text-sm opacity-90">Процент побед</div>
+                    <div className="text-sm opacity-90">Процент побед в матчах</div>
                   </div>
                 </div>
               )}
