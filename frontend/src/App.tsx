@@ -29,6 +29,7 @@ import MiniAppTournaments from './pages/MiniApp/MiniAppTournaments';
 import MiniAppTournamentDetail from './pages/MiniApp/MiniAppTournamentDetail';
 import MiniAppProfile from './pages/MiniApp/MiniAppProfile';
 import MiniAppMyTournaments from './pages/MiniApp/MiniAppMyTournaments';
+import MiniAppInvitations from './pages/MiniApp/MiniAppInvitations';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const token = getAccessToken();
@@ -64,6 +65,7 @@ function App() {
             <Route path="tournaments/:id" element={<MiniAppTournamentDetail />} />
             <Route path="profile" element={<MiniAppProfile />} />
             <Route path="my-tournaments" element={<MiniAppMyTournaments />} />
+            <Route path="invitations" element={<MiniAppInvitations />} />
           </Route>
 
           {/* Все остальные routes с основным Layout */}

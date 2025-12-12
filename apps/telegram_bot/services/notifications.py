@@ -313,6 +313,197 @@ class NotificationService:
         telegram_user.is_blocked = True
         telegram_user.save(update_fields=['is_blocked'])
     
+    async def notify_pair_invitation(self, invitation) -> int:
+        """
+        Уведомление о приглашении в пару
+        
+        Args:
+            invitation: объект PairInvitation
+            
+        Returns:
+            количество отправленных уведомлений
+        """
+        # Получаем TelegramUser получателя
+        user = await self._get_telegram_user_by_player(invitation.receiver_id)
+        if not user:
+            return 0
+        
+        message = (
+            f"🤝 {hbold('Приглашение в пару!')}\n\n"
+            f"{hbold(invitation.sender.get_full_name())} приглашает вас сыграть в паре\n"
+            f"на турнире {hbold(invitation.tournament.name)}\n"
+        )
+        
+        if invitation.message:
+            message += f"\n💬 Сообщение: {invitation.message}\n"
+        
+        message += (
+            f"\n📅 Дата турнира: {invitation.tournament.date.strftime('%d.%m.%Y')}\n"
+            f"\n🔗 Открыть Mini App для ответа: {self.web_app_url}/mini-app/invitations"
+        )
+        
+        success = await self.send_notification(
+            telegram_user=user,
+            message=message,
+            notification_type='pair_invitation',
+            tournament=invitation.tournament
+        )
+        
+        return 1 if success else 0
+    
+    async def notify_invitation_accepted(self, invitation) -> int:
+        """
+        Уведомление о принятии приглашения
+        
+        Args:
+            invitation: объект PairInvitation
+            
+        Returns:
+            количество отправленных уведомлений
+        """
+        # Получаем TelegramUser отправителя
+        user = await self._get_telegram_user_by_player(invitation.sender_id)
+        if not user:
+            return 0
+        
+        message = (
+            f"✅ {hbold('Приглашение принято!')}\n\n"
+            f"{hbold(invitation.receiver.get_full_name())} принял ваше приглашение!\n"
+            f"Турнир: {hbold(invitation.tournament.name)}\n"
+            f"📅 {invitation.tournament.date.strftime('%d.%m.%Y')}\n"
+            f"\n🔗 Подробнее: {self.web_app_url}/tournaments/{invitation.tournament.id}"
+        )
+        
+        success = await self.send_notification(
+            telegram_user=user,
+            message=message,
+            notification_type='invitation_accepted',
+            tournament=invitation.tournament
+        )
+        
+        return 1 if success else 0
+    
+    async def notify_partner_registration(self, registration) -> int:
+        """
+        Уведомление напарнику о регистрации
+        
+        Args:
+            registration: объект TournamentRegistration
+            
+        Returns:
+            количество отправленных уведомлений
+        """
+        if not registration.partner:
+            return 0
+        
+        # Получаем TelegramUser напарника
+        user = await self._get_telegram_user_by_player(registration.partner_id)
+        if not user:
+            return 0
+        
+        status_text = {
+            'main_list': 'основной состав',
+            'reserve_list': 'резервный список',
+        }.get(registration.status, registration.get_status_display())
+        
+        message = (
+            f"🎾 {hbold('Регистрация на турнир')}\n\n"
+            f"{hbold(registration.player.get_full_name())} зарегистрировал вас в паре\n"
+            f"на турнир {hbold(registration.tournament.name)}\n"
+            f"📅 {registration.tournament.date.strftime('%d.%m.%Y')}\n"
+            f"\n📋 Статус: {hbold(status_text)}\n"
+            f"\n🔗 Подробнее: {self.web_app_url}/tournaments/{registration.tournament.id}"
+        )
+        
+        success = await self.send_notification(
+            telegram_user=user,
+            message=message,
+            notification_type='partner_registration',
+            tournament=registration.tournament
+        )
+        
+        return 1 if success else 0
+    
+    async def notify_status_changed(self, registration, old_status: str, new_status: str) -> int:
+        """
+        Уведомление об изменении статуса регистрации
+        
+        Args:
+            registration: объект TournamentRegistration
+            old_status: старый статус
+            new_status: новый статус
+            
+        Returns:
+            количество отправленных уведомлений
+        """
+        # Отправляем уведомления обоим игрокам
+        player_ids = [registration.player_id]
+        if registration.partner_id:
+            player_ids.append(registration.partner_id)
+        
+        users = await self._get_telegram_users_by_players(player_ids)
+        
+        status_text = {
+            'main_list': 'основной состав',
+            'reserve_list': 'резервный список',
+            'looking_for_partner': 'ищет пару',
+        }.get(new_status, new_status)
+        
+        # Определяем emoji в зависимости от изменения статуса
+        emoji = "📋"
+        if old_status == 'reserve_list' and new_status == 'main_list':
+            emoji = "🎉"
+            status_text = f"переведены в {hbold('основной состав')}"
+        elif old_status == 'main_list' and new_status == 'reserve_list':
+            emoji = "⚠️"
+            status_text = f"переведены в {hbold('резервный список')}"
+        else:
+            status_text = f"изменён на {hbold(status_text)}"
+        
+        message = (
+            f"{emoji} {hbold('Изменение статуса регистрации')}\n\n"
+            f"Турнир: {hbold(registration.tournament.name)}\n"
+            f"📅 {registration.tournament.date.strftime('%d.%m.%Y')}\n"
+            f"\nВаш статус {status_text}\n"
+            f"\n🔗 Подробнее: {self.web_app_url}/tournaments/{registration.tournament.id}"
+        )
+        
+        sent_count = 0
+        for user in users:
+            success = await self.send_notification(
+                telegram_user=user,
+                message=message,
+                notification_type='status_changed',
+                tournament=registration.tournament
+            )
+            if success:
+                sent_count += 1
+        
+        return sent_count
+    
+    @sync_to_async
+    def _get_telegram_user_by_player(self, player_id: int) -> Optional[TelegramUser]:
+        """Получение TelegramUser по player_id"""
+        try:
+            return TelegramUser.objects.get(
+                player_id=player_id,
+                notifications_enabled=True,
+                is_blocked=False
+            )
+        except TelegramUser.DoesNotExist:
+            return None
+    
+    @sync_to_async
+    def _get_telegram_users_by_players(self, player_ids: List[int]) -> List[TelegramUser]:
+        """Получение TelegramUser по списку player_id"""
+        return list(
+            TelegramUser.objects.filter(
+                player_id__in=player_ids,
+                notifications_enabled=True,
+                is_blocked=False
+            )
+        )
+    
     async def close(self):
         """Закрытие сессии бота"""
         await self.bot.session.close()

@@ -331,3 +331,321 @@ def mini_app_profile(request):
         return Response({
             'error': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# --- Новые эндпоинты для системы регистрации ---
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def tournament_participants(request, tournament_id):
+    """
+    Получить список участников турнира (основной состав, резерв, ищущие пару)
+    
+    GET /api/mini-app/tournaments/{id}/participants/
+    """
+    from apps.tournaments.registration_models import TournamentRegistration
+    from .api_serializers import TournamentParticipantsSerializer, TournamentRegistrationSerializer
+    
+    try:
+        tournament = Tournament.objects.get(id=tournament_id)
+    except Tournament.DoesNotExist:
+        return Response({
+            'error': 'Турнир не найден'
+        }, status=status.HTTP_404_NOT_FOUND)
+    
+    # Получаем регистрации по статусам
+    main_list = TournamentRegistration.objects.filter(
+        tournament=tournament,
+        status=TournamentRegistration.Status.MAIN_LIST
+    ).select_related('player', 'partner')
+    
+    reserve_list = TournamentRegistration.objects.filter(
+        tournament=tournament,
+        status=TournamentRegistration.Status.RESERVE_LIST
+    ).select_related('player', 'partner')
+    
+    looking_for_partner = TournamentRegistration.objects.filter(
+        tournament=tournament,
+        status=TournamentRegistration.Status.LOOKING_FOR_PARTNER
+    ).select_related('player')
+    
+    data = {
+        'main_list': TournamentRegistrationSerializer(main_list, many=True).data,
+        'reserve_list': TournamentRegistrationSerializer(reserve_list, many=True).data,
+        'looking_for_partner': TournamentRegistrationSerializer(looking_for_partner, many=True).data,
+    }
+    
+    return Response(data)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def register_looking_for_partner(request, tournament_id):
+    """
+    Зарегистрироваться на турнир в режиме "ищет пару"
+    
+    POST /api/mini-app/tournaments/{id}/register-looking-for-partner/
+    """
+    from apps.tournaments.services import RegistrationService
+    from .api_serializers import TournamentRegistrationSerializer
+    
+    # Аутентификация
+    auth = TelegramWebAppAuthentication()
+    try:
+        user, telegram_user = auth.authenticate(request)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    if not telegram_user or not telegram_user.player_id:
+        return Response({'error': 'Игрок не найден'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        tournament = Tournament.objects.get(id=tournament_id)
+        player = Player.objects.get(id=telegram_user.player_id)
+    except (Tournament.DoesNotExist, Player.DoesNotExist) as e:
+        return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
+    
+    try:
+        registration = RegistrationService.register_looking_for_partner(tournament, player)
+        return Response(
+            TournamentRegistrationSerializer(registration).data,
+            status=status.HTTP_201_CREATED
+        )
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def register_with_partner(request, tournament_id):
+    """
+    Зарегистрироваться на турнир с напарником
+    
+    POST /api/mini-app/tournaments/{id}/register-with-partner/
+    Body: { "partner_id": 123 }
+    """
+    from apps.tournaments.services import RegistrationService
+    from .api_serializers import RegisterWithPartnerSerializer, TournamentRegistrationSerializer
+    
+    # Аутентификация
+    auth = TelegramWebAppAuthentication()
+    try:
+        user, telegram_user = auth.authenticate(request)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    if not telegram_user or not telegram_user.player_id:
+        return Response({'error': 'Игрок не найден'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    serializer = RegisterWithPartnerSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        tournament = Tournament.objects.get(id=tournament_id)
+        player = Player.objects.get(id=telegram_user.player_id)
+        partner = Player.objects.get(id=serializer.validated_data['partner_id'])
+    except (Tournament.DoesNotExist, Player.DoesNotExist) as e:
+        return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
+    
+    try:
+        registration = RegistrationService.register_with_partner(tournament, player, partner)
+        return Response(
+            TournamentRegistrationSerializer(registration).data,
+            status=status.HTTP_201_CREATED
+        )
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def send_pair_invitation(request, tournament_id):
+    """
+    Отправить приглашение в пару
+    
+    POST /api/mini-app/tournaments/{id}/send-invitation/
+    Body: { "receiver_id": 123, "message": "Давай сыграем!" }
+    """
+    from apps.tournaments.services import RegistrationService
+    from .api_serializers import SendPairInvitationSerializer, PairInvitationSerializer
+    
+    # Аутентификация
+    auth = TelegramWebAppAuthentication()
+    try:
+        user, telegram_user = auth.authenticate(request)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    if not telegram_user or not telegram_user.player_id:
+        return Response({'error': 'Игрок не найден'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    serializer = SendPairInvitationSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        tournament = Tournament.objects.get(id=tournament_id)
+        sender = Player.objects.get(id=telegram_user.player_id)
+        receiver = Player.objects.get(id=serializer.validated_data['receiver_id'])
+    except (Tournament.DoesNotExist, Player.DoesNotExist) as e:
+        return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
+    
+    try:
+        invitation = RegistrationService.send_pair_invitation(
+            tournament, sender, receiver,
+            message=serializer.validated_data.get('message', '')
+        )
+        return Response(
+            PairInvitationSerializer(invitation).data,
+            status=status.HTTP_201_CREATED
+        )
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def my_invitations(request):
+    """
+    Получить список приглашений текущего игрока
+    
+    GET /api/mini-app/invitations/
+    """
+    from apps.tournaments.registration_models import PairInvitation
+    from .api_serializers import PairInvitationSerializer
+    
+    # Аутентификация
+    auth = TelegramWebAppAuthentication()
+    try:
+        user, telegram_user = auth.authenticate(request)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    if not telegram_user or not telegram_user.player_id:
+        return Response({'error': 'Игрок не найден'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    player = Player.objects.get(id=telegram_user.player_id)
+    
+    # Получаем входящие приглашения (pending)
+    invitations = PairInvitation.objects.filter(
+        receiver=player,
+        status=PairInvitation.Status.PENDING
+    ).select_related('sender', 'tournament').order_by('-created_at')
+    
+    return Response(PairInvitationSerializer(invitations, many=True).data)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def accept_invitation(request, invitation_id):
+    """
+    Принять приглашение в пару
+    
+    POST /api/mini-app/invitations/{id}/accept/
+    """
+    from apps.tournaments.registration_models import PairInvitation
+    from apps.tournaments.services import RegistrationService
+    from .api_serializers import TournamentRegistrationSerializer
+    
+    # Аутентификация
+    auth = TelegramWebAppAuthentication()
+    try:
+        user, telegram_user = auth.authenticate(request)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    if not telegram_user or not telegram_user.player_id:
+        return Response({'error': 'Игрок не найден'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        invitation = PairInvitation.objects.get(id=invitation_id)
+    except PairInvitation.DoesNotExist:
+        return Response({'error': 'Приглашение не найдено'}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Проверяем, что текущий игрок - получатель
+    if invitation.receiver_id != telegram_user.player_id:
+        return Response({'error': 'Недостаточно прав'}, status=status.HTTP_403_FORBIDDEN)
+    
+    try:
+        sender_reg, receiver_reg = RegistrationService.accept_pair_invitation(invitation)
+        return Response({
+            'message': 'Приглашение принято',
+            'registration': TournamentRegistrationSerializer(receiver_reg).data
+        })
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def decline_invitation(request, invitation_id):
+    """
+    Отклонить приглашение в пару
+    
+    POST /api/mini-app/invitations/{id}/decline/
+    """
+    from apps.tournaments.registration_models import PairInvitation
+    from apps.tournaments.services import RegistrationService
+    
+    # Аутентификация
+    auth = TelegramWebAppAuthentication()
+    try:
+        user, telegram_user = auth.authenticate(request)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    if not telegram_user or not telegram_user.player_id:
+        return Response({'error': 'Игрок не найден'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        invitation = PairInvitation.objects.get(id=invitation_id)
+    except PairInvitation.DoesNotExist:
+        return Response({'error': 'Приглашение не найдено'}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Проверяем, что текущий игрок - получатель
+    if invitation.receiver_id != telegram_user.player_id:
+        return Response({'error': 'Недостаточно прав'}, status=status.HTTP_403_FORBIDDEN)
+    
+    try:
+        RegistrationService.decline_pair_invitation(invitation)
+        return Response({'message': 'Приглашение отклонено'})
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def cancel_registration(request, tournament_id):
+    """
+    Отменить свою регистрацию на турнир
+    
+    POST /api/mini-app/tournaments/{id}/cancel-registration/
+    """
+    from apps.tournaments.registration_models import TournamentRegistration
+    from apps.tournaments.services import RegistrationService
+    
+    # Аутентификация
+    auth = TelegramWebAppAuthentication()
+    try:
+        user, telegram_user = auth.authenticate(request)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    if not telegram_user or not telegram_user.player_id:
+        return Response({'error': 'Игрок не найден'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        tournament = Tournament.objects.get(id=tournament_id)
+        registration = TournamentRegistration.objects.get(
+            tournament=tournament,
+            player_id=telegram_user.player_id
+        )
+    except (Tournament.DoesNotExist, TournamentRegistration.DoesNotExist):
+        return Response({'error': 'Регистрация не найдена'}, status=status.HTTP_404_NOT_FOUND)
+    
+    try:
+        RegistrationService.cancel_registration(registration)
+        return Response({'message': 'Регистрация отменена'})
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)

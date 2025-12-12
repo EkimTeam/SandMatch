@@ -370,3 +370,59 @@ class ProfileSerializer(serializers.Serializer):
             'player': PlayerSerializer(instance.player).data if instance.player else None,
             'is_linked': instance.user is not None,
         }
+
+
+# --- Сериализаторы для регистрации на турниры ---
+
+class TournamentRegistrationSerializer(serializers.Serializer):
+    """Сериализатор для регистрации на турнир"""
+    
+    id = serializers.IntegerField(read_only=True)
+    player_id = serializers.IntegerField(source='player.id', read_only=True)
+    player_name = serializers.CharField(source='player.full_name', read_only=True)
+    partner_id = serializers.IntegerField(source='partner.id', read_only=True, allow_null=True)
+    partner_name = serializers.CharField(source='partner.full_name', read_only=True, allow_null=True)
+    status = serializers.CharField(read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    registered_at = serializers.DateTimeField(read_only=True)
+
+
+class PairInvitationSerializer(serializers.Serializer):
+    """Сериализатор для приглашения в пару"""
+    
+    id = serializers.IntegerField(read_only=True)
+    sender_id = serializers.IntegerField(source='sender.id', read_only=True)
+    sender_name = serializers.CharField(source='sender.full_name', read_only=True)
+    receiver_id = serializers.IntegerField(source='receiver.id', read_only=True)
+    receiver_name = serializers.CharField(source='receiver.full_name', read_only=True)
+    status = serializers.CharField(read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    message = serializers.CharField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    responded_at = serializers.DateTimeField(read_only=True, allow_null=True)
+
+
+class RegisterLookingForPartnerSerializer(serializers.Serializer):
+    """Сериализатор для регистрации в режиме 'ищет пару'"""
+    pass
+
+
+class RegisterWithPartnerSerializer(serializers.Serializer):
+    """Сериализатор для регистрации с напарником"""
+    
+    partner_id = serializers.IntegerField(required=True)
+
+
+class SendPairInvitationSerializer(serializers.Serializer):
+    """Сериализатор для отправки приглашения в пару"""
+    
+    receiver_id = serializers.IntegerField(required=True)
+    message = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class TournamentParticipantsSerializer(serializers.Serializer):
+    """Сериализатор для списка участников турнира"""
+    
+    main_list = TournamentRegistrationSerializer(many=True, read_only=True)
+    reserve_list = TournamentRegistrationSerializer(many=True, read_only=True)
+    looking_for_partner = TournamentRegistrationSerializer(many=True, read_only=True)

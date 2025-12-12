@@ -3,7 +3,7 @@
  */
 import { useState, useEffect } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
-import { miniAppAPI, Tournament } from '../../api/miniApp'
+import { miniAppAPI, Tournament, Profile } from '../../api/miniApp'
 import {
   showBackButton,
   hideBackButton,
@@ -11,6 +11,9 @@ import {
   hideMainButton,
   hapticFeedback,
 } from '../../utils/telegram'
+import TournamentParticipants from '../../components/MiniApp/TournamentParticipants'
+import RegistrationModal from '../../components/MiniApp/RegistrationModal'
+import InvitationsModal from '../../components/MiniApp/InvitationsModal'
 
 const MiniAppTournamentDetail = () => {
   const navigate = useNavigate()
@@ -19,7 +22,10 @@ const MiniAppTournamentDetail = () => {
   const [tournament, setTournament] = useState<Tournament | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [registering, setRegistering] = useState(false)
+  const [profile, setProfile] = useState<Profile | null>(null)
+  const [showRegistrationModal, setShowRegistrationModal] = useState(false)
+  const [showInvitationsModal, setShowInvitationsModal] = useState(false)
+  const [showParticipants, setShowParticipants] = useState(false)
 
   useEffect(() => {
     // Показываем кнопку "Назад"
@@ -42,13 +48,16 @@ const MiniAppTournamentDetail = () => {
   useEffect(() => {
     if (id) {
       loadTournament(parseInt(id))
+      loadProfile()
     }
   }, [id])
 
   useEffect(() => {
     // Показываем кнопку регистрации, если турнир открыт и не зарегистрированы
     if (tournament && tournament.status === 'created' && !tournament.is_registered) {
-      showMainButton('Зарегистрироваться', handleRegister)
+      showMainButton('Зарегистрироваться', () => setShowRegistrationModal(true))
+    } else if (tournament && tournament.status === 'created' && tournament.is_registered) {
+      showMainButton('Отменить регистрацию', handleCancelRegistration)
     } else {
       hideMainButton()
     }
@@ -68,28 +77,43 @@ const MiniAppTournamentDetail = () => {
     }
   }
 
-  const handleRegister = async () => {
+  const loadProfile = async () => {
+    try {
+      const data = await miniAppAPI.getProfile()
+      setProfile(data)
+    } catch (err) {
+      console.error('Ошибка загрузки профиля:', err)
+    }
+  }
+
+  const handleCancelRegistration = async () => {
     if (!tournament) return
 
+    const confirmed = confirm('Вы уверены, что хотите отменить регистрацию?')
+    if (!confirmed) return
+
     try {
-      setRegistering(true)
       hapticFeedback.medium()
       
-      await miniAppAPI.registerForTournament(tournament.id)
+      await miniAppAPI.cancelRegistration(tournament.id)
       
       hapticFeedback.success()
+      alert('Регистрация отменена')
       
       // Перезагружаем данные турнира
       await loadTournament(tournament.id)
-      
-      alert('✅ Вы успешно зарегистрированы на турнир!')
     } catch (err: any) {
       hapticFeedback.error()
-      const errorMessage = err.response?.data?.error || 'Ошибка регистрации'
+      const errorMessage = err.response?.data?.error || 'Ошибка отмены регистрации'
       alert(`❌ ${errorMessage}`)
       console.error(err)
-    } finally {
-      setRegistering(false)
+    }
+  }
+
+  const handleRegistrationSuccess = async () => {
+    // Перезагружаем турнир после успешной регистрации
+    if (tournament) {
+      await loadTournament(tournament.id)
     }
   }
 
@@ -307,17 +331,44 @@ const MiniAppTournamentDetail = () => {
         </div>
       )}
 
-      {/* Кнопка регистрации (для мобильных устройств без MainButton) */}
-      {tournament.status === 'created' && !tournament.is_registered && (
-        <div className="md:block lg:hidden">
-          <button
-            onClick={handleRegister}
-            disabled={registering}
-            className="w-full bg-blue-600 text-white rounded-lg p-4 font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {registering ? 'Регистрация...' : 'Зарегистрироваться'}
-          </button>
+      {/* Участники турнира (только для турниров в статусе created) */}
+      {tournament.status === 'created' && (
+        <div className="bg-white rounded-lg shadow-sm p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold text-gray-900 text-lg">👥 Участники</h2>
+            <button
+              onClick={() => setShowParticipants(!showParticipants)}
+              className="text-blue-600 text-sm font-medium"
+            >
+              {showParticipants ? 'Скрыть' : 'Показать'}
+            </button>
+          </div>
+          
+          {showParticipants && (
+            <TournamentParticipants
+              tournamentId={tournament.id}
+              currentPlayerId={profile?.player?.id}
+              onInviteSent={handleRegistrationSuccess}
+            />
+          )}
         </div>
+      )}
+
+      {/* Модальные окна */}
+      {showRegistrationModal && tournament && (
+        <RegistrationModal
+          tournamentId={tournament.id}
+          tournamentName={tournament.name}
+          onClose={() => setShowRegistrationModal(false)}
+          onSuccess={handleRegistrationSuccess}
+        />
+      )}
+
+      {showInvitationsModal && (
+        <InvitationsModal
+          onClose={() => setShowInvitationsModal(false)}
+          onInvitationHandled={handleRegistrationSuccess}
+        />
       )}
     </div>
   )

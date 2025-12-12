@@ -1,5 +1,6 @@
 from django.contrib import admin
 from .models import Ruleset, SetFormat, Tournament, TournamentEntry
+from .registration_models import TournamentRegistration, PairInvitation
 from .services.round_robin import generate_round_robin_matches, persist_generated_matches
 
 
@@ -49,3 +50,21 @@ class TournamentEntryAdmin(admin.ModelAdmin):
     list_display = ("tournament", "team", "is_out_of_competition")
     list_filter = ("is_out_of_competition",)
     search_fields = ("tournament__name", "team__player_1__last_name", "team__player_2__last_name")
+
+
+@admin.register(TournamentRegistration)
+class TournamentRegistrationAdmin(admin.ModelAdmin):
+    list_display = ("tournament", "player", "partner", "status", "registered_at", "registration_order")
+    list_filter = ("status", "tournament__date")
+    search_fields = ("player__last_name", "partner__last_name", "tournament__name")
+    readonly_fields = ("registered_at", "updated_at", "registration_order")
+    ordering = ("tournament", "registration_order", "registered_at")
+
+
+@admin.register(PairInvitation)
+class PairInvitationAdmin(admin.ModelAdmin):
+    list_display = ("tournament", "sender", "receiver", "status", "created_at", "responded_at")
+    list_filter = ("status", "tournament__date")
+    search_fields = ("sender__last_name", "receiver__last_name", "tournament__name")
+    readonly_fields = ("created_at", "responded_at")
+    ordering = ("-created_at",)
