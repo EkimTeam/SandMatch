@@ -34,7 +34,7 @@ if [ "${RUN_CELERY_WORKER:-}" = "true" ]; then
 fi
 
 if [ "${RUN_CELERY_BEAT:-}" = "true" ]; then
-  exec celery -A sandmatch beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+  exec celery -A sandmatch beat -l info
 fi
 
 exec gunicorn sandmatch.wsgi:application \
