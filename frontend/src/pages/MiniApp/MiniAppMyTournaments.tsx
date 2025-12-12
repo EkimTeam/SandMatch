@@ -45,7 +45,7 @@ const MiniAppMyTournaments = () => {
 
   const handleTournamentClick = (id: number) => {
     hapticFeedback.light()
-    navigate(`/mini-app/tournaments/${id}`)
+    navigate(`/mini-app/tournaments/${id}`, { state: { from: 'my-tournaments' } })
   }
 
   const handleOpenAllTournaments = () => {
@@ -158,6 +158,26 @@ const MiniAppMyTournaments = () => {
                     <span className="mr-2">📍</span>
                     {tournament.venue_name}
                   </div>
+                  <div className="flex items-center">
+                    <span className="mr-2">👥</span>
+                    {tournament.participants_count} / {tournament.max_teams} команд
+                  </div>
+                  {tournament.avg_rating_bp && (
+                    <div className="flex items-center">
+                      <span className="mr-2">⭐</span>
+                      Средний рейтинг: {tournament.avg_rating_bp}
+                    </div>
+                  )}
+                  <div className="flex items-center">
+                    <span className="mr-2">📋</span>
+                    {tournament.set_format_name || 'Формат не указан'}
+                  </div>
+                  {tournament.prize_fund && (
+                    <div className="flex items-center">
+                      <span className="mr-2">🏆</span>
+                      Призовой фонд: {tournament.prize_fund}
+                    </div>
+                  )}
                 </div>
               </button>
             ))}
@@ -201,6 +221,22 @@ const MiniAppMyTournaments = () => {
                     <span className="mr-2">👥</span>
                     {tournament.participants_count} / {tournament.max_teams} команд
                   </div>
+                  {tournament.avg_rating_bp && (
+                    <div className="flex items-center">
+                      <span className="mr-2">⭐</span>
+                      Средний рейтинг: {tournament.avg_rating_bp}
+                    </div>
+                  )}
+                  <div className="flex items-center">
+                    <span className="mr-2">📋</span>
+                    {tournament.set_format_name || 'Формат не указан'}
+                  </div>
+                  {tournament.prize_fund && (
+                    <div className="flex items-center">
+                      <span className="mr-2">🏆</span>
+                      Призовой фонд: {tournament.prize_fund}
+                    </div>
+                  )}
                 </div>
               </button>
             ))}

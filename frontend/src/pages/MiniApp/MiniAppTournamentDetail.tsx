@@ -37,7 +37,7 @@ const MiniAppTournamentDetail = () => {
       hideBackButton()
       hideMainButton()
     }
-  }, [navigate])
+  }, [navigate, location])
 
   useEffect(() => {
     if (id) {
