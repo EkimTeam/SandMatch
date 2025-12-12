@@ -21,14 +21,21 @@ const MiniAppHome = () => {
 
   return (
     <div className="p-4 space-y-6">
-      {/* Приветствие */}
-      <div className="bg-white rounded-lg shadow-sm p-6">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">
-          Привет, {user?.first_name || 'Игрок'}! 👋
-        </h1>
-        <p className="text-gray-600">
-          Добро пожаловать в BeachPlay Mini App
-        </p>
+      {/* Приветствие с логотипом */}
+      <div className="bg-white rounded-lg shadow-sm p-6 flex items-start">
+        <img
+          src="/static/img/logo.png"
+          alt="BeachPlay"
+          className="h-10 w-10 rounded-md mr-4 object-contain"
+        />
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">
+            Привет, {user?.first_name || 'Игрок'}! 👋
+          </h1>
+          <p className="text-gray-600">
+            Добро пожаловать в BeachPlay Mini App
+          </p>
+        </div>
       </div>
 
       {/* Быстрые действия */}
