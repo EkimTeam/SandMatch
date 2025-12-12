@@ -182,7 +182,7 @@ const MiniAppTournaments = () => {
                   </div>
                 )}
                 <div className="flex items-center">
-                  <span className="mr-2">⚙️</span>
+                  <span className="mr-2">📋</span>
                   {tournament.set_format_name || 'Формат не указан'}
                 </div>
                 {tournament.prize_fund && (
