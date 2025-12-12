@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { miniAppAPI, Tournament } from '../../api/miniApp'
-import { showBackButton, hideBackButton, hapticFeedback } from '../../utils/telegram'
+import { showBackButton, hideBackButton, hapticFeedback, openLink } from '../../utils/telegram'
 
 const MiniAppMyTournaments = () => {
   const navigate = useNavigate()
@@ -46,6 +46,11 @@ const MiniAppMyTournaments = () => {
   const handleTournamentClick = (id: number) => {
     hapticFeedback.light()
     navigate(`/mini-app/tournaments/${id}`)
+  }
+
+  const handleOpenAllTournaments = () => {
+    hapticFeedback.light()
+    openLink('https://beachplay.ru/tournaments')
   }
 
   const formatDate = (dateString: string) => {
@@ -232,6 +237,16 @@ const MiniAppMyTournaments = () => {
             ))}
           </div>
         </div>
+      )}
+
+      {/* Ссылка на все турниры на сайте */}
+      {!loading && !error && (
+        <button
+          onClick={handleOpenAllTournaments}
+          className="w-full bg-gray-100 text-gray-800 rounded-lg p-4 text-center text-sm hover:bg-gray-200 transition-colors"
+        >
+          Все турниры можно посмотреть на BeachPlay.ru
+        </button>
       )}
     </div>
   )
