@@ -15,6 +15,10 @@ export interface Tournament {
   participants_count: number
   max_teams: number
   is_registered: boolean
+  start_time?: string | null
+  avg_rating_bp?: number | null
+  system?: string
+  set_format_name?: string | null
   organizer_name?: string
   description?: string
   entry_fee?: number

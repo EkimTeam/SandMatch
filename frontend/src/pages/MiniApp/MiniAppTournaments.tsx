@@ -60,8 +60,7 @@ const MiniAppTournaments = () => {
     return date.toLocaleDateString('ru-RU', {
       day: 'numeric',
       month: 'long',
-      hour: '2-digit',
-      minute: '2-digit',
+      year: 'numeric',
     })
   }
 
@@ -163,7 +162,10 @@ const MiniAppTournaments = () => {
               <div className="space-y-1 text-sm text-gray-600">
                 <div className="flex items-center">
                   <span className="mr-2">📅</span>
-                  {formatDate(tournament.date)}
+                  <span>
+                    {formatDate(tournament.date)}
+                    {tournament.start_time ? ` • ${tournament.start_time}` : ''}
+                  </span>
                 </div>
                 <div className="flex items-center">
                   <span className="mr-2">📍</span>
@@ -173,6 +175,22 @@ const MiniAppTournaments = () => {
                   <span className="mr-2">👥</span>
                   {tournament.participants_count} / {tournament.max_teams} команд
                 </div>
+                {tournament.avg_rating_bp && (
+                  <div className="flex items-center">
+                    <span className="mr-2">⭐</span>
+                    Средний рейтинг: {tournament.avg_rating_bp}
+                  </div>
+                )}
+                <div className="flex items-center">
+                  <span className="mr-2">⚙️</span>
+                  {tournament.set_format_name || 'Формат не указан'}
+                </div>
+                {tournament.prize_fund && (
+                  <div className="flex items-center">
+                    <span className="mr-2">🏆</span>
+                    Призовой фонд: {tournament.prize_fund}
+                  </div>
+                )}
               </div>
 
               {tournament.is_registered && (
