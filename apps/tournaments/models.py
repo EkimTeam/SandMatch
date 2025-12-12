@@ -253,6 +253,7 @@ class Tournament(models.Model):
 
     name = models.CharField(max_length=200)
     date = models.DateField()
+    start_time = models.TimeField(null=True, blank=True, verbose_name="Время начала")
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.CREATED)
     system = models.CharField(max_length=16, choices=System.choices)
     participant_mode = models.CharField(

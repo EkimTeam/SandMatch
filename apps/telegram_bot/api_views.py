@@ -133,11 +133,18 @@ class MiniAppTournamentViewSet(viewsets.ReadOnlyModelViewSet):
     
     def get_queryset(self):
         """Получение списка турниров"""
-        queryset = Tournament.objects.annotate(
+        base_qs = Tournament.objects.annotate(
             participants_count=Count('entries')
         ).select_related('venue', 'created_by')
-        
-        # Фильтр по статусу
+
+        # Для детального просмотра не ограничиваем по статусу,
+        # чтобы можно было открывать completed турниры.
+        if getattr(self, 'action', None) == 'retrieve':
+            return base_qs.order_by('-date', '-created_at')
+
+        queryset = base_qs
+
+        # Фильтр по статусу для списков
         status_filter = self.request.query_params.get('status')
         if status_filter:
             queryset = queryset.filter(status=status_filter)
