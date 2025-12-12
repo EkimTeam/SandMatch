@@ -29,6 +29,14 @@ if [ "${RUN_TELEGRAM_BOT:-}" = "true" ]; then
   exec python manage.py run_bot
 fi
 
+if [ "${RUN_CELERY_WORKER:-}" = "true" ]; then
+  exec celery -A sandmatch worker -l info
+fi
+
+if [ "${RUN_CELERY_BEAT:-}" = "true" ]; then
+  exec celery -A sandmatch beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+fi
+
 exec gunicorn sandmatch.wsgi:application \
   --bind 0.0.0.0:8000 \
   --workers "${GUNICORN_WORKERS:-3}" \
