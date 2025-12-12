@@ -35,7 +35,6 @@ services:
       - .env
     environment:
       - RUN_TELEGRAM_BOT=true
-    command: python manage.py run_bot
     depends_on:
       - web
       - redis
@@ -45,7 +44,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    command: celery -A sandmatch worker -l info
+    environment:
+      - RUN_CELERY_WORKER=true
     depends_on:
       - redis
       - web
@@ -55,7 +55,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    command: celery -A sandmatch beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    environment:
+      - RUN_CELERY_BEAT=true
     depends_on:
       - redis
       - web
