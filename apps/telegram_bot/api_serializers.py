@@ -94,7 +94,8 @@ class TournamentListSerializer(serializers.ModelSerializer):
                 cnt += 1
 
         if cnt > 0:
-            return round(total / cnt, 1)
+            # В Mini App показываем средний рейтинг целым числом
+            return int(round(total / cnt))
         return None
 
     def get_set_format_name(self, obj):
@@ -203,7 +204,8 @@ class TournamentDetailSerializer(serializers.ModelSerializer):
                 cnt += 1
 
         if cnt > 0:
-            return round(total / cnt, 1)
+            # В Mini App показываем средний рейтинг целым числом
+            return int(round(total / cnt))
         return None
 
     def get_set_format_name(self, obj):
@@ -229,6 +231,7 @@ class PlayerSerializer(serializers.ModelSerializer):
     rating = serializers.IntegerField(source='current_rating', read_only=True)
     tournaments_played = serializers.SerializerMethodField()
     tournaments_won = serializers.SerializerMethodField()
+    matches_played = serializers.SerializerMethodField()
 
     class Meta:
         model = Player
@@ -238,6 +241,7 @@ class PlayerSerializer(serializers.ModelSerializer):
             'rating',
             'tournaments_played',
             'tournaments_won',
+            'matches_played',
         ]
 
     def get_full_name(self, obj):
@@ -272,6 +276,21 @@ class PlayerSerializer(serializers.ModelSerializer):
         return Match.objects.filter(
             winner_id__in=team_ids,
             status=Match.Status.COMPLETED,
+        ).count()
+
+    def get_matches_played(self, obj):
+        """Количество сыгранных матчей игрока (через его команды)."""
+        team_ids = Team.objects.filter(
+            Q(player_1=obj) | Q(player_2=obj)
+        ).values_list('id', flat=True)
+
+        if not team_ids:
+            return 0
+
+        return Match.objects.filter(
+            status=Match.Status.COMPLETED,
+        ).filter(
+            Q(team_1_id__in=team_ids) | Q(team_2_id__in=team_ids)
         ).count()
 
 

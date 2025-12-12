@@ -32,6 +32,7 @@ export interface Player {
   rating: number
   tournaments_played: number
   tournaments_won: number
+  matches_played: number
 }
 
 export interface Profile {

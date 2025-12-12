@@ -2,7 +2,7 @@
  * Страница деталей турнира в Mini App
  */
 import { useState, useEffect } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { miniAppAPI, Tournament } from '../../api/miniApp'
 import {
   showBackButton,
@@ -14,6 +14,7 @@ import {
 
 const MiniAppTournamentDetail = () => {
   const navigate = useNavigate()
+  const location = useLocation()
   const { id } = useParams<{ id: string }>()
   const [tournament, setTournament] = useState<Tournament | null>(null)
   const [loading, setLoading] = useState(true)
@@ -24,7 +25,12 @@ const MiniAppTournamentDetail = () => {
     // Показываем кнопку "Назад"
     showBackButton(() => {
       hapticFeedback.light()
-      navigate('/mini-app/tournaments')
+      const from = (location.state as any)?.from
+      if (from === 'my-tournaments') {
+        navigate('/mini-app/my-tournaments')
+      } else {
+        navigate('/mini-app/tournaments')
+      }
     })
 
     return () => {
@@ -94,9 +100,30 @@ const MiniAppTournamentDetail = () => {
       day: 'numeric',
       month: 'long',
       year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
     })
+  }
+
+  const getSystemLabel = (system?: string) => {
+    switch (system) {
+      case 'round_robin':
+        return 'Круговая система'
+      case 'knockout':
+        return 'Олимпийская система'
+      case 'king':
+        return 'Система "Кинг"'
+      default:
+        return 'Система не указана'
+    }
+  }
+
+  const getSiteUrl = (t: Tournament) => {
+    if (t.system === 'round_robin') {
+      return `https://beachplay.ru/tournaments/${t.id}/round_robin`
+    }
+    if (t.system === 'king') {
+      return `https://beachplay.ru/tournaments/${t.id}/king`
+    }
+    return `https://beachplay.ru/tournaments/${t.id}/knockout`
   }
 
   const getStatusBadge = (status: string) => {
@@ -153,7 +180,11 @@ const MiniAppTournamentDetail = () => {
         {tournament.is_registered && (
           <div className="mt-3 px-3 py-2 bg-green-50 text-green-700 rounded-lg flex items-center">
             <span className="mr-2">✓</span>
-            <span className="font-medium">Вы зарегистрированы на этот турнир</span>
+            <span className="font-medium">
+              {tournament.status === 'completed'
+                ? 'Вы принимали участие в этом турнире'
+                : 'Вы зарегистрированы на этот турнир'}
+            </span>
           </div>
         )}
       </div>
@@ -166,8 +197,11 @@ const MiniAppTournamentDetail = () => {
           <div className="flex items-start">
             <span className="text-xl mr-3">📅</span>
             <div>
-              <div className="text-sm text-gray-500">Дата и время</div>
-              <div className="font-medium text-gray-900">{formatDate(tournament.date)}</div>
+              <div className="text-sm text-gray-500">Дата{tournament.start_time ? ' и время' : ''}</div>
+              <div className="font-medium text-gray-900">
+                {formatDate(tournament.date)}
+                {tournament.start_time ? ` • ${tournament.start_time}` : ''}
+              </div>
             </div>
           </div>
 
@@ -222,6 +256,47 @@ const MiniAppTournamentDetail = () => {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Параметры турнира */}
+      <div className="bg-white rounded-lg shadow-sm p-6 space-y-3">
+        <h2 className="font-semibold text-gray-900 text-lg mb-3">⚙️ Параметры турнира</h2>
+        <div className="space-y-2 text-sm text-gray-700">
+          <div className="flex items-start">
+            <span className="text-xl mr-3">🎯</span>
+            <div>
+              <div className="text-sm text-gray-500">Система проведения</div>
+              <div className="font-medium text-gray-900">{getSystemLabel(tournament.system)}</div>
+            </div>
+          </div>
+
+          <div className="flex items-start">
+            <span className="text-xl mr-3">📏</span>
+            <div>
+              <div className="text-sm text-gray-500">Формат счёта</div>
+              <div className="font-medium text-gray-900">
+                {tournament.set_format_name || 'Формат не указан'}
+              </div>
+            </div>
+          </div>
+
+          {typeof tournament.avg_rating_bp === 'number' && (
+            <div className="flex items-start">
+              <span className="text-xl mr-3">⭐</span>
+              <div>
+                <div className="text-sm text-gray-500">Средний рейтинг участников</div>
+                <div className="font-medium text-gray-900">{tournament.avg_rating_bp}</div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <button
+          onClick={() => window.open(getSiteUrl(tournament), '_blank')}
+          className="mt-4 w-full bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-lg py-3 text-sm font-medium transition-colors"
+        >
+          Больше деталей по турниру на сайте BeachPlay.ru
+        </button>
       </div>
 
       {/* Описание */}
