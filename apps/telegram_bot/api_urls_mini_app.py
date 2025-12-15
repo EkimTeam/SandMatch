@@ -8,6 +8,7 @@ from .api_views import (
     MiniAppTournamentViewSet,
     mini_app_profile,
     tournament_participants,
+    register_single,
     register_looking_for_partner,
     register_with_partner,
     send_pair_invitation,
@@ -26,6 +27,7 @@ urlpatterns = [
     
     # Регистрация на турниры
     path('tournaments/<int:tournament_id>/participants/', tournament_participants, name='tournament-participants'),
+    path('tournaments/<int:tournament_id>/register-single/', register_single, name='register-single'),
     path('tournaments/<int:tournament_id>/register-looking-for-partner/', register_looking_for_partner, name='register-looking-for-partner'),
     path('tournaments/<int:tournament_id>/register-with-partner/', register_with_partner, name='register-with-partner'),
     path('tournaments/<int:tournament_id>/send-invitation/', send_pair_invitation, name='send-pair-invitation'),

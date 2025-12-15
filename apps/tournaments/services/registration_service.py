@@ -85,30 +85,89 @@ class RegistrationService:
     def _sync_to_tournament_entry(registration: TournamentRegistration):
         """
         Синхронизировать регистрацию с TournamentEntry.
-        Создаёт или обновляет запись в TournamentEntry для пар в основном составе.
+        Создаёт или обновляет запись в TournamentEntry для основного состава и резерва.
         """
-        # Только для пар в основном составе
-        if registration.status != TournamentRegistration.Status.MAIN_LIST:
+        if not registration.team:
+            return
+        
+        # Для основного состава и резерва создаём запись
+        if registration.status in [
+            TournamentRegistration.Status.MAIN_LIST,
+            TournamentRegistration.Status.RESERVE_LIST
+        ]:
+            TournamentEntry.objects.get_or_create(
+                tournament=registration.tournament,
+                team=registration.team,
+                defaults={
+                    'is_out_of_competition': False,
+                    'group_index': None,
+                    'row_index': None
+                }
+            )
+        else:
             # Удаляем из TournamentEntry если есть
             TournamentEntry.objects.filter(
                 tournament=registration.tournament,
                 team=registration.team
             ).delete()
-            return
+    
+    @staticmethod
+    @transaction.atomic
+    def register_single(
+        tournament: Tournament,
+        player: Player
+    ) -> TournamentRegistration:
+        """
+        Простая регистрация игрока (для индивидуальных турниров).
+        Игрок сразу попадает в основной состав или резерв.
         
-        if not registration.team:
-            return
+        Args:
+            tournament: Турнир
+            player: Игрок
+            
+        Returns:
+            TournamentRegistration
+            
+        Raises:
+            ValidationError: если игрок уже зарегистрирован
+        """
+        # Проверяем, что игрок ещё не зарегистрирован
+        existing = TournamentRegistration.objects.filter(
+            tournament=tournament,
+            player=player
+        ).first()
         
-        # Создаём или обновляем TournamentEntry
-        TournamentEntry.objects.get_or_create(
-            tournament=registration.tournament,
-            team=registration.team,
-            defaults={
-                'is_out_of_competition': False,
-                'group_index': None,
-                'row_index': None
-            }
+        if existing:
+            raise ValidationError(f'Игрок {player} уже зарегистрирован на турнир')
+        
+        # Создаём команду из одного игрока (player_2=NULL)
+        team = Team.objects.create(player_1=player, player_2=None)
+        
+        # Определяем статус (основной состав или резерв)
+        current_main_count = TournamentRegistration.objects.filter(
+            tournament=tournament,
+            status=TournamentRegistration.Status.MAIN_LIST
+        ).count()
+        
+        max_teams = tournament.planned_participants or 0
+        status = (
+            TournamentRegistration.Status.MAIN_LIST
+            if current_main_count < max_teams
+            else TournamentRegistration.Status.RESERVE_LIST
         )
+        
+        # Создаём регистрацию
+        registration = TournamentRegistration.objects.create(
+            tournament=tournament,
+            player=player,
+            team=team,
+            status=status
+        )
+        
+        # Синхронизируем с TournamentEntry
+        RegistrationService._sync_to_tournament_entry(registration)
+        
+        return registration
     
     @staticmethod
     @transaction.atomic
@@ -117,7 +176,7 @@ class RegistrationService:
         player: Player
     ) -> TournamentRegistration:
         """
-        Зарегистрировать игрока в режиме "ищет пару".
+        Зарегистрировать игрока в режиме "ищет пару" (для парных турниров).
         
         Args:
             tournament: Турнир
@@ -247,7 +306,7 @@ class RegistrationService:
         Args:
             tournament: Турнир
             sender: Отправитель (должен искать пару)
-            receiver: Получатель (должен искать пару)
+            receiver: Получатель (любой игрок с привязкой к Telegram)
             message: Опциональное сообщение
             
         Returns:
@@ -256,24 +315,24 @@ class RegistrationService:
         Raises:
             ValidationError: если условия не выполнены
         """
-        # Проверяем, что оба игрока зарегистрированы и ищут пару
+        # Проверяем, что отправитель ищет пару
         sender_reg = TournamentRegistration.objects.filter(
             tournament=tournament,
             player=sender,
             status=TournamentRegistration.Status.LOOKING_FOR_PARTNER
         ).first()
         
-        receiver_reg = TournamentRegistration.objects.filter(
-            tournament=tournament,
-            player=receiver,
-            status=TournamentRegistration.Status.LOOKING_FOR_PARTNER
-        ).first()
-        
         if not sender_reg:
             raise ValidationError('Отправитель не зарегистрирован или уже не ищет пару')
         
-        if not receiver_reg:
-            raise ValidationError('Получатель не зарегистрирован или уже не ищет пару')
+        # Проверяем, что получатель не зарегистрирован на этот турнир
+        receiver_reg = TournamentRegistration.objects.filter(
+            tournament=tournament,
+            player=receiver
+        ).first()
+        
+        if receiver_reg:
+            raise ValidationError('Получатель уже зарегистрирован на этот турнир')
         
         # Проверяем, нет ли уже активного приглашения
         existing = PairInvitation.objects.filter(
@@ -293,10 +352,6 @@ class RegistrationService:
             receiver=receiver,
             message=message
         )
-        
-        # Обновляем статус получателя
-        receiver_reg.status = TournamentRegistration.Status.INVITED
-        receiver_reg.save(update_fields=['status', 'updated_at'])
         
         # Отправляем уведомление получателю
         from apps.telegram_bot.tasks import send_pair_invitation_notification
@@ -327,19 +382,28 @@ class RegistrationService:
         receiver = invitation.receiver
         tournament = invitation.tournament
         
-        # Получаем регистрации
+        # Получаем регистрацию отправителя
         sender_reg = TournamentRegistration.objects.filter(
             tournament=tournament,
             player=sender
         ).first()
         
+        if not sender_reg:
+            raise ValidationError('Регистрация отправителя не найдена')
+        
+        # Получаем или создаём регистрацию получателя
         receiver_reg = TournamentRegistration.objects.filter(
             tournament=tournament,
             player=receiver
         ).first()
         
-        if not sender_reg or not receiver_reg:
-            raise ValidationError('Одна из регистраций не найдена')
+        if not receiver_reg:
+            # Создаём регистрацию для получателя (он не подавал заявку сам)
+            receiver_reg = TournamentRegistration.objects.create(
+                tournament=tournament,
+                player=receiver,
+                status=TournamentRegistration.Status.INVITED
+            )
         
         # Получаем или создаём команду
         team = RegistrationService._get_or_create_team(sender, receiver)
@@ -419,15 +483,30 @@ class RegistrationService:
         invitation.responded_at = timezone.now()
         invitation.save(update_fields=['status', 'responded_at'])
         
-        # Возвращаем получателя в статус "ищет пару"
+        # Проверяем, была ли у получателя регистрация до приглашения
         receiver_reg = TournamentRegistration.objects.filter(
             tournament=invitation.tournament,
             player=invitation.receiver
         ).first()
         
         if receiver_reg:
-            receiver_reg.status = TournamentRegistration.Status.LOOKING_FOR_PARTNER
-            receiver_reg.save(update_fields=['status', 'updated_at'])
+            # Если получатель сам подавал заявку "ищу пару", возвращаем его в этот статус
+            # Если он не подавал заявку (создан при приглашении), удаляем регистрацию
+            if receiver_reg.status == TournamentRegistration.Status.INVITED:
+                # Проверяем, есть ли другие приглашения для этого игрока
+                other_invitations = PairInvitation.objects.filter(
+                    tournament=invitation.tournament,
+                    receiver=invitation.receiver,
+                    status=PairInvitation.Status.PENDING
+                ).exclude(id=invitation.id).exists()
+                
+                if not other_invitations:
+                    # Если нет других приглашений и он не подавал заявку сам - удаляем
+                    receiver_reg.delete()
+            else:
+                # Возвращаем в статус "ищет пару"
+                receiver_reg.status = TournamentRegistration.Status.LOOKING_FOR_PARTNER
+                receiver_reg.save(update_fields=['status', 'updated_at'])
     
     @staticmethod
     @transaction.atomic
@@ -494,7 +573,71 @@ class RegistrationService:
         
         for reg in registrations:
             RegistrationService._sync_to_tournament_entry(reg)
-
-
-# Добавляем импорт models для Q
-from django.db import models
+    
+    @staticmethod
+    @transaction.atomic
+    def sync_tournament_entry_to_registration(tournament_entry: TournamentEntry):
+        """
+        Синхронизировать TournamentEntry с TournamentRegistration.
+        Вызывается при добавлении участника через основной интерфейс.
+        
+        Args:
+            tournament_entry: Запись TournamentEntry
+        """
+        tournament = tournament_entry.tournament
+        team = tournament_entry.team
+        
+        if not team:
+            return
+        
+        # Определяем статус (основной состав или резерв)
+        current_main_count = TournamentRegistration.objects.filter(
+            tournament=tournament,
+            status=TournamentRegistration.Status.MAIN_LIST
+        ).count()
+        
+        max_teams = tournament.planned_participants or 0
+        status = (
+            TournamentRegistration.Status.MAIN_LIST
+            if current_main_count < max_teams
+            else TournamentRegistration.Status.RESERVE_LIST
+        )
+        
+        # Создаём или обновляем регистрацию для player_1
+        player1_reg, _ = TournamentRegistration.objects.get_or_create(
+            tournament=tournament,
+            player=team.player_1,
+            defaults={
+                'partner': team.player_2,
+                'team': team,
+                'status': status
+            }
+        )
+        
+        # Если регистрация уже существовала, обновляем её
+        if player1_reg.team != team or player1_reg.status != status:
+            player1_reg.partner = team.player_2
+            player1_reg.team = team
+            player1_reg.status = status
+            player1_reg.save(update_fields=['partner', 'team', 'status', 'updated_at'])
+        
+        # Если это пара, создаём регистрацию для player_2
+        if team.player_2:
+            player2_reg, _ = TournamentRegistration.objects.get_or_create(
+                tournament=tournament,
+                player=team.player_2,
+                defaults={
+                    'partner': team.player_1,
+                    'team': team,
+                    'status': status,
+                    'registration_order': player1_reg.registration_order
+                }
+            )
+            
+            # Если регистрация уже существовала, обновляем её
+            if player2_reg.team != team or player2_reg.status != status:
+                player2_reg.partner = team.player_1
+                player2_reg.team = team
+                player2_reg.status = status
+                player2_reg.registration_order = player1_reg.registration_order
+                player2_reg.save(update_fields=['partner', 'team', 'status', 'registration_order', 'updated_at'])

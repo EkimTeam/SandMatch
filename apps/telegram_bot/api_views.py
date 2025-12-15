@@ -380,6 +380,43 @@ def tournament_participants(request, tournament_id):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+def register_single(request, tournament_id):
+    """
+    Простая регистрация на турнир (для индивидуальных турниров)
+    
+    POST /api/mini-app/tournaments/{id}/register-single/
+    """
+    from apps.tournaments.services import RegistrationService
+    from .api_serializers import TournamentRegistrationSerializer
+    
+    # Аутентификация
+    auth = TelegramWebAppAuthentication()
+    try:
+        user, telegram_user = auth.authenticate(request)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    if not telegram_user or not telegram_user.player_id:
+        return Response({'error': 'Игрок не найден'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        tournament = Tournament.objects.get(id=tournament_id)
+        player = Player.objects.get(id=telegram_user.player_id)
+    except (Tournament.DoesNotExist, Player.DoesNotExist) as e:
+        return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
+    
+    try:
+        registration = RegistrationService.register_single(tournament, player)
+        return Response(
+            TournamentRegistrationSerializer(registration).data,
+            status=status.HTTP_201_CREATED
+        )
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
 def register_looking_for_partner(request, tournament_id):
     """
     Зарегистрироваться на турнир в режиме "ищет пару"
@@ -422,10 +459,11 @@ def register_with_partner(request, tournament_id):
     Зарегистрироваться на турнир с напарником
     
     POST /api/mini-app/tournaments/{id}/register-with-partner/
-    Body: { "partner_id": 123 }
+    Body: { "partner_search": "Иванов Иван" }
     """
     from apps.tournaments.services import RegistrationService
     from .api_serializers import RegisterWithPartnerSerializer, TournamentRegistrationSerializer
+    from django.db.models import Q
     
     # Аутентификация
     auth = TelegramWebAppAuthentication()
@@ -444,9 +482,30 @@ def register_with_partner(request, tournament_id):
     try:
         tournament = Tournament.objects.get(id=tournament_id)
         player = Player.objects.get(id=telegram_user.player_id)
-        partner = Player.objects.get(id=serializer.validated_data['partner_id'])
-    except (Tournament.DoesNotExist, Player.DoesNotExist) as e:
-        return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Поиск напарника по ФИО
+        search_query = serializer.validated_data['partner_search'].strip()
+        partners = Player.objects.filter(
+            Q(first_name__icontains=search_query) |
+            Q(last_name__icontains=search_query) |
+            Q(patronymic__icontains=search_query)
+        )
+        
+        if partners.count() == 0:
+            return Response({'error': 'Игрок не найден'}, status=status.HTTP_404_NOT_FOUND)
+        elif partners.count() > 1:
+            # Возвращаем список найденных игроков для уточнения
+            return Response({
+                'error': 'Найдено несколько игроков. Уточните запрос.',
+                'players': [{'id': p.id, 'full_name': p.get_full_name()} for p in partners]
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        partner = partners.first()
+        
+    except Tournament.DoesNotExist:
+        return Response({'error': 'Турнир не найден'}, status=status.HTTP_404_NOT_FOUND)
+    except Player.DoesNotExist:
+        return Response({'error': 'Игрок не найден'}, status=status.HTTP_404_NOT_FOUND)
     
     try:
         registration = RegistrationService.register_with_partner(tournament, player, partner)
@@ -465,10 +524,11 @@ def send_pair_invitation(request, tournament_id):
     Отправить приглашение в пару
     
     POST /api/mini-app/tournaments/{id}/send-invitation/
-    Body: { "receiver_id": 123, "message": "Давай сыграем!" }
+    Body: { "receiver_search": "Иванов Иван", "message": "Давай сыграем!" }
     """
     from apps.tournaments.services import RegistrationService
     from .api_serializers import SendPairInvitationSerializer, PairInvitationSerializer
+    from django.db.models import Q
     
     # Аутентификация
     auth = TelegramWebAppAuthentication()
@@ -487,9 +547,30 @@ def send_pair_invitation(request, tournament_id):
     try:
         tournament = Tournament.objects.get(id=tournament_id)
         sender = Player.objects.get(id=telegram_user.player_id)
-        receiver = Player.objects.get(id=serializer.validated_data['receiver_id'])
-    except (Tournament.DoesNotExist, Player.DoesNotExist) as e:
-        return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Поиск получателя по ФИО
+        search_query = serializer.validated_data['receiver_search'].strip()
+        receivers = Player.objects.filter(
+            Q(first_name__icontains=search_query) |
+            Q(last_name__icontains=search_query) |
+            Q(patronymic__icontains=search_query)
+        )
+        
+        if receivers.count() == 0:
+            return Response({'error': 'Игрок не найден'}, status=status.HTTP_404_NOT_FOUND)
+        elif receivers.count() > 1:
+            # Возвращаем список найденных игроков для уточнения
+            return Response({
+                'error': 'Найдено несколько игроков. Уточните запрос.',
+                'players': [{'id': p.id, 'full_name': p.get_full_name()} for p in receivers]
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        receiver = receivers.first()
+        
+    except Tournament.DoesNotExist:
+        return Response({'error': 'Турнир не найден'}, status=status.HTTP_404_NOT_FOUND)
+    except Player.DoesNotExist:
+        return Response({'error': 'Игрок не найден'}, status=status.HTTP_404_NOT_FOUND)
     
     try:
         invitation = RegistrationService.send_pair_invitation(

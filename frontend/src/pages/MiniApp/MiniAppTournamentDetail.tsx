@@ -359,6 +359,7 @@ const MiniAppTournamentDetail = () => {
         <RegistrationModal
           tournamentId={tournament.id}
           tournamentName={tournament.name}
+          isIndividual={tournament.system === 'single'}
           onClose={() => setShowRegistrationModal(false)}
           onSuccess={handleRegistrationSuccess}
         />

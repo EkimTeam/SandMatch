@@ -164,6 +164,14 @@ class MiniAppAPI {
   }
 
   /**
+   * Простая регистрация (для индивидуальных турниров)
+   */
+  async registerSingle(tournamentId: number): Promise<TournamentRegistration> {
+    const response = await this.api.post(`/tournaments/${tournamentId}/register-single/`)
+    return response.data
+  }
+
+  /**
    * Зарегистрироваться в режиме "ищу пару"
    */
   async registerLookingForPartner(tournamentId: number): Promise<TournamentRegistration> {
@@ -172,25 +180,25 @@ class MiniAppAPI {
   }
 
   /**
-   * Зарегистрироваться с напарником
+   * Зарегистрироваться с напарником (поиск по ФИО)
    */
-  async registerWithPartner(tournamentId: number, partnerId: number): Promise<TournamentRegistration> {
+  async registerWithPartner(tournamentId: number, partnerSearch: string): Promise<TournamentRegistration> {
     const response = await this.api.post(`/tournaments/${tournamentId}/register-with-partner/`, {
-      partner_id: partnerId,
+      partner_search: partnerSearch,
     })
     return response.data
   }
 
   /**
-   * Отправить приглашение в пару
+   * Отправить приглашение в пару (поиск по ФИО)
    */
   async sendPairInvitation(
     tournamentId: number,
-    receiverId: number,
+    receiverSearch: string,
     message?: string
   ): Promise<PairInvitation> {
     const response = await this.api.post(`/tournaments/${tournamentId}/send-invitation/`, {
-      receiver_id: receiverId,
+      receiver_search: receiverSearch,
       message: message || '',
     })
     return response.data

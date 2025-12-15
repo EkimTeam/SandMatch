@@ -8,14 +8,36 @@ import { hapticFeedback } from '../../utils/telegram'
 interface RegistrationModalProps {
   tournamentId: number
   tournamentName: string
+  isIndividual: boolean
   onClose: () => void
   onSuccess: () => void
 }
 
-const RegistrationModal = ({ tournamentId, tournamentName, onClose, onSuccess }: RegistrationModalProps) => {
-  const [mode, setMode] = useState<'select' | 'looking' | 'with-partner'>('select')
-  const [partnerId, setPartnerId] = useState('')
+const RegistrationModal = ({ tournamentId, tournamentName, isIndividual, onClose, onSuccess }: RegistrationModalProps) => {
+  const [mode, setMode] = useState<'select' | 'single' | 'looking' | 'with-partner'>('select')
+  const [partnerSearch, setPartnerSearch] = useState('')
   const [loading, setLoading] = useState(false)
+
+  const handleRegisterSingle = async () => {
+    try {
+      setLoading(true)
+      hapticFeedback.medium()
+      
+      await miniAppAPI.registerSingle(tournamentId)
+      
+      hapticFeedback.success()
+      alert('✅ Вы зарегистрированы на турнир')
+      onSuccess()
+      onClose()
+    } catch (err: any) {
+      hapticFeedback.error()
+      const errorMessage = err.response?.data?.error || 'Ошибка регистрации'
+      alert(`❌ ${errorMessage}`)
+      console.error(err)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const handleRegisterLookingForPartner = async () => {
     try {
@@ -39,8 +61,8 @@ const RegistrationModal = ({ tournamentId, tournamentName, onClose, onSuccess }:
   }
 
   const handleRegisterWithPartner = async () => {
-    if (!partnerId || isNaN(parseInt(partnerId))) {
-      alert('❌ Введите корректный ID напарника')
+    if (!partnerSearch.trim()) {
+      alert('❌ Введите ФИО напарника')
       return
     }
 
@@ -48,7 +70,7 @@ const RegistrationModal = ({ tournamentId, tournamentName, onClose, onSuccess }:
       setLoading(true)
       hapticFeedback.medium()
       
-      await miniAppAPI.registerWithPartner(tournamentId, parseInt(partnerId))
+      await miniAppAPI.registerWithPartner(tournamentId, partnerSearch.trim())
       
       hapticFeedback.success()
       alert('✅ Вы зарегистрированы с напарником!\n\nНапарнику отправлено уведомление.')
@@ -56,8 +78,16 @@ const RegistrationModal = ({ tournamentId, tournamentName, onClose, onSuccess }:
       onClose()
     } catch (err: any) {
       hapticFeedback.error()
-      const errorMessage = err.response?.data?.error || 'Ошибка регистрации'
-      alert(`❌ ${errorMessage}`)
+      const errorData = err.response?.data
+      
+      // Обработка множественных результатов
+      if (errorData?.players && Array.isArray(errorData.players)) {
+        const playersList = errorData.players.map((p: any) => p.full_name).join('\n')
+        alert(`❌ Найдено несколько игроков. Уточните запрос:\n\n${playersList}`)
+      } else {
+        const errorMessage = errorData?.error || 'Ошибка регистрации'
+        alert(`❌ ${errorMessage}`)
+      }
       console.error(err)
     } finally {
       setLoading(false)
@@ -83,7 +113,33 @@ const RegistrationModal = ({ tournamentId, tournamentName, onClose, onSuccess }:
 
         {/* Контент */}
         <div className="p-6">
-          {mode === 'select' && (
+          {/* Индивидуальный турнир - простая регистрация */}
+          {isIndividual && mode === 'select' && (
+            <div className="space-y-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-start">
+                  <span className="text-2xl mr-3">🎾</span>
+                  <div>
+                    <div className="font-semibold text-gray-900 mb-2">Индивидуальный турнир</div>
+                    <div className="text-sm text-gray-700">
+                      Вы будете зарегистрированы как одиночный участник
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                onClick={handleRegisterSingle}
+                disabled={loading}
+                className="w-full py-3 bg-blue-500 text-white font-semibold rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? 'Регистрация...' : 'Зарегистрироваться'}
+              </button>
+            </div>
+          )}
+
+          {/* Парный турнир - выбор режима */}
+          {!isIndividual && mode === 'select' && (
             <div className="space-y-4">
               <p className="text-gray-700 mb-4">Выберите способ регистрации:</p>
               
@@ -177,23 +233,23 @@ const RegistrationModal = ({ tournamentId, tournamentName, onClose, onSuccess }:
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  ID напарника
+                  ФИО напарника
                 </label>
                 <input
-                  type="number"
-                  value={partnerId}
-                  onChange={(e) => setPartnerId(e.target.value)}
-                  placeholder="Введите ID игрока"
+                  type="text"
+                  value={partnerSearch}
+                  onChange={(e) => setPartnerSearch(e.target.value)}
+                  placeholder="Иванов Иван"
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  ID можно узнать в профиле игрока на сайте BeachPlay.ru
+                  Введите фамилию и имя напарника для поиска
                 </p>
               </div>
 
               <button
                 onClick={handleRegisterWithPartner}
-                disabled={loading || !partnerId}
+                disabled={loading || !partnerSearch.trim()}
                 className="w-full py-3 bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? 'Регистрация...' : 'Зарегистрироваться'}
