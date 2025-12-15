@@ -140,6 +140,17 @@ const MiniAppTournamentDetail = () => {
     }
   }
 
+  const getParticipantModeLabel = (mode?: string) => {
+    switch (mode) {
+      case 'singles':
+        return 'Индивидуальный турнир'
+      case 'doubles':
+        return 'Парный турнир'
+      default:
+        return ''
+    }
+  }
+
   const getSiteUrl = (t: Tournament) => {
     if (t.system === 'round_robin') {
       return `https://beachplay.ru/tournaments/${t.id}/round_robin`
@@ -202,13 +213,25 @@ const MiniAppTournamentDetail = () => {
         </div>
         
         {tournament.is_registered && (
-          <div className="mt-3 px-3 py-2 bg-green-50 text-green-700 rounded-lg flex items-center">
-            <span className="mr-2">✓</span>
-            <span className="font-medium">
-              {tournament.status === 'completed'
-                ? 'Вы принимали участие в этом турнире'
-                : 'Вы зарегистрированы на этот турнир'}
-            </span>
+          <div className="mt-3 space-y-2">
+            <div className="px-3 py-2 bg-green-50 text-green-700 rounded-lg flex items-center justify-between">
+              <div className="flex items-center">
+                <span className="mr-2">✓</span>
+                <span className="font-medium">
+                  {tournament.status === 'completed'
+                    ? 'Вы принимали участие в этом турнире'
+                    : 'Вы зарегистрированы на этот турнир'}
+                </span>
+              </div>
+              {tournament.status !== 'completed' && (
+                <button
+                  onClick={handleCancelRegistration}
+                  className="ml-2 px-3 py-1 bg-red-500 text-white text-sm rounded-lg hover:bg-red-600 transition-colors"
+                >
+                  Отменить
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -241,11 +264,21 @@ const MiniAppTournamentDetail = () => {
           </div>
 
           <div className="flex items-start">
+            <span className="text-xl mr-3">🎾</span>
+            <div>
+              <div className="text-sm text-gray-500">Тип турнира</div>
+              <div className="font-medium text-gray-900">
+                {getParticipantModeLabel(tournament.participant_mode)}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-start">
             <span className="text-xl mr-3">👥</span>
             <div>
               <div className="text-sm text-gray-500">Участники</div>
               <div className="font-medium text-gray-900">
-                {tournament.participants_count} / {tournament.max_teams} команд
+                {tournament.participants_count} / {tournament.max_teams} {tournament.participant_mode === 'singles' ? 'участников' : 'команд'}
               </div>
             </div>
           </div>
@@ -359,7 +392,7 @@ const MiniAppTournamentDetail = () => {
         <RegistrationModal
           tournamentId={tournament.id}
           tournamentName={tournament.name}
-          isIndividual={tournament.system === 'single'}
+          isIndividual={tournament.participant_mode === 'singles'}
           onClose={() => setShowRegistrationModal(false)}
           onSuccess={handleRegistrationSuccess}
         />

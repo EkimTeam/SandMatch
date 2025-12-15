@@ -581,6 +581,8 @@ class RegistrationService:
         Синхронизировать TournamentEntry с TournamentRegistration.
         Вызывается при добавлении участника через основной интерфейс.
         
+        Логика: создаётся ОДНА запись для команды (пары или одиночки).
+        
         Args:
             tournament_entry: Запись TournamentEntry
         """
@@ -590,11 +592,24 @@ class RegistrationService:
         if not team:
             return
         
+        # Проверяем, есть ли уже регистрация для этой команды
+        existing_reg = TournamentRegistration.objects.filter(
+            tournament=tournament,
+            team=team
+        ).first()
+        
+        if existing_reg:
+            # Обновляем существующую регистрацию
+            # Пересчитываем статусы всех регистраций
+            RegistrationService._recalculate_registration_statuses(tournament)
+            return
+        
         # Определяем статус (основной состав или резерв)
+        # Считаем команды, а не отдельных игроков
         current_main_count = TournamentRegistration.objects.filter(
             tournament=tournament,
             status=TournamentRegistration.Status.MAIN_LIST
-        ).count()
+        ).values('team').distinct().count()
         
         max_teams = tournament.planned_participants or 0
         status = (
@@ -603,41 +618,12 @@ class RegistrationService:
             else TournamentRegistration.Status.RESERVE_LIST
         )
         
-        # Создаём или обновляем регистрацию для player_1
-        player1_reg, _ = TournamentRegistration.objects.get_or_create(
+        # Создаём ОДНУ регистрацию для команды
+        # player указывает на player_1, partner на player_2 (если есть)
+        TournamentRegistration.objects.create(
             tournament=tournament,
             player=team.player_1,
-            defaults={
-                'partner': team.player_2,
-                'team': team,
-                'status': status
-            }
+            partner=team.player_2,
+            team=team,
+            status=status
         )
-        
-        # Если регистрация уже существовала, обновляем её
-        if player1_reg.team != team or player1_reg.status != status:
-            player1_reg.partner = team.player_2
-            player1_reg.team = team
-            player1_reg.status = status
-            player1_reg.save(update_fields=['partner', 'team', 'status', 'updated_at'])
-        
-        # Если это пара, создаём регистрацию для player_2
-        if team.player_2:
-            player2_reg, _ = TournamentRegistration.objects.get_or_create(
-                tournament=tournament,
-                player=team.player_2,
-                defaults={
-                    'partner': team.player_1,
-                    'team': team,
-                    'status': status,
-                    'registration_order': player1_reg.registration_order
-                }
-            )
-            
-            # Если регистрация уже существовала, обновляем её
-            if player2_reg.team != team or player2_reg.status != status:
-                player2_reg.partner = team.player_1
-                player2_reg.team = team
-                player2_reg.status = status
-                player2_reg.registration_order = player1_reg.registration_order
-                player2_reg.save(update_fields=['partner', 'team', 'status', 'registration_order', 'updated_at'])
