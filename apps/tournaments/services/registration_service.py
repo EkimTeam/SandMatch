@@ -77,6 +77,9 @@ class RegistrationService:
                 reg.status = new_status
                 reg.save(update_fields=['status', 'updated_at'])
                 
+                # Синхронизируем с TournamentEntry
+                RegistrationService._sync_to_tournament_entry(reg)
+                
                 # Отправляем уведомление об изменении статуса
                 from apps.telegram_bot.tasks import send_status_changed_notification
                 send_status_changed_notification.delay(reg.id, old_status, new_status)
