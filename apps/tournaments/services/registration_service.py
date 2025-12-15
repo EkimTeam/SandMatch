@@ -140,8 +140,8 @@ class RegistrationService:
         if existing:
             raise ValidationError(f'Игрок {player} уже зарегистрирован на турнир')
         
-        # Создаём команду из одного игрока (player_2=NULL)
-        team = Team.objects.create(player_1=player, player_2=None)
+        # Ищем или создаём команду из одного игрока (player_2=NULL)
+        team, _ = Team.objects.get_or_create(player_1=player, player_2=None)
         
         # Определяем статус (основной состав или резерв)
         current_main_count = TournamentRegistration.objects.filter(
@@ -325,14 +325,18 @@ class RegistrationService:
         if not sender_reg:
             raise ValidationError('Отправитель не зарегистрирован или уже не ищет пару')
         
-        # Проверяем, что получатель не зарегистрирован на этот турнир
+        # Проверяем статус получателя
         receiver_reg = TournamentRegistration.objects.filter(
             tournament=tournament,
             player=receiver
         ).first()
         
-        if receiver_reg:
-            raise ValidationError('Получатель уже зарегистрирован на этот турнир')
+        # Получатель может быть:
+        # 1. Не зарегистрирован вообще (receiver_reg is None)
+        # 2. Ищет пару (status=LOOKING_FOR_PARTNER)
+        # Нельзя приглашать тех, кто уже в паре (MAIN_LIST, RESERVE_LIST)
+        if receiver_reg and receiver_reg.status != TournamentRegistration.Status.LOOKING_FOR_PARTNER:
+            raise ValidationError('Этот игрок уже зарегистрирован в паре на этот турнир')
         
         # Проверяем, нет ли уже активного приглашения
         existing = PairInvitation.objects.filter(
@@ -510,9 +514,49 @@ class RegistrationService:
     
     @staticmethod
     @transaction.atomic
+    def leave_pair(registration: TournamentRegistration):
+        """
+        Отказаться от текущей пары (оба игрока переходят в "ищу пару").
+        
+        Args:
+            registration: Регистрация игрока
+        """
+        tournament = registration.tournament
+        partner = registration.partner
+        
+        if not partner:
+            raise ValidationError('Вы не состоите в паре')
+        
+        # Находим регистрацию напарника
+        partner_reg = TournamentRegistration.objects.filter(
+            tournament=tournament,
+            player=partner
+        ).first()
+        
+        # Переводим обоих в "ищу пару"
+        registration.partner = None
+        registration.team = None
+        registration.status = TournamentRegistration.Status.LOOKING_FOR_PARTNER
+        registration.save(update_fields=['partner', 'team', 'status', 'updated_at'])
+        
+        if partner_reg:
+            partner_reg.partner = None
+            partner_reg.team = None
+            partner_reg.status = TournamentRegistration.Status.LOOKING_FOR_PARTNER
+            partner_reg.save(update_fields=['partner', 'team', 'status', 'updated_at'])
+            
+            # Отправляем уведомление напарнику
+            from apps.telegram_bot.tasks import send_partner_left_notification
+            transaction.on_commit(lambda: send_partner_left_notification.delay(partner_reg.id))
+        
+        # Пересчитываем статусы
+        RegistrationService._recalculate_registration_statuses(tournament)
+    
+    @staticmethod
+    @transaction.atomic
     def cancel_registration(registration: TournamentRegistration):
         """
-        Отменить регистрацию игрока на турнир.
+        Полностью отменить регистрацию игрока на турнир (покинуть все списки).
         
         Если игрок в паре:
         - Напарник переводится в режим "ищет пару"
@@ -538,7 +582,9 @@ class RegistrationService:
                 partner_reg.status = TournamentRegistration.Status.LOOKING_FOR_PARTNER
                 partner_reg.save(update_fields=['partner', 'team', 'status', 'updated_at'])
                 
-                # TODO: отправить уведомление напарнику
+                # Отправляем уведомление напарнику
+                from apps.telegram_bot.tasks import send_partner_cancelled_notification
+                transaction.on_commit(lambda: send_partner_cancelled_notification.delay(partner_reg.id))
         
         # Удаляем регистрацию
         registration.delete()

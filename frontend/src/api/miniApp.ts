@@ -157,6 +157,14 @@ class MiniAppAPI {
   // --- Новые методы для системы регистрации ---
 
   /**
+   * Получить информацию о своей регистрации на турнир
+   */
+  async getMyRegistration(tournamentId: number): Promise<TournamentRegistration | { registered: false }> {
+    const response = await this.api.get(`/tournaments/${tournamentId}/my-registration/`)
+    return response.data
+  }
+
+  /**
    * Получить список участников турнира
    */
   async getTournamentParticipants(tournamentId: number): Promise<TournamentParticipants> {
@@ -245,7 +253,15 @@ class MiniAppAPI {
   }
 
   /**
-   * Отменить регистрацию на турнир
+   * Отказаться от пары (оба переходят в "ищу пару")
+   */
+  async leavePair(tournamentId: number): Promise<{ message: string }> {
+    const response = await this.api.post(`/tournaments/${tournamentId}/leave-pair/`)
+    return response.data
+  }
+
+  /**
+   * Полностью отменить регистрацию на турнир
    */
   async cancelRegistration(tournamentId: number): Promise<{ message: string }> {
     const response = await this.api.post(`/tournaments/${tournamentId}/cancel-registration/`)

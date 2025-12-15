@@ -14,6 +14,7 @@ import {
 import TournamentParticipants from '../../components/MiniApp/TournamentParticipants'
 import RegistrationModal from '../../components/MiniApp/RegistrationModal'
 import InvitationsModal from '../../components/MiniApp/InvitationsModal'
+import CancelRegistrationModal from '../../components/MiniApp/CancelRegistrationModal'
 
 const MiniAppTournamentDetail = () => {
   const navigate = useNavigate()
@@ -23,7 +24,9 @@ const MiniAppTournamentDetail = () => {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
+  const [myRegistration, setMyRegistration] = useState<any>(null)
   const [showRegistrationModal, setShowRegistrationModal] = useState(false)
+  const [showCancelModal, setShowCancelModal] = useState(false)
   const [showInvitationsModal, setShowInvitationsModal] = useState(false)
   const [showParticipants, setShowParticipants] = useState(false)
 
@@ -49,6 +52,7 @@ const MiniAppTournamentDetail = () => {
     if (id) {
       loadTournament(parseInt(id))
       loadProfile()
+      loadMyRegistration(parseInt(id))
     }
   }, [id])
 
@@ -57,7 +61,7 @@ const MiniAppTournamentDetail = () => {
     if (tournament && tournament.status === 'created' && !tournament.is_registered) {
       showMainButton('Зарегистрироваться', () => setShowRegistrationModal(true))
     } else if (tournament && tournament.status === 'created' && tournament.is_registered) {
-      showMainButton('Отменить регистрацию', handleCancelRegistration)
+      showMainButton('Отказаться от турнира', () => setShowCancelModal(true))
     } else {
       hideMainButton()
     }
@@ -86,6 +90,20 @@ const MiniAppTournamentDetail = () => {
     }
   }
 
+  const loadMyRegistration = async (tournamentId: number) => {
+    try {
+      const data = await miniAppAPI.getMyRegistration(tournamentId)
+      if ('registered' in data && !data.registered) {
+        setMyRegistration(null)
+      } else {
+        setMyRegistration(data)
+      }
+    } catch (err) {
+      console.error('Ошибка загрузки регистрации:', err)
+      setMyRegistration(null)
+    }
+  }
+
   const handleCancelRegistration = async () => {
     if (!tournament) return
 
@@ -108,6 +126,13 @@ const MiniAppTournamentDetail = () => {
       alert(`❌ ${errorMessage}`)
       console.error(err)
     }
+  }
+
+  const handleCancelSuccess = async () => {
+    if (!tournament) return
+    // Перезагружаем данные турнира и регистрации
+    await loadTournament(tournament.id)
+    await loadMyRegistration(tournament.id)
   }
 
   const handleRegistrationSuccess = async () => {
@@ -381,6 +406,7 @@ const MiniAppTournamentDetail = () => {
             <TournamentParticipants
               tournamentId={tournament.id}
               currentPlayerId={profile?.player?.id}
+              currentPlayerStatus={myRegistration?.status}
               onInviteSent={handleRegistrationSuccess}
             />
           )}
@@ -402,6 +428,16 @@ const MiniAppTournamentDetail = () => {
         <InvitationsModal
           onClose={() => setShowInvitationsModal(false)}
           onInvitationHandled={handleRegistrationSuccess}
+        />
+      )}
+
+      {showCancelModal && tournament && myRegistration && (
+        <CancelRegistrationModal
+          tournamentId={tournament.id}
+          tournamentName={tournament.name}
+          hasPartner={!!myRegistration.partner_id}
+          onClose={() => setShowCancelModal(false)}
+          onSuccess={handleCancelSuccess}
         />
       )}
     </div>
