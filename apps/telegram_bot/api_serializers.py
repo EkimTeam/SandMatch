@@ -410,13 +410,13 @@ class RegisterLookingForPartnerSerializer(serializers.Serializer):
 class RegisterWithPartnerSerializer(serializers.Serializer):
     """Сериализатор для регистрации с напарником"""
     
-    partner_id = serializers.IntegerField(required=True)
+    partner_search = serializers.CharField(required=True, help_text="ФИО напарника для поиска")
 
 
 class SendPairInvitationSerializer(serializers.Serializer):
     """Сериализатор для отправки приглашения в пару"""
     
-    receiver_id = serializers.IntegerField(required=True)
+    receiver_search = serializers.CharField(required=True, help_text="ФИО получателя для поиска")
     message = serializers.CharField(required=False, allow_blank=True, default='')
 
 
