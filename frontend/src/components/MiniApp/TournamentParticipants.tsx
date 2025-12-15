@@ -8,10 +8,11 @@ import { hapticFeedback } from '../../utils/telegram'
 interface TournamentParticipantsProps {
   tournamentId: number
   currentPlayerId?: number
+  currentPlayerStatus?: string  // Статус текущего игрока
   onInviteSent?: () => void
 }
 
-const TournamentParticipants = ({ tournamentId, currentPlayerId, onInviteSent }: TournamentParticipantsProps) => {
+const TournamentParticipants = ({ tournamentId, currentPlayerId, currentPlayerStatus, onInviteSent }: TournamentParticipantsProps) => {
   const [participants, setParticipants] = useState<ParticipantsData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -65,6 +66,12 @@ const TournamentParticipants = ({ tournamentId, currentPlayerId, onInviteSent }:
     const isCurrentPlayer = reg.player_id === currentPlayerId
     const isPair = reg.partner_id !== null && reg.partner_id !== undefined
     
+    // Показываем кнопку "Пригласить" только если:
+    // 1. showInviteButton = true (список "Ищут пару")
+    // 2. Это не текущий игрок
+    // 3. Текущий игрок сам в статусе "looking_for_partner"
+    const canInvite = showInviteButton && !isCurrentPlayer && currentPlayerStatus === 'looking_for_partner'
+    
     return (
       <div
         key={reg.id}
@@ -85,7 +92,7 @@ const TournamentParticipants = ({ tournamentId, currentPlayerId, onInviteSent }:
             )}
           </div>
           
-          {showInviteButton && !isCurrentPlayer && (
+          {canInvite && (
             <button
               onClick={() => handleSendInvite(reg.player_id)}
               disabled={sendingInvite === reg.player_id}

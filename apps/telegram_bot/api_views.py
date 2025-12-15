@@ -337,6 +337,40 @@ def mini_app_profile(request):
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
+def my_registration(request, tournament_id):
+    """
+    Получить информацию о своей регистрации на турнир
+    
+    GET /api/mini-app/tournaments/{id}/my-registration/
+    """
+    from apps.tournaments.registration_models import TournamentRegistration
+    from .api_serializers import TournamentRegistrationSerializer
+    
+    # Аутентификация
+    auth = TelegramWebAppAuthentication()
+    try:
+        user, telegram_user = auth.authenticate(request)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    if not telegram_user or not telegram_user.player_id:
+        return Response({'error': 'Игрок не найден'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        tournament = Tournament.objects.get(id=tournament_id)
+        registration = TournamentRegistration.objects.get(
+            tournament=tournament,
+            player_id=telegram_user.player_id
+        )
+        return Response(TournamentRegistrationSerializer(registration).data)
+    except Tournament.DoesNotExist:
+        return Response({'error': 'Турнир не найден'}, status=status.HTTP_404_NOT_FOUND)
+    except TournamentRegistration.DoesNotExist:
+        return Response({'registered': False}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
 def tournament_participants(request, tournament_id):
     """
     Получить список участников турнира (основной состав, резерв, ищущие пару)
@@ -707,9 +741,46 @@ def decline_invitation(request, invitation_id):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+def leave_pair(request, tournament_id):
+    """
+    Отказаться от текущей пары (оба переходят в "ищу пару")
+    
+    POST /api/mini-app/tournaments/{id}/leave-pair/
+    """
+    from apps.tournaments.registration_models import TournamentRegistration
+    from apps.tournaments.services import RegistrationService
+    
+    # Аутентификация
+    auth = TelegramWebAppAuthentication()
+    try:
+        user, telegram_user = auth.authenticate(request)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    if not telegram_user or not telegram_user.player_id:
+        return Response({'error': 'Игрок не найден'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        tournament = Tournament.objects.get(id=tournament_id)
+        registration = TournamentRegistration.objects.get(
+            tournament=tournament,
+            player_id=telegram_user.player_id
+        )
+    except (Tournament.DoesNotExist, TournamentRegistration.DoesNotExist):
+        return Response({'error': 'Регистрация не найдена'}, status=status.HTTP_404_NOT_FOUND)
+    
+    try:
+        RegistrationService.leave_pair(registration)
+        return Response({'message': 'Вы покинули пару'})
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
 def cancel_registration(request, tournament_id):
     """
-    Отменить свою регистрацию на турнир
+    Полностью отменить регистрацию на турнир (покинуть все списки)
     
     POST /api/mini-app/tournaments/{id}/cancel-registration/
     """
@@ -737,7 +808,7 @@ def cancel_registration(request, tournament_id):
     
     try:
         RegistrationService.cancel_registration(registration)
-        return Response({'message': 'Регистрация отменена'})
+        return Response({'message': 'Регистрация полностью отменена'})
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
