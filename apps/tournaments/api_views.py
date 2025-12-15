@@ -2241,14 +2241,8 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if tournament.status == Tournament.Status.COMPLETED:
             return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
         
-        # Проверка максимального количества участников
-        current_count = tournament.entries.count()
-        max_participants = tournament.planned_participants or 32
-        if current_count >= max_participants:
-            return Response({
-                'ok': False, 
-                'error': f'Достигнуто максимальное количество участников ({max_participants})'
-            }, status=400)
+        # Проверка максимального количества участников (только предупреждение, не блокировка)
+        # Организатор может добавлять участников сверх лимита при необходимости
         
         name = request.data.get('name')
         player_id = request.data.get('player_id')

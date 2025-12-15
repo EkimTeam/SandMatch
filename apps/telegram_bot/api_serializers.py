@@ -149,6 +149,8 @@ class TournamentDetailSerializer(serializers.ModelSerializer):
     
     def get_is_registered(self, obj):
         """Проверка регистрации текущего пользователя"""
+        from apps.tournaments.registration_models import TournamentRegistration
+        
         request = self.context.get('request')
         if not request or not hasattr(request, 'auth'):
             return False
@@ -157,14 +159,10 @@ class TournamentDetailSerializer(serializers.ModelSerializer):
         if not telegram_user or not telegram_user.player_id:
             return False
         
-        team_ids = Team.objects.filter(
-            Q(player_1_id=telegram_user.player_id) |
-            Q(player_2_id=telegram_user.player_id)
-        ).values_list('id', flat=True)
-        
-        return TournamentEntry.objects.filter(
+        # Проверяем наличие регистрации в TournamentRegistration
+        return TournamentRegistration.objects.filter(
             tournament=obj,
-            team_id__in=team_ids
+            player_id=telegram_user.player_id
         ).exists()
     
     def get_organizer_name(self, obj):
@@ -379,12 +377,24 @@ class TournamentRegistrationSerializer(serializers.Serializer):
     
     id = serializers.IntegerField(read_only=True)
     player_id = serializers.IntegerField(source='player.id', read_only=True)
-    player_name = serializers.CharField(source='player.full_name', read_only=True)
+    player_name = serializers.SerializerMethodField()
     partner_id = serializers.IntegerField(source='partner.id', read_only=True, allow_null=True)
-    partner_name = serializers.CharField(source='partner.full_name', read_only=True, allow_null=True)
+    partner_name = serializers.SerializerMethodField()
     status = serializers.CharField(read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     registered_at = serializers.DateTimeField(read_only=True)
+    
+    def get_player_name(self, obj):
+        """Получить ФИО игрока"""
+        if obj.player:
+            return str(obj.player)  # Использует __str__ модели Player
+        return None
+    
+    def get_partner_name(self, obj):
+        """Получить ФИО напарника"""
+        if obj.partner:
+            return str(obj.partner)  # Использует __str__ модели Player
+        return None
 
 
 class PairInvitationSerializer(serializers.Serializer):
@@ -392,14 +402,26 @@ class PairInvitationSerializer(serializers.Serializer):
     
     id = serializers.IntegerField(read_only=True)
     sender_id = serializers.IntegerField(source='sender.id', read_only=True)
-    sender_name = serializers.CharField(source='sender.full_name', read_only=True)
+    sender_name = serializers.SerializerMethodField()
     receiver_id = serializers.IntegerField(source='receiver.id', read_only=True)
-    receiver_name = serializers.CharField(source='receiver.full_name', read_only=True)
+    receiver_name = serializers.SerializerMethodField()
     status = serializers.CharField(read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     message = serializers.CharField(read_only=True)
     created_at = serializers.DateTimeField(read_only=True)
     responded_at = serializers.DateTimeField(read_only=True, allow_null=True)
+    
+    def get_sender_name(self, obj):
+        """Получить ФИО отправителя"""
+        if obj.sender:
+            return str(obj.sender)
+        return None
+    
+    def get_receiver_name(self, obj):
+        """Получить ФИО получателя"""
+        if obj.receiver:
+            return str(obj.receiver)
+        return None
 
 
 class RegisterLookingForPartnerSerializer(serializers.Serializer):
