@@ -523,9 +523,17 @@ class RegistrationService:
         """
         tournament = registration.tournament
         partner = registration.partner
+        team = registration.team
         
         if not partner:
             raise ValidationError('Вы не состоите в паре')
+        
+        # Удаляем TournamentEntry если есть команда
+        if team:
+            TournamentEntry.objects.filter(
+                tournament=tournament,
+                team=team
+            ).delete()
         
         # Находим регистрацию напарника
         partner_reg = TournamentRegistration.objects.filter(
@@ -568,6 +576,14 @@ class RegistrationService:
         """
         tournament = registration.tournament
         partner = registration.partner
+        team = registration.team
+        
+        # Удаляем TournamentEntry если есть команда
+        if team:
+            TournamentEntry.objects.filter(
+                tournament=tournament,
+                team=team
+            ).delete()
         
         # Если игрок в паре, обновляем регистрацию напарника
         if partner:
