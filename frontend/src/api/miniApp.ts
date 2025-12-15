@@ -18,6 +18,7 @@ export interface Tournament {
   start_time?: string | null
   avg_rating_bp?: number | null
   system?: string
+  participant_mode?: 'singles' | 'doubles'
   set_format_name?: string | null
   organizer_name?: string
   description?: string
@@ -205,6 +206,21 @@ class MiniAppAPI {
   }
 
   /**
+   * Отправить приглашение в пару по ID игрока (для списка "Ищут пару")
+   */
+  async sendPairInvitationById(
+    tournamentId: number,
+    receiverId: number,
+    message?: string
+  ): Promise<PairInvitation> {
+    const response = await this.api.post(`/tournaments/${tournamentId}/send-invitation/`, {
+      receiver_id: receiverId,
+      message: message || '',
+    })
+    return response.data
+  }
+
+  /**
    * Получить мои приглашения
    */
   async getMyInvitations(): Promise<PairInvitation[]> {
@@ -233,6 +249,16 @@ class MiniAppAPI {
    */
   async cancelRegistration(tournamentId: number): Promise<{ message: string }> {
     const response = await this.api.post(`/tournaments/${tournamentId}/cancel-registration/`)
+    return response.data
+  }
+
+  /**
+   * Поиск игроков для регистрации с напарником
+   */
+  async searchPlayers(tournamentId: number, query: string): Promise<{ players: Array<{ id: number; full_name: string; is_registered: boolean }> }> {
+    const response = await this.api.get(`/tournaments/${tournamentId}/search-players/`, {
+      params: { q: query }
+    })
     return response.data
   }
 }

@@ -40,7 +40,7 @@ const TournamentParticipants = ({ tournamentId, currentPlayerId, onInviteSent }:
       setSendingInvite(receiverId)
       hapticFeedback.medium()
       
-      await miniAppAPI.sendPairInvitation(tournamentId, receiverId)
+      await miniAppAPI.sendPairInvitationById(tournamentId, receiverId)
       
       hapticFeedback.success()
       alert('✅ Приглашение отправлено!')

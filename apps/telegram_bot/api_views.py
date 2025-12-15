@@ -521,10 +521,12 @@ def register_with_partner(request, tournament_id):
 @permission_classes([AllowAny])
 def send_pair_invitation(request, tournament_id):
     """
-    Отправить приглашение в пару
+    Отправить приглашение в пару (поиск по ФИО или по ID)
     
     POST /api/mini-app/tournaments/{id}/send-invitation/
     Body: { "receiver_search": "Иванов Иван", "message": "Давай сыграем!" }
+    или
+    Body: { "receiver_id": 123, "message": "Давай сыграем!" }
     """
     from apps.tournaments.services import RegistrationService
     from .api_serializers import SendPairInvitationSerializer, PairInvitationSerializer
@@ -540,32 +542,40 @@ def send_pair_invitation(request, tournament_id):
     if not telegram_user or not telegram_user.player_id:
         return Response({'error': 'Игрок не найден'}, status=status.HTTP_400_BAD_REQUEST)
     
-    serializer = SendPairInvitationSerializer(data=request.data)
-    if not serializer.is_valid():
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
     try:
         tournament = Tournament.objects.get(id=tournament_id)
         sender = Player.objects.get(id=telegram_user.player_id)
         
-        # Поиск получателя по ФИО
-        search_query = serializer.validated_data['receiver_search'].strip()
-        receivers = Player.objects.filter(
-            Q(first_name__icontains=search_query) |
-            Q(last_name__icontains=search_query) |
-            Q(patronymic__icontains=search_query)
-        )
-        
-        if receivers.count() == 0:
-            return Response({'error': 'Игрок не найден'}, status=status.HTTP_404_NOT_FOUND)
-        elif receivers.count() > 1:
-            # Возвращаем список найденных игроков для уточнения
-            return Response({
-                'error': 'Найдено несколько игроков. Уточните запрос.',
-                'players': [{'id': p.id, 'full_name': p.get_full_name()} for p in receivers]
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        receiver = receivers.first()
+        # Проверяем, передан ли receiver_id (для списка "Ищут пару")
+        receiver_id = request.data.get('receiver_id')
+        if receiver_id:
+            try:
+                receiver = Player.objects.get(id=receiver_id)
+            except Player.DoesNotExist:
+                return Response({'error': 'Игрок не найден'}, status=status.HTTP_404_NOT_FOUND)
+        else:
+            # Поиск по ФИО
+            serializer = SendPairInvitationSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+            search_query = serializer.validated_data['receiver_search'].strip()
+            receivers = Player.objects.filter(
+                Q(first_name__icontains=search_query) |
+                Q(last_name__icontains=search_query) |
+                Q(patronymic__icontains=search_query)
+            )
+            
+            if receivers.count() == 0:
+                return Response({'error': 'Игрок не найден'}, status=status.HTTP_404_NOT_FOUND)
+            elif receivers.count() > 1:
+                # Возвращаем список найденных игроков для уточнения
+                return Response({
+                    'error': 'Найдено несколько игроков. Уточните запрос.',
+                    'players': [{'id': p.id, 'full_name': p.get_full_name()} for p in receivers]
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            receiver = receivers.first()
         
     except Tournament.DoesNotExist:
         return Response({'error': 'Турнир не найден'}, status=status.HTTP_404_NOT_FOUND)
@@ -575,7 +585,7 @@ def send_pair_invitation(request, tournament_id):
     try:
         invitation = RegistrationService.send_pair_invitation(
             tournament, sender, receiver,
-            message=serializer.validated_data.get('message', '')
+            message=request.data.get('message', '')
         )
         return Response(
             PairInvitationSerializer(invitation).data,
@@ -730,3 +740,55 @@ def cancel_registration(request, tournament_id):
         return Response({'message': 'Регистрация отменена'})
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def search_players(request, tournament_id):
+    """
+    Поиск игроков для регистрации с напарником
+    
+    GET /api/mini-app/tournaments/{id}/search-players/?q=Иванов
+    """
+    from django.db.models import Q
+    from apps.tournaments.registration_models import TournamentRegistration
+    from apps.telegram_bot.models import TelegramUser
+    
+    query = request.GET.get('q', '').strip()
+    if not query:
+        return Response({'players': []})
+    
+    try:
+        tournament = Tournament.objects.get(id=tournament_id)
+    except Tournament.DoesNotExist:
+        return Response({'error': 'Турнир не найден'}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Ищем игроков по ФИО, у которых есть привязка к Telegram
+    telegram_user_ids = TelegramUser.objects.filter(
+        player_id__isnull=False
+    ).values_list('player_id', flat=True)
+    
+    players = Player.objects.filter(
+        id__in=telegram_user_ids
+    ).filter(
+        Q(first_name__icontains=query) |
+        Q(last_name__icontains=query) |
+        Q(patronymic__icontains=query)
+    )[:20]  # Ограничиваем 20 результатами
+    
+    # Проверяем, кто уже зарегистрирован на турнир
+    registered_player_ids = set(
+        TournamentRegistration.objects.filter(
+            tournament=tournament
+        ).values_list('player_id', flat=True)
+    )
+    
+    result = []
+    for player in players:
+        result.append({
+            'id': player.id,
+            'full_name': player.get_full_name(),
+            'is_registered': player.id in registered_player_ids
+        })
+    
+    return Response({'players': result})

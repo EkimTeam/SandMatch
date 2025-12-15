@@ -138,13 +138,13 @@ class TournamentDetailSerializer(serializers.ModelSerializer):
             'start_time',
             'avg_rating_bp',
             'system',
+            'participant_mode',
             'set_format_name',
             'is_registered',
             'organizer_name',
             'description',
             'entry_fee',
             'prize_fund',
-            'system',
         ]
     
     def get_is_registered(self, obj):
