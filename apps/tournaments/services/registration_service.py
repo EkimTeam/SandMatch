@@ -75,6 +75,9 @@ class RegistrationService:
             if reg.status != new_status:
                 old_status = reg.status
                 reg.status = new_status
+                
+                # Устанавливаем флаг для избежания рекурсии в сигналах
+                reg._skip_recalculation = True
                 reg.save(update_fields=['status', 'updated_at'])
                 
                 # Синхронизируем с TournamentEntry
@@ -548,20 +551,21 @@ class RegistrationService:
         registration.partner = None
         registration.team = None
         registration.status = TournamentRegistration.Status.LOOKING_FOR_PARTNER
+        # Сигнал post_save автоматически вызовет пересчёт, не нужно устанавливать флаг
         registration.save(update_fields=['partner', 'team', 'status', 'updated_at'])
         
         if partner_reg:
             partner_reg.partner = None
             partner_reg.team = None
             partner_reg.status = TournamentRegistration.Status.LOOKING_FOR_PARTNER
+            # Сигнал post_save автоматически вызовет пересчёт, не нужно устанавливать флаг
             partner_reg.save(update_fields=['partner', 'team', 'status', 'updated_at'])
             
             # Отправляем уведомление напарнику
             from apps.telegram_bot.tasks import send_partner_left_notification
             transaction.on_commit(lambda: send_partner_left_notification.delay(partner_reg.id))
         
-        # Пересчитываем статусы
-        RegistrationService._recalculate_registration_statuses(tournament)
+        # Пересчёт статусов будет вызван автоматически через сигнал post_save
     
     @staticmethod
     @transaction.atomic
@@ -599,17 +603,15 @@ class RegistrationService:
                 partner_reg.partner = None
                 partner_reg.team = None
                 partner_reg.status = TournamentRegistration.Status.LOOKING_FOR_PARTNER
+                # Сигнал post_save автоматически вызовет пересчёт
                 partner_reg.save(update_fields=['partner', 'team', 'status', 'updated_at'])
                 
                 # Отправляем уведомление напарнику
                 from apps.telegram_bot.tasks import send_partner_cancelled_notification
                 transaction.on_commit(lambda: send_partner_cancelled_notification.delay(partner_reg.id))
         
-        # Удаляем регистрацию
+        # Удаляем регистрацию - сигнал post_delete автоматически вызовет пересчёт
         registration.delete()
-        
-        # Пересчитываем статусы
-        RegistrationService._recalculate_registration_statuses(tournament)
     
     @staticmethod
     @transaction.atomic

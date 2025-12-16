@@ -60,6 +60,46 @@ def recalculate_on_planned_participants_change(sender, instance, created, **kwar
         RegistrationService._recalculate_registration_statuses(instance)
 ```
 
+**При создании/обновлении TournamentRegistration:**
+```python
+@receiver(pre_save, sender=TournamentRegistration)
+def track_registration_status_change(sender, instance, **kwargs):
+    # Запоминаем старый статус и команду
+    instance._old_status = old_instance.status
+    instance._old_team = old_instance.team
+
+@receiver(post_save, sender=TournamentRegistration)
+def sync_registration_to_entry(sender, instance, created, **kwargs):
+    # Синхронизируем с TournamentEntry
+    RegistrationService._sync_to_tournament_entry(instance)
+    
+    # Пересчитываем очередь если:
+    # - Создана новая регистрация с командой
+    # - Изменился статус
+    # - Изменилась команда (сформировалась пара)
+    if should_recalculate:
+        transaction.on_commit(
+            lambda: RegistrationService._recalculate_registration_statuses(instance.tournament)
+        )
+```
+
+**При удалении TournamentRegistration:**
+```python
+@receiver(post_delete, sender=TournamentRegistration)
+def recalculate_on_registration_deleted(sender, instance, **kwargs):
+    # Удаляем TournamentEntry
+    if instance.team:
+        TournamentEntry.objects.filter(
+            tournament=instance.tournament,
+            team=instance.team
+        ).delete()
+    
+    # Пересчитываем очередь
+    transaction.on_commit(
+        lambda: RegistrationService._recalculate_registration_statuses(tournament)
+    )
+```
+
 #### 2. Методы синхронизации (apps/tournaments/services/registration_service.py)
 
 **sync_tournament_entry_to_registration:**
