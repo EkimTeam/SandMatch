@@ -110,6 +110,9 @@ def users_list(request):
     и пагинацию offset/limit.
     """
 
+    from django.db.models import Q
+    from apps.telegram_bot.models import TelegramUser
+    
     q = (request.query_params.get("q") or "").strip()
     try:
         offset = int(request.query_params.get("offset", 0))
@@ -119,16 +122,48 @@ def users_list(request):
         limit = int(request.query_params.get("limit", 10))
     except ValueError:
         limit = 10
+    
+    # Параметры фильтрации
+    role_filter = request.query_params.get("role", "").strip()
+    filter_bp = request.query_params.get("filter_bp", "").lower() == "true"
+    filter_btr = request.query_params.get("filter_btr", "").lower() == "true"
+    filter_telegram = request.query_params.get("filter_telegram", "").lower() == "true"
 
-    qs = User.objects.all().select_related("profile").order_by("id")
+    qs = User.objects.all().select_related(
+        "profile", 
+        "profile__player", 
+        "profile__player__btr_player",
+        "telegram_profile",
+        "telegram_profile__player",
+        "telegram_profile__player__btr_player"
+    ).order_by("id")
+    
     if q:
-        from django.db.models import Q
-
         qs = qs.filter(
             Q(username__icontains=q)
             | Q(first_name__icontains=q)
             | Q(last_name__icontains=q)
         )
+    
+    # Фильтр по роли
+    if role_filter:
+        qs = qs.filter(profile__role=role_filter)
+    
+    # Фильтр по BP player (проверяем оба источника)
+    if filter_bp:
+        qs = qs.filter(
+            Q(telegram_profile__player__isnull=False) | Q(profile__player__isnull=False)
+        )
+    
+    # Фильтр по BTR player (проверяем оба источника)
+    if filter_btr:
+        qs = qs.filter(
+            Q(telegram_profile__player__btr_player__isnull=False) | Q(profile__player__btr_player__isnull=False)
+        )
+    
+    # Фильтр по Telegram
+    if filter_telegram:
+        qs = qs.filter(telegram_profile__isnull=False)
 
     total = qs.count()
     users = qs[offset : offset + limit]
@@ -136,6 +171,27 @@ def users_list(request):
     results = []
     for u in users:
         profile = getattr(u, "profile", None)
+        
+        # Проверяем связи
+        has_bp_player = False
+        has_btr_player = False
+        has_telegram = False
+        
+        # Проверяем связь с Telegram через TelegramUser
+        telegram_user = getattr(u, 'telegram_profile', None)
+        has_telegram = telegram_user is not None
+        
+        # Проверяем связь с BP игроком
+        # Приоритет: TelegramUser.player, затем UserProfile.player
+        if telegram_user and telegram_user.player:
+            has_bp_player = True
+            # Проверяем связь с BTR через player
+            has_btr_player = telegram_user.player.btr_player_id is not None
+        elif profile and profile.player:
+            has_bp_player = True
+            # Проверяем связь с BTR через player
+            has_btr_player = profile.player.btr_player_id is not None
+        
         results.append(
             {
                 "id": u.id,
@@ -144,6 +200,9 @@ def users_list(request):
                 "last_name": u.last_name,
                 "full_name": f"{u.last_name} {u.first_name}".strip() or u.username,
                 "role": getattr(profile, "role", None),
+                "has_bp_player": has_bp_player,
+                "has_btr_player": has_btr_player,
+                "has_telegram": has_telegram,
             }
         )
 
@@ -178,6 +237,31 @@ def set_user_role(request, user_id: int):
     profile.save(update_fields=["role"])
 
     return Response({"ok": True, "changed": True, "old_role": old_role, "new_role": new_role})
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated, IsAdmin])
+def delete_user(request, user_id: int):
+    """Каскадно удалить пользователя из системы (ADMIN-ручка).
+    
+    Удаляет пользователя и все связанные с ним данные.
+    """
+    
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        return Response({"detail": "Пользователь не найден"}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Защита от удаления самого себя
+    if user.id == request.user.id:
+        return Response({"detail": "Нельзя удалить самого себя"}, status=status.HTTP_400_BAD_REQUEST)
+    
+    username = user.username
+    
+    # Django автоматически каскадно удалит связанные объекты благодаря on_delete=CASCADE
+    user.delete()
+    
+    return Response({"ok": True, "deleted_username": username})
 
 
 @api_view(["POST"])

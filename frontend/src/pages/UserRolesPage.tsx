@@ -21,18 +21,34 @@ const UserRolesPageInner: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [confirmRow, setConfirmRow] = useState<Row | null>(null);
+  const [deleteRow, setDeleteRow] = useState<Row | null>(null);
   const [savingId, setSavingId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [roleFilter, setRoleFilter] = useState<string>('');
+  const [filterBP, setFilterBP] = useState(false);
+  const [filterBTR, setFilterBTR] = useState(false);
+  const [filterTelegram, setFilterTelegram] = useState(false);
 
   const load = async () => {
     try {
       setLoading(true);
       setError(null);
-      const { results, total } = await adminApi.listUsers({ q: search, offset: (page - 1) * 10, limit: 10 });
+      const { results, total } = await adminApi.listUsers({ 
+        q: search, 
+        offset: (page - 1) * pageSize, 
+        limit: pageSize,
+        role: roleFilter || undefined,
+        filter_bp: filterBP || undefined,
+        filter_btr: filterBTR || undefined,
+        filter_telegram: filterTelegram || undefined,
+      });
+      
       const mapped: Row[] = results.map(u => ({ ...u, pendingRole: u.role, dirty: false }));
       setRows(mapped);
-      setTotalPages(Math.ceil((total || 0) / 10) || 1);
+      setTotalPages(Math.ceil((total || 0) / pageSize) || 1);
     } catch (e: any) {
       setError(e?.response?.data?.detail || e?.message || 'Ошибка загрузки пользователей');
     } finally {
@@ -40,11 +56,11 @@ const UserRolesPageInner: React.FC = () => {
     }
   };
 
-  // Load data when page changes
+  // Load data when page, pageSize or filters change
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page]);
+  }, [page, pageSize, roleFilter, filterBP, filterBTR, filterTelegram]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -86,6 +102,34 @@ const UserRolesPageInner: React.FC = () => {
     }
   };
 
+  const handleDeleteUser = async () => {
+    if (!deleteRow) return;
+    const row = deleteRow;
+    setDeletingId(row.id);
+    try {
+      await adminApi.deleteUser(row.id);
+      setRows(prev => prev.filter(r => r.id !== row.id));
+      setDeleteRow(null);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || e?.message || 'Не удалось удалить пользователя');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleReset = () => {
+    setSearch('');
+    setRoleFilter('');
+    setFilterBP(false);
+    setFilterBTR(false);
+    setFilterTelegram(false);
+    if (page === 1) {
+      load();
+    } else {
+      setPage(1);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Управление ролями пользователей</h1>
@@ -106,19 +150,59 @@ const UserRolesPageInner: React.FC = () => {
             <button
               type="button"
               className="px-3 py-1 text-sm bg-gray-100 rounded"
-              onClick={() => {
-                setSearch('');
-                if (page === 1) {
-                  load();
-                } else {
-                  setPage(1);
-                }
-              }}
+              onClick={handleReset}
             >
               Сброс
             </button>
           </form>
         </div>
+
+        {/* Фильтры */}
+        <div className="px-4 py-3 border-b border-gray-200 flex flex-wrap gap-4">
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium">Роль:</label>
+            <select
+              value={roleFilter}
+              onChange={e => setRoleFilter(e.target.value)}
+              className="border rounded px-2 py-1 text-sm"
+            >
+              <option value="">Все</option>
+              {ROLES.map(r => (
+                <option key={r.value} value={r.value || ''}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium">Связи:</label>
+            <label className="flex items-center gap-1 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={filterBP}
+                onChange={e => setFilterBP(e.target.checked)}
+              />
+              Игрок BP
+            </label>
+            <label className="flex items-center gap-1 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={filterBTR}
+                onChange={e => setFilterBTR(e.target.checked)}
+              />
+              Игрок BTR
+            </label>
+            <label className="flex items-center gap-1 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={filterTelegram}
+                onChange={e => setFilterTelegram(e.target.checked)}
+              />
+              Telegram
+            </label>
+          </div>
+        </div>
+
         {error && (
           <div className="p-4 text-red-600 bg-red-50">{error}</div>
         )}
@@ -128,18 +212,32 @@ const UserRolesPageInner: React.FC = () => {
               <tr className="bg-gray-50 text-gray-600">
                 <th className="px-3 py-2 text-left">ФИО</th>
                 <th className="px-3 py-2 text-left">Логин</th>
+                <th className="px-3 py-2 text-center" style={{ width: 100 }}>Связи</th>
                 <th className="px-3 py-2 text-left">Роль</th>
-                <th className="px-3 py-2 text-center" style={{ width: 120 }}>Подтвердить</th>
+                <th className="px-3 py-2 text-center" style={{ width: 140 }}>Действия</th>
               </tr>
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={4} className="px-3 py-6 text-center text-gray-500">Загрузка...</td></tr>
+                <tr><td colSpan={5} className="px-3 py-6 text-center text-gray-500">Загрузка...</td></tr>
               )}
               {!loading && !error && rows.map(row => (
                 <tr key={row.id}>
                   <td className="px-3 py-2 align-middle">{row.full_name}</td>
                   <td className="px-3 py-2 align-middle">{row.username}</td>
+                  <td className="px-3 py-2 align-middle text-center">
+                    <div className="flex items-center justify-center gap-2">
+                      <span title="Игрок BP" className={row.has_bp_player ? 'text-blue-600 font-semibold' : 'text-gray-300'}>
+                        BP
+                      </span>
+                      <span title="Игрок BTR" className={row.has_btr_player ? 'text-green-600 font-semibold' : 'text-gray-300'}>
+                        BTR
+                      </span>
+                      <span title="Telegram" className={row.has_telegram ? 'text-blue-500 font-semibold' : 'text-gray-300'}>
+                        TG
+                      </span>
+                    </div>
+                  </td>
                   <td className="px-3 py-2 align-middle">
                     <select
                       className="border rounded px-2 py-1 text-sm w-full"
@@ -155,20 +253,32 @@ const UserRolesPageInner: React.FC = () => {
                     </select>
                   </td>
                   <td className="px-3 py-2 align-middle text-center">
-                    <button
-                      type="button"
-                      className="px-3 py-1 text-sm bg-green-500 text-white rounded disabled:opacity-50"
-                      disabled={!row.dirty || savingId === row.id}
-                      onClick={() => openConfirm(row)}
-                    >
-                      ✓
-                    </button>
+                    <div className="flex items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        className="px-3 py-1 text-sm bg-green-500 text-white rounded disabled:opacity-50"
+                        disabled={!row.dirty || savingId === row.id}
+                        onClick={() => openConfirm(row)}
+                        title="Подтвердить изменение роли"
+                      >
+                        ✓
+                      </button>
+                      <button
+                        type="button"
+                        className="px-3 py-1 text-sm bg-red-500 text-white rounded disabled:opacity-50"
+                        disabled={deletingId === row.id}
+                        onClick={() => setDeleteRow(row)}
+                        title="Удалить пользователя"
+                      >
+                        ✕
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
               {!loading && !error && !rows.length && (
                 <tr>
-                  <td colSpan={4} className="text-center text-gray-500 py-6">
+                  <td colSpan={5} className="text-center text-gray-500 py-6">
                     Пользователи не найдены
                   </td>
                 </tr>
@@ -176,8 +286,26 @@ const UserRolesPageInner: React.FC = () => {
             </tbody>
           </table>
         </div>
-        <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-between text-sm">
-          <div>Стр. {page} из {totalPages}</div>
+        <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-between text-sm flex-wrap gap-3">
+          <div className="flex items-center gap-2">
+            <span>Стр. {page} из {totalPages}</span>
+            <span className="text-gray-400">|</span>
+            <label className="flex items-center gap-2">
+              <span>Строк:</span>
+              <select
+                value={pageSize}
+                onChange={e => {
+                  setPageSize(Number(e.target.value));
+                  setPage(1);
+                }}
+                className="border rounded px-2 py-1"
+              >
+                <option value="20">20</option>
+                <option value="40">40</option>
+                <option value="60">60</option>
+              </select>
+            </label>
+          </div>
           <div className="flex items-center gap-2">
             <button disabled={page <= 1} className="px-2 py-1 border rounded disabled:opacity-50" onClick={() => setPage(p => Math.max(1, p - 1))}>Назад</button>
             <button disabled={page >= totalPages} className="px-2 py-1 border rounded disabled:opacity-50" onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Вперёд</button>
@@ -196,19 +324,52 @@ const UserRolesPageInner: React.FC = () => {
             <div className="flex justify-end gap-4">
               <button
                 type="button"
-                className="px-4 py-2 text-sm bg-red-600 text-white rounded"
+                className="px-4 py-2 text-sm bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
                 onClick={() => setConfirmRow(null)}
                 disabled={savingId === confirmRow.id}
               >
-                Нет
+                Отмена
               </button>
               <button
                 type="button"
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded"
+                className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                 onClick={applyRole}
                 disabled={savingId === confirmRow.id}
               >
-                Да
+                {savingId === confirmRow.id ? 'Сохранение...' : 'Подтвердить'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteRow && (
+        <div className="fixed inset-0 z-20 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md">
+            <h2 className="text-lg font-semibold mb-4 text-red-600">⚠️ Подтверждение удаления</h2>
+            <p className="mb-4">
+              Вы действительно хотите <span className="font-semibold text-red-600">безвозвратно удалить</span> пользователя{' '}
+              <span className="font-semibold">{deleteRow.full_name || deleteRow.username} ({deleteRow.username})</span>?
+            </p>
+            <p className="mb-6 text-sm text-gray-600">
+              Это действие удалит пользователя и все связанные с ним данные из системы. Отменить это действие будет невозможно.
+            </p>
+            <div className="flex justify-end gap-4">
+              <button
+                type="button"
+                className="px-4 py-2 text-sm bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
+                onClick={() => setDeleteRow(null)}
+                disabled={deletingId === deleteRow.id}
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                className="px-4 py-2 text-sm bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+                onClick={handleDeleteUser}
+                disabled={deletingId === deleteRow.id}
+              >
+                {deletingId === deleteRow.id ? 'Удаление...' : 'Удалить безвозвратно'}
               </button>
             </div>
           </div>

@@ -171,6 +171,9 @@ export interface AdminUserItem {
   last_name: string;
   full_name: string;
   role: 'ADMIN' | 'ORGANIZER' | 'REFEREE' | 'REGISTERED' | null;
+  has_bp_player: boolean;
+  has_btr_player: boolean;
+  has_telegram: boolean;
 }
 
 export const authApi = {
@@ -208,17 +211,33 @@ export const authApi = {
 };
 
 export const adminApi = {
-  listUsers: async (params?: { q?: string; offset?: number; limit?: number }): Promise<{ results: AdminUserItem[]; has_more: boolean; total: number }> => {
+  listUsers: async (params?: { 
+    q?: string; 
+    offset?: number; 
+    limit?: number;
+    role?: string;
+    filter_bp?: boolean;
+    filter_btr?: boolean;
+    filter_telegram?: boolean;
+  }): Promise<{ results: AdminUserItem[]; has_more: boolean; total: number }> => {
     const query: string[] = [];
     if (params?.q) query.push(`q=${encodeURIComponent(params.q)}`);
     if (typeof params?.offset === 'number') query.push(`offset=${params.offset}`);
     if (typeof params?.limit === 'number') query.push(`limit=${params.limit}`);
+    if (params?.role) query.push(`role=${encodeURIComponent(params.role)}`);
+    if (params?.filter_bp) query.push(`filter_bp=true`);
+    if (params?.filter_btr) query.push(`filter_btr=true`);
+    if (params?.filter_telegram) query.push(`filter_telegram=true`);
     const qs = query.length ? `?${query.join('&')}` : '';
     const { data } = await api.get(`/auth/users/${qs}`);
     return data;
   },
   setUserRole: async (userId: number, role: 'ADMIN' | 'ORGANIZER' | 'REFEREE' | 'REGISTERED'): Promise<{ ok: boolean; changed: boolean; old_role?: string; new_role?: string }> => {
     const { data } = await api.post(`/auth/users/${userId}/set_role/`, { role });
+    return data;
+  },
+  deleteUser: async (userId: number): Promise<{ ok: boolean; deleted_username: string }> => {
+    const { data } = await api.delete(`/auth/users/${userId}/delete/`);
     return data;
   },
 };
