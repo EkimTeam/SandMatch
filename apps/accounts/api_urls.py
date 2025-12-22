@@ -1,7 +1,7 @@
 from django.urls import path
 from .api_views import (
     register, me, password_reset, password_reset_confirm, 
-    users_list, set_user_role,
+    users_list, set_user_role, delete_user,
     get_profile, update_profile, change_password,
     profile_player_candidates,
     search_players_for_link, link_player, unlink_player
@@ -23,4 +23,5 @@ urlpatterns = [
     # Admin endpoints
     path("users/", users_list, name="auth_users_list"),
     path("users/<int:user_id>/set_role/", set_user_role, name="auth_set_user_role"),
+    path("users/<int:user_id>/delete/", delete_user, name="auth_delete_user"),
 ]
