@@ -1739,7 +1739,7 @@ export const KingPage: React.FC = () => {
 
             {/* Кнопки в подвале */}
             <div style={{ marginTop: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }} data-export-exclude="true">
-              {canManageTournament && !completed && (
+              {canManageTournament && t.status === 'active' && (
                 <button className="btn" onClick={completeTournament} disabled={saving}>Завершить турнир</button>
               )}
               {(t as any).can_delete && (

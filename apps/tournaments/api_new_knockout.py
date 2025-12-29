@@ -51,6 +51,7 @@ def new_knockout(request):
             tournament = Tournament.objects.create(
                 name=data["name"],
                 date=data["date"],
+                start_time=data.get("start_time") or None,
                 participant_mode=data["participant_mode"],
                 set_format_id=int(data["set_format_id"]),
                 system=Tournament.System.KNOCKOUT,

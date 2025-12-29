@@ -40,6 +40,7 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
   const [formData, setFormData] = useState({
     name: '',
     date: '',
+    start_time: '14:00',
     participant_mode: 'doubles',
     set_format_id: defaultSetFormatId,
     system: 'round_robin',
@@ -260,8 +261,67 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
             </div>
 
             <div className="form-row">
-              <label htmlFor="date">Дата</label>
-              <input type="date" id="date" name="date" value={formData.date} onChange={handleChange} />
+              <label htmlFor="date">Дата и время</label>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <input 
+                  type="date" 
+                  id="date" 
+                  name="date" 
+                  value={formData.date} 
+                  onChange={handleChange}
+                  style={{ 
+                    flex: '1',
+                    padding: '8px 10px',
+                    border: '1px solid #ccc',
+                    borderRadius: '8px',
+                    fontSize: '14px'
+                  }}
+                />
+                <span style={{ color: '#555', whiteSpace: 'nowrap', fontSize: '14px' }}>Время</span>
+                <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                  <select
+                    value={formData.start_time.split(':')[0]}
+                    onChange={(e) => {
+                      const hours = e.target.value;
+                      const minutes = formData.start_time.split(':')[1] || '00';
+                      setFormData(prev => ({ ...prev, start_time: `${hours}:${minutes}` }));
+                    }}
+                    style={{ 
+                      width: '60px',
+                      padding: '8px 4px',
+                      border: '1px solid #ccc',
+                      borderRadius: '8px',
+                      fontSize: '14px'
+                    }}
+                  >
+                    {Array.from({ length: 24 }, (_, i) => i).map(h => (
+                      <option key={h} value={h.toString().padStart(2, '0')}>
+                        {h.toString().padStart(2, '0')}
+                      </option>
+                    ))}
+                  </select>
+                  <span style={{ fontSize: '14px', color: '#555' }}>:</span>
+                  <select
+                    value={formData.start_time.split(':')[1] || '00'}
+                    onChange={(e) => {
+                      const hours = formData.start_time.split(':')[0];
+                      const minutes = e.target.value;
+                      setFormData(prev => ({ ...prev, start_time: `${hours}:${minutes}` }));
+                    }}
+                    style={{ 
+                      width: '60px',
+                      padding: '8px 4px',
+                      border: '1px solid #ccc',
+                      borderRadius: '8px',
+                      fontSize: '14px'
+                    }}
+                  >
+                    {['00', '05', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55'].map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
               {errors.date && <div className="error">{errors.date}</div>}
             </div>
 
