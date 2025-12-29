@@ -2385,7 +2385,16 @@ export const TournamentDetailPage: React.FC = () => {
 
       {/* Нижняя панель действий (в выгрузку не включаем) */}
       <div style={{ marginTop: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }} data-export-exclude="true">
-        {canManageTournament && !completed && (
+        {canManageTournament && t.status === 'created' && (
+          <button
+            className="btn"
+            onClick={handleOpenEditSettings}
+            disabled={saving}
+          >
+            Поменять настройки турнира
+          </button>
+        )}
+        {canManageTournament && t.status === 'active' && (
           <button className="btn" onClick={completeTournament} disabled={saving}>Завершить турнир</button>
         )}
         {canManageTournament && (
@@ -2417,15 +2426,6 @@ export const TournamentDetailPage: React.FC = () => {
             disabled={saving}
           >
             Вернуть статус "Регистрация"
-          </button>
-        )}
-        {canManageTournament && t.status === 'created' && (
-          <button
-            className="btn"
-            onClick={handleOpenEditSettings}
-            disabled={saving}
-          >
-            Поменять настройки турнира
           </button>
         )}
         {/* REFEREE по плану не должен пользоваться кнопкой "Поделиться" */}

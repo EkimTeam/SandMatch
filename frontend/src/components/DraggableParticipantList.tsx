@@ -9,6 +9,7 @@ interface Props {
   onClearTables: () => void;
   maxParticipants: number;
   canAddMore: boolean;
+  tournamentSystem?: 'round_robin' | 'king' | 'knockout';
 }
 
 export const DraggableParticipantList: React.FC<Props> = ({
@@ -18,7 +19,8 @@ export const DraggableParticipantList: React.FC<Props> = ({
   onAutoSeed,
   onClearTables,
   maxParticipants,
-  canAddMore
+  canAddMore,
+  tournamentSystem = 'round_robin'
 }) => {
   const [draggedParticipant, setDraggedParticipant] = useState<DraggableParticipant | null>(null);
   const [touchStartY, setTouchStartY] = useState<number>(0);
@@ -183,7 +185,7 @@ export const DraggableParticipantList: React.FC<Props> = ({
             onClick={onClearTables}
             style={{ background: '#dc3545', borderColor: '#dc3545', color: 'white' }}
           >
-            Очистить таблицы
+            {tournamentSystem === 'knockout' ? 'Очистить сетку' : 'Очистить таблицы'}
           </button>
         </div>
       </div>

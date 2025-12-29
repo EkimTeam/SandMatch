@@ -10,14 +10,14 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@twa-dev/sdk": "^7.0.0",
+    "axios": "^1.6.0",
+    "html2canvas": "^1.4.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.8.0",
-    "axios": "^1.6.0",
-    "swiper": "^11.0.0",
-    "html2canvas": "^1.4.0",
     "recharts": "^2.10.0",
-    "@twa-dev/sdk": "^7.0.0"
+    "swiper": "^11.0.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",
@@ -26,6 +26,7 @@
     "@typescript-eslint/parser": "^6.0.0",
     "@vitejs/plugin-react": "^4.0.0",
     "autoprefixer": "^10.4.0",
+    "baseline-browser-mapping": "^2.9.11",
     "eslint": "^8.45.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.0",

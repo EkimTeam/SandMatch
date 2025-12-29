@@ -231,13 +231,22 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if isinstance(name, str) and name.strip():
             tournament.name = name.strip()
 
-        from datetime import date as _date
+        from datetime import date as _date, time as _time
         date_raw = data.get("date")
         if isinstance(date_raw, str) and date_raw:
             try:
                 tournament.date = _date.fromisoformat(date_raw)
             except Exception:
                 return Response({"ok": False, "error": "Некорректная дата"}, status=400)
+        
+        # Время начала турнира
+        start_time_raw = data.get("start_time")
+        if isinstance(start_time_raw, str) and start_time_raw:
+            try:
+                # Формат HH:MM
+                tournament.start_time = _time.fromisoformat(start_time_raw)
+            except Exception:
+                return Response({"ok": False, "error": "Некорректное время"}, status=400)
 
         # Система проведения: round_robin/knockout/king
         system = data.get("system") or tournament.system
@@ -345,11 +354,85 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 # Обнуляем позиции — участники останутся зарегистрированными, но не расставленными по таблицам
                 entries_qs.update(group_index=None, row_index=None)
             elif system == Tournament.System.KNOCKOUT:
-                # Линеаризуем участников: все в группе 1, позиции 1..N
-                row = 1
-                for e in entries_qs:
-                    TournamentEntry.objects.filter(pk=e.pk).update(group_index=1, row_index=row)
-                    row += 1
+                # Для олимпийской системы: если изменился planned_participants, пересоздаем сетку
+                if old_system == Tournament.System.KNOCKOUT and planned_participants is not None:
+                    # Получаем существующую сетку
+                    bracket = tournament.knockout_brackets.order_by("id").first()
+                    if bracket:
+                        old_size = bracket.size
+                        
+                        # Вычисляем новый размер сетки как ближайшую степень двойки
+                        import math
+                        def next_power_of_two(n: int) -> int:
+                            if n <= 1:
+                                return 1
+                            return 1 << (n - 1).bit_length()
+                        
+                        new_size = next_power_of_two(tournament.planned_participants or 16)
+                        
+                        if old_size != new_size:
+                            # При изменении размера сетки - очищаем все позиции участников
+                            # Все участники вернутся в левый список
+                            from apps.tournaments.models import DrawPosition
+                            from apps.matches.models import Match
+                            
+                            # Обнуляем позиции всех участников турнира
+                            TournamentEntry.objects.filter(tournament=tournament).update(
+                                group_index=None,
+                                row_index=None
+                            )
+                            
+                            # Очищаем все матчи турнира от участников
+                            Match.objects.filter(tournament=tournament).update(
+                                team_1=None,
+                                team_2=None
+                            )
+                            
+                            # Удаляем старую сетку и все связанные данные
+                            bracket.delete()
+                            
+                            # Создаем новую сетку с новым размером
+                            bracket = KnockoutBracket.objects.create(
+                                tournament=tournament,
+                                index=1,
+                                size=new_size,
+                                has_third_place=True,
+                            )
+                            
+                            # Определяем позиции BYE на основе planned_participants
+                            from apps.tournaments.services.knockout import calculate_bye_positions, generate_initial_matches
+                            num_real_participants = tournament.planned_participants or new_size
+                            bye_positions_set = set(calculate_bye_positions(new_size, num_real_participants))
+                            
+                            # Создаем позиции жеребьевки с правильными BYE
+                            for pos in range(1, new_size + 1):
+                                if pos in bye_positions_set:
+                                    # Позиция BYE
+                                    DrawPosition.objects.create(
+                                        bracket=bracket,
+                                        position=pos,
+                                        source=DrawPosition.Source.BYE,
+                                        entry=None,
+                                        seed=None,
+                                    )
+                                else:
+                                    # Обычная позиция
+                                    DrawPosition.objects.create(
+                                        bracket=bracket,
+                                        position=pos,
+                                        source=DrawPosition.Source.MAIN,
+                                        entry=None,
+                                        seed=None,
+                                    )
+                            
+                            # Генерируем пустые матчи
+                            generate_initial_matches(bracket)
+                else:
+                    # Линеаризуем участников: все в группе 1, позиции 1..N
+                    row = 1
+                    for e in entries_qs:
+                        TournamentEntry.objects.filter(pk=e.pk).update(group_index=1, row_index=row)
+                        row += 1
 
         serializer = self.get_serializer(tournament)
         return Response(serializer.data)
@@ -579,8 +662,38 @@ class TournamentViewSet(viewsets.ModelViewSet):
         except KnockoutBracket.DoesNotExist:
             return Response({"ok": False, "error": "Сетка не найдена"}, status=404)
 
-        entries = list(tournament.entries.select_related("team"))
-        seed_participants(bracket, entries)
+        # Получить всех участников турнира
+        all_entries = list(tournament.entries.select_related("team__player_1", "team__player_2"))
+        
+        # Отсортировать по рейтингу (убывание) и взять только первых planned_participants
+        planned_count = tournament.planned_participants or len(all_entries)
+        
+        # Сортировка по рейтингу
+        def get_rating(entry):
+            team = entry.team
+            if team.player_1 and team.player_2:
+                # Для пар - средний рейтинг
+                r1 = int(team.player_1.current_rating or 0)
+                r2 = int(team.player_2.current_rating or 0)
+                return (r1 + r2) / 2 if (r1 > 0 or r2 > 0) else 0
+            elif team.player_1:
+                # Для одиночек - рейтинг игрока
+                return int(team.player_1.current_rating or 0)
+            return 0
+        
+        all_entries.sort(key=get_rating, reverse=True)
+        
+        # Взять только первых N участников
+        entries_to_seed = all_entries[:planned_count]
+        
+        # Остальных участников обнулить позиции (они останутся в левом списке)
+        entries_to_clear = all_entries[planned_count:]
+        for entry in entries_to_clear:
+            entry.group_index = None
+            entry.row_index = None
+            entry.save(update_fields=['group_index', 'row_index'])
+        
+        seed_participants(bracket, entries_to_seed)
         return Response({"ok": True})
 
     @action(detail=True, methods=["get"], url_path="brackets/(?P<bracket_id>[^/.]+)/draw", permission_classes=[AllowAny])
@@ -979,11 +1092,11 @@ class TournamentViewSet(viewsets.ModelViewSet):
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="unlock_participants", permission_classes=[IsAuthenticated])
     def unlock_participants(self, request, pk=None):
-        """Снять фиксацию участников в круговой системе или King - изменить статус турнира на created."""
+        """Снять фиксацию участников - изменить статус турнира на created."""
         tournament: Tournament = self.get_object()
         
-        if tournament.system not in [Tournament.System.ROUND_ROBIN, Tournament.System.KING]:
-            return Response({"ok": False, "error": "Турнир не круговой системы и не King"}, status=400)
+        if tournament.system not in [Tournament.System.ROUND_ROBIN, Tournament.System.KING, Tournament.System.KNOCKOUT]:
+            return Response({"ok": False, "error": "Неподдерживаемая система турнира"}, status=400)
         
         # Изменить статус турнира на created при снятии фиксации
         if tournament.status == Tournament.Status.ACTIVE:
@@ -2308,9 +2421,9 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     )
                     team = Team.objects.create(player_1=player)
                 
-                # Для круговой системы и King в статусе created участники добавляются БЕЗ позиции
+                # Для круговой системы, King и Knockout в статусе created участники добавляются БЕЗ позиции
                 # (они попадут в левый список для drag-and-drop)
-                if tournament.system in [Tournament.System.ROUND_ROBIN, Tournament.System.KING] and tournament.status == Tournament.Status.CREATED:
+                if tournament.system in [Tournament.System.ROUND_ROBIN, Tournament.System.KING, Tournament.System.KNOCKOUT] and tournament.status == Tournament.Status.CREATED:
                     entry = TournamentEntry.objects.create(
                         tournament=tournament,
                         team=team,
@@ -2323,13 +2436,10 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     existing_entries = tournament.entries.all()
                     used_positions = set(existing_entries.values_list('row_index', flat=True))
                     
-                    # Найти первую свободную позицию от 1 до planned_participants
-                    max_participants = tournament.planned_participants or 32
+                    # Найти первую свободную позицию
                     row_index = 1
-                    for i in range(1, max_participants + 1):
-                        if i not in used_positions:
-                            row_index = i
-                            break
+                    while row_index in used_positions:
+                        row_index += 1
                     
                     # Создать запись участника
                     entry = TournamentEntry.objects.create(
