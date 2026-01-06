@@ -162,4 +162,4 @@ const canLock = allSlotsFilled && !dragDropState.isSelectionLocked;
 ---
 
 **Версия:** 1.0  
-**Дата:** 29 декабря 2024
+**Дата:** 5 января 2026

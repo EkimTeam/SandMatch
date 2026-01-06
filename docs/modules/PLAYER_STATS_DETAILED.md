@@ -496,41 +496,19 @@ const RatingChart: React.FC<{ history: RatingHistory[] }> = ({ history }) => {
 
 ## Экспорт статистики
 
-### PDF экспорт
+**Примечание:** Функция экспорта статистики в PDF в текущей версии не реализована.
 
-```python
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
+**Планируется в будущих версиях:**
+- Экспорт статистики игрока в PDF
+- Экспорт истории рейтинга в Excel/CSV
+- Генерация отчетов по турнирам
 
-def export_player_stats_pdf(player: Player) -> bytes:
-    """Экспортировать статистику игрока в PDF"""
-    buffer = BytesIO()
-    p = canvas.Canvas(buffer, pagesize=A4)
-    
-    # Заголовок
-    p.setFont("Helvetica-Bold", 16)
-    p.drawString(100, 800, f"Статистика игрока: {player}")
-    
-    # Статистика
-    stats = calculate_player_stats(player)
-    
-    y = 750
-    p.setFont("Helvetica", 12)
-    p.drawString(100, y, f"Турниров сыграно: {stats['tournaments']['total']}")
-    y -= 20
-    p.drawString(100, y, f"Турниров выиграно: {stats['tournaments']['won']}")
-    y -= 20
-    p.drawString(100, y, f"Матчей сыграно: {stats['matches']['total']}")
-    y -= 20
-    p.drawString(100, y, f"Процент побед: {stats['matches']['win_rate']:.1%}")
-    
-    p.showPage()
-    p.save()
-    
-    return buffer.getvalue()
-```
+**Текущие способы просмотра статистики:**
+- Веб-интерфейс: страница профиля игрока
+- API endpoint: `GET /api/players/{id}/stats/`
+- Telegram Mini App: профиль игрока
 
 ---
 
 **Версия:** 1.0  
-**Дата:** 29 декабря 2024
+**Дата:** 5 января 2026

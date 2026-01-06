@@ -214,73 +214,19 @@ def search_players(query: str) -> QuerySet:
 
 ## Импорт/Экспорт
 
-### Импорт из Excel
+**Примечание:** Функции импорта/экспорта игроков из Excel в текущей версии не реализованы. 
 
-```python
-def import_players_from_excel(file_path: str):
-    """
-    Импорт игроков из Excel файла.
-    
-    Ожидаемые колонки:
-    - Фамилия
-    - Имя
-    - Пол
-    - Город
-    - Телефон
-    - Рейтинг BP
-    """
-    wb = openpyxl.load_workbook(file_path)
-    ws = wb.active
-    
-    created_count = 0
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        player, created = Player.objects.get_or_create(
-            last_name=row[0],
-            first_name=row[1],
-            defaults={
-                'gender': 'male' if row[2] == 'М' else 'female',
-                'city': row[3] or '',
-                'phone': row[4] or '',
-                'current_rating': int(row[5] * 1000) if row[5] else 1000,
-            }
-        )
-        if created:
-            created_count += 1
-    
-    return created_count
-```
+**Планируется в будущих версиях:**
+- Импорт игроков из Excel/CSV файлов
+- Экспорт списка игроков в Excel/CSV
+- Массовое обновление данных игроков
 
-### Экспорт в Excel
-
-```python
-def export_players_to_excel() -> bytes:
-    """Экспорт всех игроков в Excel"""
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Игроки"
-    
-    # Заголовки
-    ws.append(['Фамилия', 'Имя', 'Пол', 'Город', 'Телефон', 'BP Рейтинг', 'BTR Рейтинг'])
-    
-    # Данные
-    for player in Player.objects.all().order_by('last_name', 'first_name'):
-        ws.append([
-            player.last_name,
-            player.first_name,
-            'М' if player.gender == 'male' else 'Ж',
-            player.city,
-            player.phone,
-            player.current_rating / 1000.0,
-            player.btr_rating or '',
-        ])
-    
-    # Сохранить в BytesIO
-    output = BytesIO()
-    wb.save(output)
-    return output.getvalue()
-```
+**Текущий способ добавления игроков:**
+- Через Django Admin (`/sm-admin/players/player/`)
+- Через API endpoint `POST /api/players/`
+- Через UI форму "Добавить игрока" (для ADMIN/ORGANIZER)
 
 ---
 
 **Версия:** 1.0  
-**Дата:** 29 декабря 2024
+**Дата:** 5 января 2026

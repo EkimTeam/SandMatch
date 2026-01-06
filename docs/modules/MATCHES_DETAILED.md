@@ -57,6 +57,47 @@ class Stage(models.TextChoices):
     PLACEMENT = "placement", "Классификация"
 ```
 
+### Поле order_in_round
+
+Порядковый номер матча внутри раунда. Используется для сортировки и отображения матчей.
+
+**Для олимпийской системы (Knockout):**
+```python
+# Первый раунд (1/8 финала для сетки 16)
+Match(round_index=0, order_in_round=1)  # Матч 1
+Match(round_index=0, order_in_round=2)  # Матч 2
+...
+Match(round_index=0, order_in_round=8)  # Матч 8
+
+# Четвертьфинал
+Match(round_index=1, order_in_round=1)  # Матч 1
+Match(round_index=1, order_in_round=2)  # Матч 2
+...
+```
+
+**Для круговой системы (Round Robin):**
+```python
+# Матчи внутри группы упорядочены по раундам
+# Для группы из 4 участников (6 матчей)
+Match(group_index=0, round_index=0, order_in_round=1)  # A vs B
+Match(group_index=0, round_index=0, order_in_round=2)  # C vs D
+Match(group_index=0, round_index=1, order_in_round=1)  # A vs C
+Match(group_index=0, round_index=1, order_in_round=2)  # B vs D
+Match(group_index=0, round_index=2, order_in_round=1)  # A vs D
+Match(group_index=0, round_index=2, order_in_round=2)  # B vs C
+```
+
+**Для системы King:**
+```python
+# Матчи упорядочены по раундам
+# Для 6 участников (2 матча в раунде)
+Match(round_index=0, order_in_round=1)  # Пара 1 vs Пара 2
+Match(round_index=0, order_in_round=2)  # Пара 3 vs Пара 4 (Пара 5 и 6 отдыхают)
+Match(round_index=1, order_in_round=1)  # Новые пары
+Match(round_index=1, order_in_round=2)
+...
+```
+
 ---
 
 ## Модель MatchSet
@@ -70,6 +111,24 @@ class MatchSet(models.Model):
     tb_1 = models.PositiveSmallIntegerField(null=True)  # Тайбрейк
     tb_2 = models.PositiveSmallIntegerField(null=True)
     is_tiebreak_only = models.BooleanField(default=False)  # Сет-тайбрейк
+```
+
+### Порядок записи счета
+
+**ВАЖНО:** Счет в MatchSet записывается в том же порядке, что и команды в Match:
+- `games_1` и `tb_1` соответствуют `match.team_1`
+- `games_2` и `tb_2` соответствуют `match.team_2`
+
+**Порядок не зависит** от того, как пользователь кликнул по ячейке в UI (для круговой системы).
+
+**Пример:**
+```python
+match = Match(team_1=Team_A, team_2=Team_B)
+# Счет 6:4 в пользу Team_A
+MatchSet(match=match, games_1=6, games_2=4)
+
+# Даже если пользователь кликнул на ячейку [Team_B, Team_A],
+# счет все равно записывается как games_1=6, games_2=4
 ```
 
 ### Примеры сетов
@@ -464,4 +523,4 @@ const MatchScore: React.FC<{ match: Match }> = ({ match }) => {
 ---
 
 **Версия:** 1.0  
-**Дата:** 29 декабря 2024
+**Дата:** 5 января 2026

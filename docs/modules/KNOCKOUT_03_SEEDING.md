@@ -484,14 +484,20 @@ D → позиция 5
 
 ```python
 def _get_entry_rating(entry: TournamentEntry) -> int:
-    """Получить суммарный рейтинг команды."""
+    """
+    Получить рейтинг команды для сортировки.
+    Для пар - среднее арифметическое с округлением до целых.
+    Для одиночек - рейтинг игрока.
+    """
     team = entry.team
     rating = 0
     if team:
-        if team.player_1:
-            rating += team.player_1.current_rating or 0
-        if team.player_2:
-            rating += team.player_2.current_rating or 0
+        if team.player_1 and team.player_2:
+            r1 = team.player_1.current_rating or 0
+            r2 = team.player_2.current_rating or 0
+            rating = round((r1 + r2) / 2)
+        elif team.player_1:
+            rating = team.player_1.current_rating or 0
     return rating
 ```
 
@@ -506,7 +512,7 @@ team = Team(
     player_1=Player(current_rating=1200),
     player_2=Player(current_rating=1000)
 )
-_get_entry_rating(entry) → 2200
+_get_entry_rating(entry) → 1100  # round((1200 + 1000) / 2)
 
 # Нулевой рейтинг
 team = Team(player_1=Player(current_rating=0))
@@ -564,4 +570,4 @@ remaining_entries.update(group_index=None, row_index=None)
 ---
 
 **Версия:** 1.0  
-**Дата:** 29 декабря 2024
+**Дата:** 5 января 2026
