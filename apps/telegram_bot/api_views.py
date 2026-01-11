@@ -25,22 +25,22 @@ from .authentication import TelegramWebAppAuthentication
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def generate_link_code(request):
-    """
-    Генерация кода для связывания Telegram аккаунта
-    
+    """Генерация кода для связывания Telegram аккаунта.
+
+    Важно: считаем аккаунт уже связанным только если у TelegramUser есть telegram_id.
+    Наличие "пустого" TelegramUser (без telegram_id) не блокирует генерацию кода.
+
     POST /api/telegram/generate-code/
     """
     user = request.user
-    
-    # Проверяем, не связан ли уже аккаунт
-    try:
-        telegram_user = TelegramUser.objects.get(user=user)
+
+    # Проверяем, не связан ли уже аккаунт (по наличию telegram_id)
+    telegram_user = TelegramUser.objects.filter(user=user).first()
+    if telegram_user and telegram_user.telegram_id:
         return Response({
             'error': 'Аккаунт уже связан с Telegram',
-            'telegram_user': TelegramUserSerializer(telegram_user).data
+            'telegram_user': TelegramUserSerializer(telegram_user).data,
         }, status=status.HTTP_400_BAD_REQUEST)
-    except TelegramUser.DoesNotExist:
-        pass
     
     # Деактивируем старые неиспользованные коды этого пользователя
     LinkCode.objects.filter(user=user, is_used=False).update(is_used=True)
@@ -61,36 +61,38 @@ def generate_link_code(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def telegram_status(request):
-    """
-    Проверка статуса связывания с Telegram
-    
+    """Проверка статуса связывания с Telegram.
+
+    Считаем, что аккаунт *связан*, только если есть TelegramUser с непустым telegram_id.
+
     GET /api/telegram/status/
     """
+
     user = request.user
-    
-    try:
-        telegram_user = TelegramUser.objects.get(user=user)
+
+    telegram_user = TelegramUser.objects.filter(user=user).first()
+    if telegram_user and telegram_user.telegram_id:
         return Response({
             'is_linked': True,
-            'telegram_user': TelegramUserSerializer(telegram_user).data
+            'telegram_user': TelegramUserSerializer(telegram_user).data,
         })
-    except TelegramUser.DoesNotExist:
-        # Проверяем, есть ли активный код
-        active_code = LinkCode.objects.filter(
-            user=user,
-            is_used=False
-        ).order_by('-created_at').first()
-        
-        if active_code and active_code.is_valid():
-            return Response({
-                'is_linked': False,
-                'pending_code': LinkCodeSerializer(active_code).data
-            })
-        
+
+    # Нет telegram_id → считаем, что аккаунт не связан; смотрим активный код
+    active_code = LinkCode.objects.filter(
+        user=user,
+        is_used=False,
+    ).order_by('-created_at').first()
+
+    if active_code and active_code.is_valid():
         return Response({
             'is_linked': False,
-            'pending_code': None
+            'pending_code': LinkCodeSerializer(active_code).data,
         })
+
+    return Response({
+        'is_linked': False,
+        'pending_code': None,
+    })
 
 
 @api_view(['POST'])
@@ -102,20 +104,40 @@ def unlink_telegram(request):
     POST /api/telegram/unlink/
     """
     user = request.user
-    
+
     try:
         telegram_user = TelegramUser.objects.get(user=user)
-        telegram_user.user = None
-        telegram_user.player = None
-        telegram_user.save()
-        
-        return Response({
-            'message': 'Telegram аккаунт успешно отвязан'
-        })
     except TelegramUser.DoesNotExist:
-        return Response({
-            'error': 'Telegram аккаунт не был связан'
-        }, status=status.HTTP_400_BAD_REQUEST)
+        return Response({'error': 'Telegram аккаунт не был связан'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not telegram_user.telegram_id:
+        return Response({'error': 'Telegram аккаунт не был связан'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Убираем только Telegram‑ID и username, не разрывая связку User ↔ Player
+    telegram_user.telegram_id = None
+    telegram_user.username = None
+    telegram_user.is_blocked = False
+    telegram_user.save(update_fields=['telegram_id', 'username', 'is_blocked'])
+
+    # Очищаем технические поля в UserProfile, если они используются
+    try:
+        from apps.accounts.models import UserProfile
+        profile = UserProfile.objects.get(user=user)
+    except UserProfile.DoesNotExist:
+        profile = None
+
+    if profile is not None:
+        changed = False
+        if getattr(profile, 'telegram_id', None) is not None:
+            profile.telegram_id = None
+            changed = True
+        if getattr(profile, 'telegram_username', None):
+            profile.telegram_username = ''
+            changed = True
+        if changed:
+            profile.save(update_fields=['telegram_id', 'telegram_username'])
+
+    return Response({'message': 'Telegram аккаунт успешно отвязан'})
 
 
 # ============================================================================

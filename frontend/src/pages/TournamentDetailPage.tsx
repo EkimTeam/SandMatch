@@ -136,6 +136,7 @@ export const TournamentDetailPage: React.FC = () => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [setFormats, setSetFormats] = useState<SetFormatDict[]>([]);
   const [showInitialRatingModal, setShowInitialRatingModal] = useState(false);
+  const [showCompleteRatingChoice, setShowCompleteRatingChoice] = useState(false);
 
   const handleOpenEditSettings = () => {
     if (!t) return;
@@ -2405,6 +2406,65 @@ export const TournamentDetailPage: React.FC = () => {
         />
       )}
 
+      {/* Диалог выбора способа завершения турнира при наличии игроков без рейтинга */}
+      {showCompleteRatingChoice && (
+        <div
+          onClick={() => !saving && setShowCompleteRatingChoice(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#fff',
+              borderRadius: 8,
+              boxShadow: '0 10px 30px rgba(15,23,42,0.25)',
+              maxWidth: 520,
+              width: '90%',
+              padding: '16px 20px 14px 20px',
+            }}
+          >
+            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
+              В турнире есть игроки без рейтинга
+            </div>
+            <div style={{ fontSize: 14, color: '#4b5563', marginBottom: 16 }}>
+              Вы хотите закрыть турнир, чтобы рейтинг этим игрокам присвоился автоматически, или присвоить рейтинг вручную?
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                type="button"
+                className="btn"
+                disabled={saving}
+                onClick={() => {
+                  setShowCompleteRatingChoice(false);
+                  completeTournament();
+                }}
+              >
+                Автоматически
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={saving}
+                onClick={() => {
+                  setShowCompleteRatingChoice(false);
+                  setShowInitialRatingModal(true);
+                }}
+              >
+                Вручную
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Нижняя панель действий (в выгрузку не включаем) */}
       <div style={{ marginTop: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }} data-export-exclude="true">
         {canManageTournament && t.status === 'created' && (
@@ -2417,7 +2477,7 @@ export const TournamentDetailPage: React.FC = () => {
           </button>
         )}
         {canManageTournament && t.status === 'active' && (
-          <button className="btn" onClick={completeTournament} disabled={saving}>Завершить турнир</button>
+          <button className="btn" onClick={handleCompleteTournamentClick} disabled={saving}>Завершить турнир</button>
         )}
         {canManageTournament && (
           <button

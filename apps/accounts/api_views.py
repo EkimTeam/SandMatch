@@ -12,7 +12,6 @@ from rest_framework import status
 from .models import UserProfile
 from .permissions import IsAdmin, _get_user_role, Role
 
-
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def register(request):
@@ -176,11 +175,12 @@ def users_list(request):
         has_bp_player = False
         has_btr_player = False
         has_telegram = False
-        
+
         # Проверяем связь с Telegram через TelegramUser
-        telegram_user = getattr(u, 'telegram_profile', None)
-        has_telegram = telegram_user is not None
-        
+        telegram_user = getattr(u, "telegram_profile", None)
+        # has_telegram понимаем как наличие реальной Telegram‑привязки (telegram_id)
+        has_telegram = bool(getattr(telegram_user, "telegram_id", None))
+
         # Проверяем связь с BP игроком
         # Приоритет: TelegramUser.player, затем UserProfile.player
         if telegram_user and telegram_user.player:
@@ -237,6 +237,48 @@ def set_user_role(request, user_id: int):
     profile.save(update_fields=["role"])
 
     return Response({"ok": True, "changed": True, "old_role": old_role, "new_role": new_role})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, IsAdmin])
+def unlink_user_telegram(request, user_id: int):
+    """Принудительно отвязать Telegram‑аккаунт от пользователя (ADMIN‑ручка).
+
+    ВАЖНО: не трогаем связь User ↔ Player через TelegramUser.player,
+    а только убираем саму Telegram‑привязку (telegram_id / username и профильные поля).
+    """
+
+    from apps.telegram_bot.models import TelegramUser
+
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        return Response({"detail": "Пользователь не найден"}, status=status.HTTP_404_NOT_FOUND)
+
+    telegram_user = TelegramUser.objects.filter(user=user).first()
+    if not telegram_user or not telegram_user.telegram_id:
+        return Response({"detail": "Telegram‑связка для пользователя не найдена"}, status=status.HTTP_404_NOT_FOUND)
+
+    # Удаляем только Telegram‑ID и username, оставляя связь с Player и User
+    telegram_user.telegram_id = None
+    telegram_user.username = None
+    telegram_user.is_blocked = False
+    telegram_user.save(update_fields=["telegram_id", "username", "is_blocked"])
+
+    # Очищаем технические поля в UserProfile, если они используются
+    profile = getattr(user, "profile", None)
+    if profile is not None:
+        changed = False
+        if getattr(profile, "telegram_id", None) is not None:
+            profile.telegram_id = None
+            changed = True
+        if getattr(profile, "telegram_username", None):
+            profile.telegram_username = ""
+            changed = True
+        if changed:
+            profile.save(update_fields=["telegram_id", "telegram_username"])
+
+    return Response({"ok": True})
 
 
 @api_view(["DELETE"])
