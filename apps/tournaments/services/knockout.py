@@ -279,14 +279,8 @@ def auto_seed_participants(bracket: KnockoutBracket, entries: List[TournamentEnt
     rating_groups = defaultdict(list)
     
     for entry in entries:
-        # Получаем рейтинг команды (сумма рейтингов игроков)
-        team = entry.team
-        rating = 0
-        if team:
-            if team.player_1:
-                rating += team.player_1.current_rating or 0
-            if team.player_2:
-                rating += team.player_2.current_rating or 0
+        # Получаем рейтинг команды
+        rating = _get_team_rating(entry)
         rating_groups[rating].append(entry)
     
     # Сортируем группы по рейтингу (убывание) и перемешиваем внутри каждой группы
@@ -300,7 +294,7 @@ def auto_seed_participants(bracket: KnockoutBracket, entries: List[TournamentEnt
     # Если среди сеянных больше одного с рейтингом 0, применяем специальное правило
     if seeds_count > 0 and len(sorted_entries) >= seeds_count:
         seeded = sorted_entries[:seeds_count]
-        zero_rating_count = sum(1 for e in seeded if _get_entry_rating(e) == 0)
+        zero_rating_count = sum(1 for e in seeded if _get_team_rating(e) == 0)
         
         if zero_rating_count > 1:
             # Ищем специального участника в списке
@@ -391,15 +385,20 @@ def auto_seed_participants(bracket: KnockoutBracket, entries: List[TournamentEnt
     _assign_draw_to_matches(bracket)
 
 
-def _get_entry_rating(entry: TournamentEntry) -> int:
-    """Получить суммарный рейтинг команды."""
+def _get_team_rating(entry: TournamentEntry) -> int:
+    """Получить рейтинг команды для сортировки.
+    Для пар - среднее арифметическое с округлением.
+    Для одиночек - рейтинг игрока.
+    """
     team = entry.team
     rating = 0
     if team:
-        if team.player_1:
-            rating += team.player_1.current_rating or 0
-        if team.player_2:
-            rating += team.player_2.current_rating or 0
+        if team.player_1 and team.player_2:
+            r1 = team.player_1.current_rating or 0
+            r2 = team.player_2.current_rating or 0
+            rating = round((r1 + r2) / 2)
+        elif team.player_1:
+            rating = team.player_1.current_rating or 0
     return rating
 
 

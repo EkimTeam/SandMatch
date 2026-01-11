@@ -73,6 +73,7 @@ export interface Tournament {
   date?: string;
   get_system_display?: string;
   get_participant_mode_display?: string;
+  has_zero_rating_players?: boolean;
 }
 
 export interface Ruleset {
@@ -453,6 +454,39 @@ export const tournamentApi = {
     const { data } = await api.get(`/tournaments/${tournamentId}/default_bracket/`);
     if (!data?.ok || !data.bracket) return null;
     return data.bracket;
+  },
+
+  // --- Стартовые рейтинги участников турнира ---
+
+  initialRatingsPreview: async (tournamentId: number): Promise<{
+    ok: boolean;
+    tournament: { id: number; name: string; status: string; system?: string };
+    players: Array<{
+      player_id: number;
+      full_name: string;
+      current_rating: number;
+      has_btr: boolean;
+      default_rating: number;
+      btr_candidates: Array<{
+        id: number;
+        full_name: string;
+        rni: number;
+        city: string;
+        birth_date: string | null;
+        suggested_rating_from_btr: number;
+      }>;
+    }>;
+  }> => {
+    const { data } = await api.get(`/tournaments/${tournamentId}/initial_ratings_preview/`);
+    return data;
+  },
+
+  applyInitialRatings: async (
+    tournamentId: number,
+    items: Array<{ player_id: number; rating: number; link_btr_player_id?: number | null }>,
+  ): Promise<{ ok: boolean; updated: number }> => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/apply_initial_ratings/`, { items });
+    return data;
   },
 };
 
@@ -997,7 +1031,6 @@ export const telegramApi = {
     const { data } = await api.post('/telegram/generate-code/');
     return data;
   },
-
   // Проверка статуса связывания
   getStatus: async (): Promise<TelegramStatus> => {
     const { data } = await api.get('/telegram/status/');
@@ -1007,6 +1040,89 @@ export const telegramApi = {
   // Отвязка Telegram
   unlink: async (): Promise<{ message: string }> => {
     const { data } = await api.post('/telegram/unlink/');
+    return data;
+  },
+};
+
+// ===========================
+// Регистрация турниров (веб)
+// ===========================
+
+export type WebRegistrationStatus = 'looking_for_partner' | 'invited' | 'main_list' | 'reserve_list';
+
+export interface WebTournamentRegistration {
+  id: number;
+  player_id: number;
+  player_name: string;
+  partner_id?: number | null;
+  partner_name?: string | null;
+  status: WebRegistrationStatus;
+  status_display: string;
+  registered_at: string;
+}
+
+export interface WebTournamentParticipants {
+  main_list: WebTournamentRegistration[];
+  reserve_list: WebTournamentRegistration[];
+  looking_for_partner: WebTournamentRegistration[];
+}
+
+export interface WebRegistrationStateResponse {
+  tournament: {
+    id: number;
+    name: string;
+    status: string;
+    system?: string;
+    participant_mode?: 'singles' | 'doubles';
+    planned_participants?: number | null;
+    date?: string | null;
+    participants_count?: number | null;
+    registered_count?: number | null;
+    get_system_display?: string | null;
+    get_participant_mode_display?: string | null;
+    organizer_name?: string | null;
+  };
+  participants: WebTournamentParticipants;
+  my_registration: WebTournamentRegistration | null;
+}
+
+export const tournamentRegistrationApi = {
+  getState: async (tournamentId: number): Promise<WebRegistrationStateResponse> => {
+    const { data } = await api.get(`/tournaments/${tournamentId}/registration_state/`);
+    return data;
+  },
+  registerSingle: async (tournamentId: number): Promise<WebTournamentRegistration> => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/register_single/`);
+    return data;
+  },
+  registerLookingForPartner: async (tournamentId: number): Promise<WebTournamentRegistration> => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/register_looking_for_partner/`);
+    return data;
+  },
+  registerWithPartner: async (tournamentId: number, partnerId: number): Promise<WebTournamentRegistration> => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/register_with_partner/`, { partner_id: partnerId });
+    return data;
+  },
+  sendInvitation: async (tournamentId: number, receiverId: number, message?: string): Promise<any> => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/send_invitation/`, {
+      receiver_id: receiverId,
+      message: message || '',
+    });
+    return data;
+  },
+  leavePair: async (tournamentId: number): Promise<{ detail: string }> => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/leave_pair/`);
+    return data;
+  },
+  cancelRegistration: async (tournamentId: number): Promise<{ detail: string }> => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/cancel_registration/`);
+    return data;
+  },
+  searchPlayers: async (
+    tournamentId: number,
+    query: string,
+  ): Promise<{ players: Array<{ id: number; full_name: string; is_registered: boolean }> }> => {
+    const { data } = await api.get(`/tournaments/${tournamentId}/search_players/`, { params: { q: query } });
     return data;
   },
 };

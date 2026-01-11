@@ -15,6 +15,7 @@ import { DraggableParticipant, DragDropState } from '../types/dragdrop';
 import '../styles/knockout-dragdrop.css';
 import html2canvas from 'html2canvas';
 import { EditTournamentModal } from '../components/EditTournamentModal';
+import { InitialRatingModal } from '../components/InitialRatingModal';
 
 // Константы цветов для подсветки ячеек
 const MATCH_COLORS = {
@@ -75,6 +76,7 @@ type TournamentDetail = {
   organizer_name?: string;
   can_delete?: boolean;
   participants_count?: number;
+  has_zero_rating_players?: boolean;
 };
 
 type SetFormatDict = { id: number; name: string };
@@ -133,6 +135,7 @@ export const TournamentDetailPage: React.FC = () => {
   const canDeleteTournament = !!t?.can_delete;
   const [showEditModal, setShowEditModal] = useState(false);
   const [setFormats, setSetFormats] = useState<SetFormatDict[]>([]);
+  const [showInitialRatingModal, setShowInitialRatingModal] = useState(false);
 
   const handleOpenEditSettings = () => {
     if (!t) return;
@@ -412,7 +415,13 @@ export const TournamentDetailPage: React.FC = () => {
       setLoading(true);
       setError(null);
       const { data } = await api.get(`/tournaments/${id}/`);
-      
+
+      // Для зарегистрированных пользователей при статусе created отправляем на страницу регистрации
+      if (data.status === 'created' && user?.role === 'REGISTERED') {
+        nav(`/tournaments/${id}/registration`);
+        return false;
+      }
+
       // Редирект на правильную страницу в зависимости от системы турнира
       if (data.system === 'king') {
         nav(`/tournaments/${id}/king`);
@@ -495,7 +504,7 @@ export const TournamentDetailPage: React.FC = () => {
         // Вычисляем рейтинг
         let rating: number | undefined = undefined;
         if (participant?.team) {
-          const team = participant.team as any;
+          const team: any = participant.team as any;
           if (tournamentData.participant_mode === 'doubles' && team.player_1 && team.player_2) {
             // Для пар - средний рейтинг игроков
             const r1 = team.player_1?.current_rating || 0;
@@ -770,7 +779,7 @@ export const TournamentDetailPage: React.FC = () => {
     const isWinnerCell = !!winnerId && !!win_row && !!lose_row && (rIdx === win_row && cIdx === lose_row);
     const isLoserCell = !!winnerId && !!win_row && !!lose_row && (rIdx === lose_row && cIdx === win_row);
     if (!isWinnerCell && !isLoserCell) return [];
-    const aIsWinner = isWinnerCell;
+    const aIsWinner = isWinnerCell; // если false — в этой ячейке должен быть зеркальный счёт
     const pairs = sets.map((s: any) => {
       if (s.is_tiebreak_only) {
         const t1 = s.tb_1 ?? 0; const t2 = s.tb_2 ?? 0;
@@ -895,7 +904,7 @@ export const TournamentDetailPage: React.FC = () => {
   };
 
   const rankGroup = (
-    g: { idx: number; entries: (Participant | null)[]; cols: number[] },
+    g: { idx: number; entries: (Participant | null)[]; rows: number[]; cols: number[] },
     rows: { rIdx: number; rI: number; wins: number; setsRatio: number; gamesRatio: number }[],
     stage: 0 | 1 | 2
   ): { rIdx: number; rI: number }[] => {
@@ -1105,7 +1114,7 @@ export const TournamentDetailPage: React.FC = () => {
     const loadRulesets = async () => {
       if (!t) return;
       try {
-        // Инициализируем режим отображения имён/ФИО один раз, на основе организатора
+        // Инициализируем режим отображения имён один раз, на основе организатора
         if (!showNamesInitializedRef.current) {
           const organizerUsername = (t as any).organizer_username;
           const useDisplayName = organizerUsername === 'ArtemPara';
@@ -2383,6 +2392,19 @@ export const TournamentDetailPage: React.FC = () => {
         />
       )}
 
+      {/* Модалка присвоения стартового рейтинга */}
+      {showInitialRatingModal && (
+        <InitialRatingModal
+          tournamentId={t.id}
+          open={showInitialRatingModal}
+          onClose={() => setShowInitialRatingModal(false)}
+          onApplied={async () => {
+            setShowInitialRatingModal(false);
+            await reload();
+          }}
+        />
+      )}
+
       {/* Нижняя панель действий (в выгрузку не включаем) */}
       <div style={{ marginTop: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }} data-export-exclude="true">
         {canManageTournament && t.status === 'created' && (
@@ -2428,22 +2450,20 @@ export const TournamentDetailPage: React.FC = () => {
             Вернуть статус "Регистрация"
           </button>
         )}
+        {t && t.has_zero_rating_players && t.status !== 'completed' && canManageTournament && (
+          <button
+            className="btn"
+            disabled={saving}
+            onClick={() => setShowInitialRatingModal(true)}
+          >
+            Присвоить стартовый рейтинг
+          </button>
+        )}
         {/* REFEREE по плану не должен пользоваться кнопкой "Поделиться" */}
         {role !== 'REFEREE' && (
           <button className="btn" onClick={handleShare}>Поделиться</button>
         )}
       </div>
-
-      {/* Модалка редактирования настроек турнира */}
-      {showEditModal && t && (
-        <EditTournamentModal
-          tournament={t}
-          setFormats={setFormats}
-          rulesets={rrRulesets}
-          onSubmit={handleEditSettingsSubmit}
-          onClose={() => setShowEditModal(false)}
-        />
-      )}
     </div>
   );
 };

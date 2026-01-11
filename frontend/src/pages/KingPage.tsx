@@ -14,6 +14,7 @@ import { EditTournamentModal } from '../components/EditTournamentModal';
 import { MatchScoreModal } from '../components/MatchScoreModal';
 import FreeFormatScoreModal from '../components/FreeFormatScoreModal';
 import { computeKingGroupRanking } from '../utils/kingRanking';
+import { InitialRatingModal } from '../components/InitialRatingModal';
 
 type Participant = {
   id: number;
@@ -73,6 +74,7 @@ export const KingPage: React.FC = () => {
   const [kingSchedule, setKingSchedule] = useState<KingScheduleResponse | null>(null);
   const [calculationMode, setCalculationMode] = useState<KingCalculationMode>('g_minus');
   const [showTech, setShowTech] = useState(false);
+  const [showInitialRatingModal, setShowInitialRatingModal] = useState(false);
   // Модалка действий по матчу (начать / ввести счёт)
   const [scoreDialog, setScoreDialog] = useState<null | {
     groupIndex: number;
@@ -253,6 +255,13 @@ export const KingPage: React.FC = () => {
     try {
       setLoading(true);
       const data = await tournamentApi.getById(Number(id));
+
+      // REGISTERED-пользователь в статусе created должен видеть страницу регистрации, а не страницу управления King-турниром
+      if (user?.role === 'REGISTERED' && (data as any).status === 'created') {
+        nav(`/tournaments/${id}/registration`);
+        return;
+      }
+
       setT(data as any);
       setError(null);
     } catch (err: any) {
@@ -261,7 +270,7 @@ export const KingPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, nav, user?.role]);
 
   // Загрузка статистики King с бэкенда
   const loadKingStats = useCallback(async () => {
@@ -1804,6 +1813,18 @@ export const KingPage: React.FC = () => {
           onSuccess={async () => {
             await reload();
             setSchedulePatternModal(null);
+          }}
+        />
+      )}
+
+      {showInitialRatingModal && (
+        <InitialRatingModal
+          tournamentId={t.id}
+          open={showInitialRatingModal}
+          onClose={() => setShowInitialRatingModal(false)}
+          onApplied={async () => {
+            setShowInitialRatingModal(false);
+            await reload();
           }}
         />
       )}

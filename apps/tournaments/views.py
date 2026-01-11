@@ -844,9 +844,14 @@ def get_score(request: HttpRequest, pk: int):
 
 
 def _safe_ratio(w: int, l: int) -> float:
-    if l == 0:
-        return float(w) if w > 0 else 0.0
-    return round(w / l, 3)
+    """
+    Расчет соотношения по формуле w / (w + l).
+    Округление до 2 знаков после запятой.
+    """
+    total = w + l
+    if total == 0:
+        return 0.0
+    return round(w / total, 2)
 
 
 def _diff(w: int, l: int) -> int:
@@ -890,12 +895,12 @@ def _build_group_table(t: Tournament, gi: int):
     def _team_rating(team) -> int:
         p1 = team.player_1
         p2 = team.player_2
-        # Для пар — суммарный рейтинг, для одиночки — рейтинг игрока
-        if p1 is None and p2 is None:
-            return 0
-        if p2 is not None:
-            return int((p1.current_rating if p1 else 0) + (p2.current_rating if p2 else 0))
-        return int(p1.current_rating if p1 else 0)
+        # Для пар — среднее арифметическое с округлением, для одиночки — рейтинг игрока
+        if p2:
+            r1 = p1.current_rating or 0
+            r2 = p2.current_rating or 0
+            return round((r1 + r2) / 2)
+        return p1.current_rating or 0 if p1 else 0
 
     def _head_to_head(a_team_id: int, b_team_id: int) -> int:
         """Возвращает -1 если A выше B по личной встрече, 1 если ниже, 0 если нельзя определить."""

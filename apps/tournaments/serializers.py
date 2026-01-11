@@ -181,6 +181,7 @@ class TournamentSerializer(serializers.ModelSerializer):
     organizer_username = serializers.SerializerMethodField()
     can_delete = serializers.SerializerMethodField()
     avg_rating_bp = serializers.SerializerMethodField()
+    has_zero_rating_players = serializers.SerializerMethodField()
     rating_coefficient = serializers.FloatField(read_only=True)
     prize_fund = serializers.CharField(read_only=True, allow_blank=True, allow_null=True)
 
@@ -215,6 +216,7 @@ class TournamentSerializer(serializers.ModelSerializer):
             "avg_rating_bp",
             "rating_coefficient",
             "prize_fund",
+            "has_zero_rating_players",
         ]
 
     def get_participants_count(self, obj: Tournament) -> int:
@@ -345,6 +347,28 @@ class TournamentSerializer(serializers.ModelSerializer):
         if cnt > 0:
             return round(total / cnt, 1)
         return None
+
+    def get_has_zero_rating_players(self, obj: Tournament) -> bool:
+        """Проверяет, есть ли среди участников турнира игроки с текущим рейтингом 0."""
+
+        from apps.players.models import Player
+
+        player_ids = set()
+        for e in obj.entries.select_related("team").only("team_id").all():
+            team = getattr(e, "team", None)
+            if not team:
+                continue
+            p1_id = getattr(team, "player_1_id", None)
+            p2_id = getattr(team, "player_2_id", None)
+            if p1_id:
+                player_ids.add(p1_id)
+            if p2_id:
+                player_ids.add(p2_id)
+
+        if not player_ids:
+            return False
+
+        return Player.objects.filter(id__in=player_ids, current_rating=0).exists()
 
 
 class SchedulePatternSerializer(serializers.ModelSerializer):

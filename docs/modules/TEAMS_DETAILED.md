@@ -203,24 +203,26 @@ team4 = create_virtual_team(player_b, player_d)  # Team(B, D) - новая
 ```python
 def get_team_rating(team: Team) -> int:
     """
-    Рассчитать суммарный рейтинг команды.
+    Рассчитать рейтинг команды.
     
-    Для пар: сумма рейтингов обоих игроков
+    Для пар: среднее арифметическое рейтингов с округлением до целых
     Для одиночек: рейтинг игрока
     """
-    rating = team.player_1.current_rating
+    if team.player_1 and team.player_2:
+        r1 = team.player_1.current_rating or 0
+        r2 = team.player_2.current_rating or 0
+        return round((r1 + r2) / 2)
+    elif team.player_1:
+        return team.player_1.current_rating or 0
     
-    if team.player_2:
-        rating += team.player_2.current_rating
-    
-    return rating
+    return 0
 ```
 
 **Примеры:**
 ```python
 # Пара
 team = Team(player_1=Player(rating=3500), player_2=Player(rating=3200))
-get_team_rating(team)  # 6700
+get_team_rating(team)  # 3350 = round((3500 + 3200) / 2)
 
 # Одиночка
 team = Team(player_1=Player(rating=3500), player_2=None)
@@ -469,4 +471,4 @@ def safe_delete_team(team: Team) -> bool:
 ---
 
 **Версия:** 1.0  
-**Дата:** 29 декабря 2024
+**Дата:** 5 января 2026

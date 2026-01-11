@@ -349,7 +349,11 @@ def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[
             r2 = float(getattr(p2, "rating", 0) or 0)
         except Exception:
             r1 = r2 = 0.0
-        team_rating[team_id] = r1 + r2
+        # Для пар — среднее арифметическое, для одиночек — рейтинг игрока
+        if p2:
+            team_rating[team_id] = (r1 + r2) / 2.0
+        else:
+            team_rating[team_id] = r1
 
         # Специальный участник: если в команде есть игрок "Петров Михаил"
         def _is_special_player(p) -> bool:
