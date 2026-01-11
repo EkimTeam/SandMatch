@@ -11,6 +11,7 @@ import { MatchActionDialog } from '../components/MatchActionDialog';
 import { MatchScoreModal } from '../components/MatchScoreModal';
 import FreeFormatScoreModal from '../components/FreeFormatScoreModal';
 import { EditTournamentModal } from '../components/EditTournamentModal';
+import { InitialRatingModal } from '../components/InitialRatingModal';
 import '../styles/knockout-dragdrop.css';
 import { useAuth } from '../context/AuthContext';
 
@@ -77,6 +78,7 @@ export const KnockoutPage: React.FC = () => {
     team1: { id: number; name: string } | null;
     team2: { id: number; name: string } | null;
   }>({ open: false, matchId: null, team1: null, team2: null });
+  const [showInitialRatingModal, setShowInitialRatingModal] = useState(false);
 
   // Динамическая загрузка html2canvas с CDN
   const ensureHtml2Canvas = async (): Promise<any> => {
@@ -230,11 +232,18 @@ export const KnockoutPage: React.FC = () => {
       // Загрузить статус турнира для чекбокса "Зафиксировать"
       try {
         const tournament = await tournamentApi.getById(tournamentId);
+
+        // REGISTERED-пользователь в статусе created должен работать через страницу регистрации, а не через страницу сетки
+        if (role === 'REGISTERED' && tournament.status === 'created') {
+          navigate(`/tournaments/${tournamentId}/registration`);
+          return;
+        }
+
         setDragDropState(prev => ({
           ...prev,
           isSelectionLocked: tournament.status === 'active' || tournament.status === 'completed'
         }));
-        
+
         // Сохранить метаданные турнира для проверки статуса
         setTMeta(tournament);
         // Инициализировать режим отображения имён один раз: по умолчанию ФИО,
@@ -1211,6 +1220,15 @@ export const KnockoutPage: React.FC = () => {
             Вернуть статус "Регистрация"
           </button>
         )}
+        {canManageStructure && tMeta?.has_zero_rating_players && tMeta?.status !== 'completed' && (
+          <button
+            className="btn"
+            disabled={saving}
+            onClick={() => setShowInitialRatingModal(true)}
+          >
+            Присвоить стартовый рейтинг
+          </button>
+        )}
         {role !== 'REFEREE' && (
           <button className="btn" disabled={saving} onClick={handleShare}>Поделиться</button>
         )}
@@ -1256,6 +1274,18 @@ export const KnockoutPage: React.FC = () => {
           rulesets={koRulesets}
           onSubmit={handleEditSettingsSubmit}
           onClose={() => setShowEditModal(false)}
+        />
+      )}
+
+      {tMeta && showInitialRatingModal && (
+        <InitialRatingModal
+          tournamentId={tMeta.id}
+          open={showInitialRatingModal}
+          onClose={() => setShowInitialRatingModal(false)}
+          onApplied={async () => {
+            setShowInitialRatingModal(false);
+            window.location.reload();
+          }}
         />
       )}
     </div>

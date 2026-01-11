@@ -25,15 +25,25 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from .models import Tournament, TournamentEntry, SetFormat, Ruleset, KnockoutBracket, DrawPosition, SchedulePattern
 from apps.players.services import rating_service
+from apps.players.services.initial_rating_service import get_initial_bp_rating
+from apps.players.services.btr_rating_mapper import suggest_initial_bp_rating
 from apps.teams.models import Team
 from apps.matches.models import Match, MatchSet
 from apps.players.models import Player, PlayerRatingDynamic
+from apps.btr.models import BtrPlayer
 from .serializers import (
     TournamentSerializer,
     ParticipantSerializer,
     MatchSerializer,
     PlayerSerializer,
     SchedulePatternSerializer,
+)
+from apps.telegram_bot.models import TelegramUser
+from apps.tournaments.registration_models import TournamentRegistration
+from apps.tournaments.services.registration_service import RegistrationService
+from apps.telegram_bot.api_serializers import (
+    TournamentRegistrationSerializer as MiniAppTournamentRegistrationSerializer,
+    TournamentParticipantsSerializer as MiniAppTournamentParticipantsSerializer,
 )
 from apps.tournaments.services.knockout import (
     validate_bracket_size,
@@ -114,11 +124,9 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 raise PermissionDenied("Authentication required to view completed King tournaments")
             return
 
-        # Аутентифицированный пользователь
-        role = _get_user_role(user)
-        # REGISTERED-пользователь не должен видеть черновики турниров
-        if role == Role.REGISTERED and tournament.status == Tournament.Status.CREATED:
-            raise PermissionDenied("Authentication required to view this tournament")
+        # Аутентифицированный пользователь: сейчас дополнительных ограничений не вводим.
+        # REGISTERED-пользователи могут просматривать турниры в статусе CREATED,
+        # а поведение UI (например, редирект на страницу регистрации) контролируется на фронтенде.
 
     def retrieve(self, request, *args, **kwargs):
         tournament = self.get_object()
@@ -882,6 +890,550 @@ class TournamentViewSet(viewsets.ModelViewSet):
             DrawPosition.objects.filter(bracket=bracket, source='BYE').values_list('position', flat=True)
         )
         return Response({"ok": True, "bye_positions": bye_positions})
+
+    # --- СТАРТОВЫЕ РЕЙТИНГИ УЧАСТНИКОВ ТУРНИРА ---
+
+    @staticmethod
+    def _normalize_name(last_name: str, first_name: str) -> str:
+        """Нормализует имя и фамилию для сравнения (как в link_bp_btr_players)."""
+
+        return f"{(last_name or '').strip().lower()}_{(first_name or '').strip().lower()}"
+
+    def _build_btr_index(self) -> dict[str, list[BtrPlayer]]:
+        """Создать индекс BTR-игроков по нормализованному ФИО.
+
+        Используется для подсказок по линковке BP ↔ BTR в модалке стартовых рейтингов.
+        """
+
+        index: dict[str, list[BtrPlayer]] = {}
+        for bp in BtrPlayer.objects.all().only("id", "first_name", "last_name", "rni", "city", "birth_date"):
+            key = self._normalize_name(bp.last_name, bp.first_name)
+            index.setdefault(key, []).append(bp)
+        return index
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="initial_ratings_preview",
+        permission_classes=[IsTournamentCreatorOrAdmin],
+    )
+    def initial_ratings_preview(self, request, pk=None):
+        """Предпросмотр стартовых рейтингов для игроков с current_rating=0 в рамках турнира.
+
+        Возвращает список игроков (участников этого турнира), у которых текущий BP рейтинг = 0,
+        а также предлагаемые стартовые рейтинги и кандидатов на линковку с BTR.
+        """
+
+        tournament: Tournament = self.get_object()
+
+        # Стартовые рейтинги актуальны только до полного пересчёта турнира
+        if tournament.status not in {Tournament.Status.CREATED, Tournament.Status.ACTIVE}:
+            return Response(
+                {"ok": False, "error": "Стартовые рейтинги можно назначать только до завершения турнира"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Собираем всех игроков, зарегистрированных в турнире
+        entries = (
+            TournamentEntry.objects
+            .filter(tournament=tournament)
+            .select_related("team__player_1", "team__player_2")
+        )
+
+        players_map: dict[int, Player] = {}
+        for e in entries:
+            team = getattr(e, "team", None)
+            if not team:
+                continue
+            if getattr(team, "player_1_id", None):
+                p1 = team.player_1
+                if p1 and p1.id not in players_map:
+                    players_map[p1.id] = p1
+            if getattr(team, "player_2_id", None):
+                p2 = team.player_2
+                if p2 and p2.id not in players_map:
+                    players_map[p2.id] = p2
+
+        zero_players = [p for p in players_map.values() if int(getattr(p, "current_rating", 0) or 0) == 0]
+
+        # Индекс BTR-игроков для поиска кандидатов
+        btr_index = self._build_btr_index()
+
+        result_players: list[dict] = []
+        for p in zero_players:
+            # Кандидаты BTR по совпадению ФИО
+            btr_candidates_payload: list[dict] = []
+            if not getattr(p, "btr_player_id", None):
+                key = self._normalize_name(getattr(p, "last_name", ""), getattr(p, "first_name", ""))
+                candidates = btr_index.get(key, [])
+                for bp in candidates:
+                    # Используем suggest_initial_bp_rating для получения рекомендуемого BP рейтинга
+                    try:
+                        s = suggest_initial_bp_rating(bp.id)
+                        suggested_from_btr = int(s.get("suggested_rating", 1000))
+                    except Exception:
+                        suggested_from_btr = 1000
+
+                    btr_candidates_payload.append(
+                        {
+                            "id": bp.id,
+                            "full_name": f"{bp.last_name} {bp.first_name}".strip(),
+                            "rni": bp.rni,
+                            "city": bp.city or "",
+                            "birth_date": str(bp.birth_date) if bp.birth_date else None,
+                            "suggested_rating_from_btr": suggested_from_btr,
+                        }
+                    )
+
+            # Базовый стартовый рейтинг по текущей логике сервиса
+            try:
+                default_rating = int(get_initial_bp_rating(p, tournament))
+            except Exception:
+                default_rating = 1000
+
+            result_players.append(
+                {
+                    "player_id": p.id,
+                    "full_name": str(p),
+                    "current_rating": int(getattr(p, "current_rating", 0) or 0),
+                    "has_btr": bool(getattr(p, "btr_player_id", None)),
+                    "default_rating": default_rating,
+                    "btr_candidates": btr_candidates_payload,
+                }
+            )
+
+        payload = {
+            "ok": True,
+            "tournament": {
+                "id": tournament.id,
+                "name": tournament.name,
+                "status": tournament.status,
+                "system": tournament.system,
+            },
+            "players": result_players,
+        }
+
+        return Response(payload)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="apply_initial_ratings",
+        permission_classes=[IsTournamentCreatorOrAdmin],
+    )
+    def apply_initial_ratings(self, request, pk=None):
+        """Применить стартовые рейтинги и (опционально) связать игроков с BTR.
+
+        Body:
+        {
+          "items": [
+            {"player_id": int, "rating": int, "link_btr_player_id": int | null},
+            ...
+          ]
+        }
+        """
+
+        tournament: Tournament = self.get_object()
+
+        if tournament.status not in {Tournament.Status.CREATED, Tournament.Status.ACTIVE}:
+            return Response(
+                {"ok": False, "error": "Стартовые рейтинги можно назначать только до завершения турнира"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        data = request.data or {}
+        items = data.get("items") or data.get("ratings") or []
+        if not isinstance(items, list):
+            return Response({"ok": False, "error": "Поле items должно быть списком"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Ограничиваем операции только участниками текущего турнира
+        entries = (
+            TournamentEntry.objects
+            .filter(tournament=tournament)
+            .select_related("team__player_1", "team__player_2")
+        )
+        allowed_player_ids: set[int] = set()
+        for e in entries:
+            team = getattr(e, "team", None)
+            if not team:
+                continue
+            if getattr(team, "player_1_id", None):
+                allowed_player_ids.add(int(team.player_1_id))
+            if getattr(team, "player_2_id", None):
+                allowed_player_ids.add(int(team.player_2_id))
+
+        updated_count = 0
+
+        with transaction.atomic():
+            for raw in items:
+                try:
+                    pid = int(raw.get("player_id"))
+                    rating_val = int(raw.get("rating"))
+                except Exception:
+                    continue
+
+                if pid not in allowed_player_ids:
+                    continue
+
+                try:
+                    player = Player.objects.select_for_update().get(id=pid)
+                except Player.DoesNotExist:
+                    continue
+
+                link_btr_id = raw.get("link_btr_player_id")
+                if link_btr_id is not None:
+                    try:
+                        btr_obj = BtrPlayer.objects.get(id=int(link_btr_id))
+                    except (BtrPlayer.DoesNotExist, ValueError, TypeError):
+                        btr_obj = None
+                    if btr_obj is not None:
+                        player.btr_player = btr_obj
+
+                player.current_rating = rating_val
+                player.save(update_fields=["current_rating", "btr_player"] if getattr(player, "btr_player_id", None) else ["current_rating"])
+                updated_count += 1
+
+        return Response({"ok": True, "updated": updated_count})
+
+    # --- ВЕБ-РЕГИСТРАЦИЯ ТУРНИРА (зеркало Mini App API) ---
+
+    def _get_current_player(self, request, tournament: Tournament) -> Optional[Player]:
+        """Получить связанного игрока для текущего пользователя через TelegramUser.
+
+        Используется веб-эндпоинтами регистрации. Если игрок не найден, возвращаем None,
+        а вызывающий код сам формирует понятное сообщение об ошибке.
+        """
+
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return None
+
+        tu = (
+            TelegramUser.objects.filter(user=user)
+            .select_related("player")
+            .first()
+        )
+        return tu.player if tu and tu.player_id else None
+
+    def _ensure_can_register(self, request, tournament: Tournament) -> None:
+        """Проверка возможности регистрации через веб-интерфейс.
+
+        - Турнир должен быть в статусе CREATED.
+        - Пользователь должен быть аутентифицирован и иметь роль REGISTERED или выше.
+        """
+
+        if tournament.status != Tournament.Status.CREATED:
+            raise PermissionDenied("Регистрация доступна только для турниров в статусе CREATED")
+
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            raise PermissionDenied("Требуется аутентификация")
+
+        role = _get_user_role(user)
+        if role not in {Role.REGISTERED, Role.ORGANIZER, Role.ADMIN}:
+            raise PermissionDenied("Недостаточно прав для регистрации на турнир")
+
+    @action(detail=True, methods=["get"], url_path="registration_state", permission_classes=[IsAuthenticated])
+    def registration_state(self, request, pk=None):
+        """Состояние регистрации турнира для веб-интерфейса.
+
+        Возвращает:
+        - краткие данные турнира;
+        - список участников (основной список, резерв, ищущие пару);
+        - информацию о регистрации текущего игрока (если есть).
+        """
+
+        tournament: Tournament = self.get_object()
+        self._ensure_can_view_tournament(request, tournament)
+
+        registrations_qs = TournamentRegistration.objects.filter(tournament=tournament).select_related("player", "partner")
+
+        main_list = registrations_qs.filter(status=TournamentRegistration.Status.MAIN_LIST)
+        reserve_list = registrations_qs.filter(status=TournamentRegistration.Status.RESERVE_LIST)
+        looking_for_partner = registrations_qs.filter(status=TournamentRegistration.Status.LOOKING_FOR_PARTNER)
+
+        participants_payload = MiniAppTournamentParticipantsSerializer(
+            {
+                "main_list": main_list,
+                "reserve_list": reserve_list,
+                "looking_for_partner": looking_for_partner,
+            }
+        ).data
+
+        player = self._get_current_player(request, tournament)
+        my_registration_data = None
+        if player:
+            my_reg = registrations_qs.filter(player=player).first()
+            if my_reg:
+                my_registration_data = MiniAppTournamentRegistrationSerializer(my_reg).data
+
+        total_registered = registrations_qs.count()
+        total_entries = getattr(tournament, "entries", None)
+        participants_count = total_entries.count() if total_entries is not None else None
+
+        return Response(
+            {
+                "tournament": {
+                    "id": tournament.id,
+                    "name": tournament.name,
+                    "status": tournament.status,
+                    "system": tournament.system,
+                    "participant_mode": tournament.participant_mode,
+                    "planned_participants": tournament.planned_participants,
+                    "date": tournament.date,
+                    "participants_count": participants_count,
+                    "registered_count": total_registered,
+                    "get_system_display": tournament.get_system_display() if hasattr(tournament, "get_system_display") else None,
+                    "get_participant_mode_display": tournament.get_participant_mode_display() if hasattr(tournament, "get_participant_mode_display") else None,
+                    "organizer_name": (
+                        tournament.created_by.get_full_name() or tournament.created_by.username
+                    ) if getattr(tournament, "created_by", None) else None,
+                },
+                "participants": participants_payload,
+                "my_registration": my_registration_data,
+            }
+        )
+
+    @action(detail=True, methods=["post"], url_path="register_single", permission_classes=[IsAuthenticated])
+    def web_register_single(self, request, pk=None):
+        """Простая регистрация на индивидуальный турнир через веб.
+
+        POST /api/tournaments/{id}/register_single/
+        """
+
+        tournament: Tournament = self.get_object()
+        self._ensure_can_register(request, tournament)
+
+        if tournament.participant_mode != Tournament.ParticipantMode.SINGLES:
+            return Response(
+                {"detail": "Простая регистрация доступна только для одиночных турниров"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        player = self._get_current_player(request, tournament)
+        if not player:
+            return Response(
+                {
+                    "detail": "Профиль не связан с игроком. Свяжите аккаунт с игроком на странице профиля.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            registration = RegistrationService.register_single(tournament, player)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            MiniAppTournamentRegistrationSerializer(registration).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"], url_path="register_with_partner", permission_classes=[IsAuthenticated])
+    def web_register_with_partner(self, request, pk=None):
+        """Регистрация с напарником через веб.
+
+        POST /api/tournaments/{id}/register_with_partner/
+        Body: { "partner_id": number }
+        """
+
+        tournament: Tournament = self.get_object()
+        self._ensure_can_register(request, tournament)
+
+        if tournament.participant_mode != Tournament.ParticipantMode.DOUBLES:
+            return Response({"detail": "Регистрация с напарником доступна только для парных турниров"}, status=status.HTTP_400_BAD_REQUEST)
+
+        player = self._get_current_player(request, tournament)
+        if not player:
+            return Response(
+                {"detail": "Профиль не связан с игроком. Свяжите аккаунт с игроком на странице профиля."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        partner_id = request.data.get("partner_id")
+        if not partner_id:
+            return Response({"detail": "partner_id обязателен"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            partner = Player.objects.get(id=int(partner_id))
+        except (Player.DoesNotExist, ValueError, TypeError):
+            return Response({"detail": "Игрок-напарник не найден"}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            registration = RegistrationService.register_with_partner(tournament, player, partner)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            MiniAppTournamentRegistrationSerializer(registration).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"], url_path="send_invitation", permission_classes=[IsAuthenticated])
+    def web_send_invitation(self, request, pk=None):
+        """Отправить приглашение в пару через веб.
+
+        POST /api/tournaments/{id}/send_invitation/
+        Body: { "receiver_id": number, "message": string }
+        """
+
+        tournament: Tournament = self.get_object()
+        self._ensure_can_register(request, tournament)
+
+        player = self._get_current_player(request, tournament)
+        if not player:
+            return Response(
+                {"detail": "Профиль не связан с игроком. Свяжите аккаунт с игроком на странице профиля."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        receiver_id = request.data.get("receiver_id")
+        if not receiver_id:
+            return Response({"detail": "receiver_id обязателен"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            receiver = Player.objects.get(id=int(receiver_id))
+        except (Player.DoesNotExist, ValueError, TypeError):
+            return Response({"detail": "Игрок не найден"}, status=status.HTTP_404_NOT_FOUND)
+
+        message_text = request.data.get("message", "")
+
+        try:
+            invitation = RegistrationService.send_pair_invitation(tournament, player, receiver, message=message_text)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        from apps.telegram_bot.api_serializers import PairInvitationSerializer
+
+        return Response(
+            PairInvitationSerializer(invitation).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"], url_path="leave_pair", permission_classes=[IsAuthenticated])
+    def web_leave_pair(self, request, pk=None):
+        """Отказаться от текущей пары (оба игрока переходят в "ищу пару").
+
+        POST /api/tournaments/{id}/leave_pair/
+        """
+
+        tournament: Tournament = self.get_object()
+        self._ensure_can_register(request, tournament)
+
+        player = self._get_current_player(request, tournament)
+        if not player:
+            return Response(
+                {"detail": "Профиль не связан с игроком. Свяжите аккаунт с игроком на странице профиля."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        registration = TournamentRegistration.objects.filter(tournament=tournament, player=player).first()
+        if not registration:
+            return Response({"detail": "Регистрация не найдена"}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            RegistrationService.leave_pair(registration)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({"detail": "Вы покинули пару"})
+
+    @action(detail=True, methods=["post"], url_path="cancel_registration", permission_classes=[IsAuthenticated])
+    def web_cancel_registration(self, request, pk=None):
+        """Полностью отменить регистрацию на турнир.
+
+        POST /api/tournaments/{id}/cancel_registration/
+        """
+
+        tournament: Tournament = self.get_object()
+        self._ensure_can_register(request, tournament)
+
+        player = self._get_current_player(request, tournament)
+        if not player:
+            return Response(
+                {"detail": "Профиль не связан с игроком. Свяжите аккаунт с игроком на странице профиля."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        registration = TournamentRegistration.objects.filter(tournament=tournament, player=player).first()
+        if not registration:
+            return Response({"detail": "Регистрация не найдена"}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            RegistrationService.cancel_registration(registration)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({"detail": "Регистрация отменена"})
+
+    @action(detail=True, methods=["get"], url_path="search_players", permission_classes=[IsAuthenticated])
+    def web_search_players(self, request, pk=None):
+        """Поиск игроков для регистрации с напарником через веб.
+
+        GET /api/tournaments/{id}/search_players/?q=Иванов
+        """
+
+        tournament: Tournament = self.get_object()
+        self._ensure_can_view_tournament(request, tournament)
+
+        query = (request.query_params.get("q") or "").strip()
+        if len(query) < 2:
+            return Response({"players": []})
+
+        from django.db.models import Q
+
+        players_qs = Player.objects.filter(
+            Q(first_name__icontains=query)
+            | Q(last_name__icontains=query)
+            | Q(patronymic__icontains=query)
+        ).order_by("last_name", "first_name")[:50]
+
+        # помечаем, зарегистрирован ли игрок уже на этот турнир
+        registered_ids = set(
+            TournamentRegistration.objects.filter(tournament=tournament, player_id__in=players_qs.values_list("id", flat=True))
+            .values_list("player_id", flat=True)
+        )
+
+        players_payload = [
+            {
+                "id": p.id,
+                "full_name": str(p),
+                "is_registered": p.id in registered_ids,
+            }
+            for p in players_qs
+        ]
+
+        return Response({"players": players_payload})
+
+    @action(detail=True, methods=["post"], url_path="register_looking_for_partner", permission_classes=[IsAuthenticated])
+    def web_register_looking_for_partner(self, request, pk=None):
+        """Регистрация в режиме "ищу пару" для парных турниров через веб.
+
+        POST /api/tournaments/{id}/register_looking_for_partner/
+        """
+
+        tournament: Tournament = self.get_object()
+        self._ensure_can_register(request, tournament)
+
+        if tournament.participant_mode != Tournament.ParticipantMode.DOUBLES:
+            return Response({"detail": "Режим 'ищу пару' доступен только для парных турниров"}, status=status.HTTP_400_BAD_REQUEST)
+
+        player = self._get_current_player(request, tournament)
+        if not player:
+            return Response(
+                {"detail": "Профиль не связан с игроком. Свяжите аккаунт с игроком на странице профиля."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            registration = RegistrationService.register_looking_for_partner(tournament, player)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            MiniAppTournamentRegistrationSerializer(registration).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], permission_classes=[AllowAny], authentication_classes=[])

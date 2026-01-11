@@ -4,6 +4,7 @@ import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
 import { TournamentListPage } from './pages/TournamentListPage';
 import { TournamentDetailPage } from './pages/TournamentDetailPage';
+import TournamentRegistrationPage from './pages/TournamentRegistrationPage';
 import { PlayersPage } from './pages/PlayersPage';
 import { KnockoutPage } from './pages/KnockoutPage';
 import { KingPage } from './pages/KingPage';
@@ -85,6 +86,7 @@ function App() {
                 {/* Детали турниров доступны анонимам в режиме read-only, UI-гейтинг по ролям внутри страниц */}
                 <Route path="/tournaments/:id/round_robin" element={<TournamentDetailPage />} />
                 <Route path="/tournaments/:id" element={<TournamentDetailPage />} />
+                <Route path="/tournaments/:id/registration" element={<RequireAuth><TournamentRegistrationPage /></RequireAuth>} />
                 <Route path="/tournaments/:id/knockout" element={<KnockoutPage />} />
                 <Route path="/tournaments/:id/king" element={<KingPage />} />
                 <Route path="/tournaments/:id/king-old" element={<RequireAdmin><KingPageOld /></RequireAdmin>} />
