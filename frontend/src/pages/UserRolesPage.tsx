@@ -24,6 +24,7 @@ const UserRolesPageInner: React.FC = () => {
   const [deleteRow, setDeleteRow] = useState<Row | null>(null);
   const [savingId, setSavingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [unlinkingId, setUnlinkingId] = useState<number | null>(null);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -53,6 +54,28 @@ const UserRolesPageInner: React.FC = () => {
       setError(e?.response?.data?.detail || e?.message || 'Ошибка загрузки пользователей');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleUnlinkTelegram = async (row: Row) => {
+    if (!row.has_telegram || unlinkingId === row.id) return;
+    if (!window.confirm('Действительно удалить связь этого пользователя с телеграмм-аккаунтом?')) {
+      return;
+    }
+    setUnlinkingId(row.id);
+    try {
+      await adminApi.unlinkTelegram(row.id);
+      setRows(prev =>
+        prev.map(r =>
+          r.id === row.id
+            ? { ...r, has_telegram: false }
+            : r
+        )
+      );
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || e?.message || 'Не удалось отвязать Telegram');
+    } finally {
+      setUnlinkingId(null);
     }
   };
 
@@ -271,6 +294,15 @@ const UserRolesPageInner: React.FC = () => {
                         title="Удалить пользователя"
                       >
                         ✕
+                      </button>
+                      <button
+                        type="button"
+                        className="px-3 py-1 text-sm bg-red-500 text-white rounded disabled:opacity-50"
+                        disabled={!row.has_telegram || unlinkingId === row.id}
+                        onClick={() => handleUnlinkTelegram(row)}
+                        title="Принудительно отвязать Telegram"
+                      >
+                        TG
                       </button>
                     </div>
                   </td>

@@ -241,6 +241,10 @@ export const adminApi = {
     const { data } = await api.delete(`/auth/users/${userId}/delete/`);
     return data;
   },
+  unlinkTelegram: async (userId: number): Promise<{ ok: boolean }> => {
+    const { data } = await api.post(`/auth/users/${userId}/unlink_telegram/`);
+    return data;
+  },
 };
 
 export interface RefereeTournamentItem {

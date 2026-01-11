@@ -79,6 +79,48 @@ export const KnockoutPage: React.FC = () => {
     team2: { id: number; name: string } | null;
   }>({ open: false, matchId: null, team1: null, team2: null });
   const [showInitialRatingModal, setShowInitialRatingModal] = useState(false);
+  const [showCompleteRatingChoice, setShowCompleteRatingChoice] = useState(false);
+
+  const completeTournamentInternal = async () => {
+    if (!tMeta || !canManageStructure) return;
+    setSaving(true);
+    try {
+      await tournamentApi.complete(tMeta.id);
+      alert('Турнир завершён');
+      window.location.href = '/tournaments';
+    } catch (e: any) {
+      console.error(e);
+      const errorData = e?.response?.data;
+
+      // Если есть незавершенные матчи, запросить подтверждение
+      if (errorData?.error === 'incomplete_matches') {
+        const confirmed = window.confirm(errorData.message);
+        if (confirmed) {
+          try {
+            // Повторить запрос с параметром force
+            await tournamentApi.complete(tMeta.id, true);
+            alert('Турнир завершён');
+            window.location.href = '/tournaments';
+          } catch (e2: any) {
+            console.error(e2);
+            alert(e2?.response?.data?.error || 'Ошибка завершения турнира');
+          }
+        }
+      } else {
+        alert(errorData?.error || 'Ошибка завершения турнира');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCompleteTournamentClick = () => {
+    if (tMeta?.has_zero_rating_players && tMeta.status !== 'completed') {
+      setShowCompleteRatingChoice(true);
+      return;
+    }
+    completeTournamentInternal();
+  };
 
   // Динамическая загрузка html2canvas с CDN
   const ensureHtml2Canvas = async (): Promise<any> => {
@@ -1287,6 +1329,65 @@ export const KnockoutPage: React.FC = () => {
             window.location.reload();
           }}
         />
+      )}
+
+      {/* Диалог выбора способа завершения турнира при наличии игроков без рейтинга */}
+      {showCompleteRatingChoice && tMeta && (
+        <div
+          onClick={() => !saving && setShowCompleteRatingChoice(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#fff',
+              borderRadius: 8,
+              boxShadow: '0 10px 30px rgba(15,23,42,0.25)',
+              maxWidth: 520,
+              width: '90%',
+              padding: '16px 20px 14px 20px',
+            }}
+          >
+            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
+              В турнире есть игроки без рейтинга
+            </div>
+            <div style={{ fontSize: 14, color: '#4b5563', marginBottom: 16 }}>
+              Вы хотите закрыть турнир, чтобы рейтинг этим игрокам присвоился автоматически, или присвоить рейтинг вручную?
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                type="button"
+                className="btn"
+                disabled={saving}
+                onClick={() => {
+                  setShowCompleteRatingChoice(false);
+                  completeTournamentInternal();
+                }}
+              >
+                Автоматически
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={saving}
+                onClick={() => {
+                  setShowCompleteRatingChoice(false);
+                  setShowInitialRatingModal(true);
+                }}
+              >
+                Вручную
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
