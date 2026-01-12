@@ -54,7 +54,13 @@ def validate_and_use_code(code_str, telegram_user):
         # Если у существующей записи нет telegram_id, переносим туда текущий telegram_id и базовые данные,
         # а временную запись (созданную по telegram_id без user) удаляем.
         if existing_for_user.telegram_id is None:
-            existing_for_user.telegram_id = telegram_user.telegram_id
+            # Чтобы не нарушить уникальность telegram_id, сначала освобождаем его у временной записи
+            original_telegram_id = telegram_user.telegram_id
+            if original_telegram_id is not None:
+                telegram_user.telegram_id = None
+                telegram_user.save(update_fields=["telegram_id"])
+
+            existing_for_user.telegram_id = original_telegram_id
             existing_for_user.username = telegram_user.username or existing_for_user.username
             if not existing_for_user.first_name:
                 existing_for_user.first_name = telegram_user.first_name
@@ -62,6 +68,7 @@ def validate_and_use_code(code_str, telegram_user):
                 existing_for_user.last_name = telegram_user.last_name
             existing_for_user.language_code = telegram_user.language_code or existing_for_user.language_code
             existing_for_user.save()
+
             # После переноса данных работаем дальше с existing_for_user как с основным объектом
             telegram_user.delete()
             telegram_user = existing_for_user
