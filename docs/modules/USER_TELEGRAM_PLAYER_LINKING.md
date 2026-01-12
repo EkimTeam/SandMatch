@@ -102,25 +102,27 @@
 
 - Находит `LinkCode` по коду и проверяет срок действия.
 - Проверяет, не привязан ли уже этот Telegram к другому пользователю.
-- **Новая логика объединения:**
+- **Объединение записей TelegramUser:**
   - ищет существующий `TelegramUser` для `link_code.user`:
 
     ```python
     existing_for_user = TelegramUser.objects.filter(user=link_code.user).exclude(pk=telegram_user.pk).first()
     ```
 
-  - если он найден и у него `telegram_id is None`, то:
-    - переносит `telegram_id`, `username`, имя/фамилию и язык из `telegram_user` в `existing_for_user`;
-    - удаляет временную запись `telegram_user`;
-    - продолжает работу уже с `existing_for_user`;
-  - если найден и у него уже есть другой `telegram_id`, возвращает ошибку:
+  - если он найден и у него `telegram_id is None`, то выполняется безопасный перенос данных:
+    - сохраняется исходный `telegram_id` из временной записи `telegram_user`;
+    - чтобы не нарушить уникальность, у временной записи `telegram_user.telegram_id` **обнуляется и сохраняется**;
+    - затем сохранённый `telegram_id` и базовые данные (`username`, `first_name`, `last_name`, `language_code`) переносятся в `existing_for_user`;
+    - временная запись `telegram_user` удаляется;
+    - дальнейшая работа идёт уже с `existing_for_user` как с основным объектом;
+  - если найден и у него уже есть другой `telegram_id`, возвращается ошибка:
     - «Этот аккаунт уже связан с другим Telegram».
 
 - После возможного объединения:
-  - устанавливает `telegram_user.user = link_code.user`;
-  - при отсутствии `telegram_user.player` пытается автоматически найти `Player` по email/ФИО пользователя;
-  - сохраняет `telegram_user`;
-  - помечает `LinkCode` как использованный.
+  - устанавливается `telegram_user.user = link_code.user`;
+  - при отсутствии `telegram_user.player` выполняется попытка автоматически найти `Player` по email/ФИО пользователя;
+  - `telegram_user` сохраняется;
+  - `LinkCode` помечается как использованный.
 
 Результат:
 

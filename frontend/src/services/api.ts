@@ -175,6 +175,7 @@ export interface AdminUserItem {
   has_bp_player: boolean;
   has_btr_player: boolean;
   has_telegram: boolean;
+  has_telegram_profile: boolean;
 }
 
 export const authApi = {

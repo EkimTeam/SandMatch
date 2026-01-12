@@ -175,10 +175,13 @@ def users_list(request):
         has_bp_player = False
         has_btr_player = False
         has_telegram = False
+        has_telegram_profile = False
 
         # Проверяем связь с Telegram через TelegramUser
         telegram_user = getattr(u, "telegram_profile", None)
-        # has_telegram понимаем как наличие реальной Telegram‑привязки (telegram_id)
+        # has_telegram_profile — любая запись TelegramUser, связанная с пользователем
+        has_telegram_profile = telegram_user is not None
+        # has_telegram — наличие реальной Telegram‑привязки (telegram_id)
         has_telegram = bool(getattr(telegram_user, "telegram_id", None))
 
         # Проверяем связь с BP игроком
@@ -203,6 +206,7 @@ def users_list(request):
                 "has_bp_player": has_bp_player,
                 "has_btr_player": has_btr_player,
                 "has_telegram": has_telegram,
+                "has_telegram_profile": has_telegram_profile,
             }
         )
 
