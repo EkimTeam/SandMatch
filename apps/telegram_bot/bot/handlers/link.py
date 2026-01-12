@@ -136,7 +136,12 @@ async def cmd_link(message: Message):
     code = args[1].strip()
     
     # Валидируем и используем код
-    success, msg, user = await validate_and_use_code(code, telegram_user)
+    try:
+        success, msg, user = await validate_and_use_code(code, telegram_user)
+    except Exception as e:
+        # Временный блок для дебага: показываем текст ошибки вместо немого падения
+        await message.answer(f"❌ Внутренняя ошибка при связывании: {e}")
+        return
     
     if success:
         await message.answer(
