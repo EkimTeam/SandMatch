@@ -256,7 +256,16 @@ const UserRolesPageInner: React.FC = () => {
                       <span title="Игрок BTR" className={row.has_btr_player ? 'text-green-600 font-semibold' : 'text-gray-300'}>
                         BTR
                       </span>
-                      <span title="Telegram" className={row.has_telegram ? 'text-blue-500 font-semibold' : 'text-gray-300'}>
+                      <span
+                        title="Telegram"
+                        className={
+                          row.has_telegram
+                            ? 'text-blue-500 font-semibold'
+                            : row.has_telegram_profile
+                            ? 'text-yellow-500 font-semibold'
+                            : 'text-gray-300'
+                        }
+                      >
                         TG
                       </span>
                     </div>
