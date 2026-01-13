@@ -352,6 +352,30 @@ const UserRolesPageInner: React.FC = () => {
             <button disabled={page >= totalPages} className="px-2 py-1 border rounded disabled:opacity-50" onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Вперёд</button>
           </div>
         </div>
+
+        <div className="px-4 py-3 border-t border-gray-200 text-xs text-gray-700 space-y-1">
+          <div className="font-semibold">Условные обозначения:</div>
+          <div>
+            <span className="font-mono font-semibold text-blue-600 mr-1">BP</span>
+            – есть связанный игрок BeachPlay (нет связи – значок серый).
+          </div>
+          <div>
+            <span className="font-mono font-semibold text-green-600 mr-1">BTR</span>
+            – есть связанный игрок BeachTennisRussia (нет связи – значок серый).
+          </div>
+          <div>
+            <span className="font-mono font-semibold text-blue-500 mr-1">TG</span>
+            – есть активная связь с Telegram-аккаунтом.
+          </div>
+          <div>
+            <span className="font-mono font-semibold text-yellow-500 mr-1">TG</span>
+            – пользователь заходил в Telegram-бот, но связь с аккаунтом не настроена.
+          </div>
+          <div>
+            <span className="font-mono font-semibold text-gray-300 mr-1">TG</span>
+            – нет данных о профиле в Telegram-боте.
+          </div>
+        </div>
       </div>
 
       {confirmRow && (
