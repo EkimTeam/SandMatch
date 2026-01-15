@@ -950,6 +950,7 @@ export interface PlayerSearchResult {
   level?: string;
   city?: string;
   is_profi?: boolean;
+  is_occupied?: boolean;
 }
 
 export interface PlayerCandidate {
@@ -959,6 +960,19 @@ export interface PlayerCandidate {
   patronymic: string;
   city: string;
   current_rating: number;
+}
+
+export interface CreatePlayerAndLinkPayload {
+  last_name: string;
+  first_name: string;
+  patronymic?: string;
+  level?: string;
+  birth_date?: string;
+  phone?: string;
+  display_name?: string;
+  city?: string;
+  gender?: 'male' | 'female';
+  force?: boolean;
 }
 
 export const profileApi = {
@@ -986,9 +1000,9 @@ export const profileApi = {
     return data;
   },
 
-  // Поиск игроков для связывания: используем общий эндпоинт, как в модалке участников
+  // Поиск игроков для связывания в личном кабинете (возвращает is_occupied)
   searchPlayers: async (query: string): Promise<{ players: PlayerSearchResult[] }> => {
-    const { data } = await api.get('/players/search/', { params: { q: query } });
+    const { data } = await api.get('/auth/profile/search-players/', { params: { q: query } });
     return data;
   },
 
@@ -1000,6 +1014,11 @@ export const profileApi = {
   // Отвязка игрока
   unlinkPlayer: async (): Promise<UserProfile> => {
     const { data } = await api.post('/auth/profile/unlink-player/');
+    return data;
+  },
+  // Создание игрока и связывание
+  createPlayerAndLink: async (payload: CreatePlayerAndLinkPayload): Promise<UserProfile> => {
+    const { data } = await api.post('/auth/profile/create-player-and-link/', payload);
     return data;
   },
 };
@@ -1094,6 +1113,10 @@ export interface WebRegistrationStateResponse {
 export const tournamentRegistrationApi = {
   getState: async (tournamentId: number): Promise<WebRegistrationStateResponse> => {
     const { data } = await api.get(`/tournaments/${tournamentId}/registration_state/`);
+    return data;
+  },
+  getPublicState: async (tournamentId: number): Promise<WebRegistrationStateResponse> => {
+    const { data } = await api.get(`/tournaments/${tournamentId}/registration_state_public/`);
     return data;
   },
   registerSingle: async (tournamentId: number): Promise<WebTournamentRegistration> => {

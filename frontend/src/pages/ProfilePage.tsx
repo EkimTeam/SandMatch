@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { profileApi, telegramApi, UserProfile, UpdateProfileData, ChangePasswordData, TelegramStatus, PlayerSearchResult, PlayerCandidate } from '../services/api';
+import { useAuth } from '../context/AuthContext';
+import { profileApi, telegramApi, UserProfile, UpdateProfileData, ChangePasswordData, TelegramStatus, PlayerSearchResult, PlayerCandidate, CreatePlayerAndLinkPayload } from '../services/api';
 
 // Уровни игры от слабого к сильному
 const GAME_LEVELS = [
@@ -14,6 +15,7 @@ const GAME_LEVELS = [
 ];
 
 const ProfilePage: React.FC = () => {
+  const { refreshMe } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [telegramStatus, setTelegramStatus] = useState<TelegramStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -45,6 +47,24 @@ const ProfilePage: React.FC = () => {
   // Автокандидаты игрока по ФИО пользователя
   const [playerCandidates, setPlayerCandidates] = useState<PlayerCandidate[]>([]);
   const [loadingCandidates, setLoadingCandidates] = useState(false);
+
+  // Модалка создания нового игрока
+  const [showCreatePlayerModal, setShowCreatePlayerModal] = useState(false);
+  const [createPlayerForm, setCreatePlayerForm] = useState({
+    last_name: '',
+    first_name: '',
+    patronymic: '',
+    level: '',
+    birth_date: '',
+    phone: '',
+    display_name: '',
+    city: '',
+    gender: '' as '' | 'male' | 'female',
+  });
+  const [createPlayerSubmitting, setCreatePlayerSubmitting] = useState(false);
+  const [createPlayerError, setCreatePlayerError] = useState<string | null>(null);
+  const [createPlayerSimilar, setCreatePlayerSimilar] = useState<any[]>([]);
+  const [createPlayerForceAllowed, setCreatePlayerForceAllowed] = useState(false);
 
   useEffect(() => {
     loadProfile();
@@ -159,6 +179,110 @@ const ProfilePage: React.FC = () => {
     }
   };
 
+  const handleOpenCreatePlayerModal = () => {
+    setCreatePlayerForm({
+      last_name: formData.last_name || '',
+      first_name: formData.first_name || '',
+      patronymic: formData.patronymic || '',
+      level: formData.level || '',
+      birth_date: formData.birth_date || '',
+      phone: formData.phone || '',
+      display_name: formData.display_name || '',
+      city: formData.city || '',
+      gender: (formData.gender as any) || '',
+    });
+    setCreatePlayerError(null);
+    setCreatePlayerSimilar([]);
+    setCreatePlayerForceAllowed(false);
+    setShowCreatePlayerModal(true);
+  };
+
+  const handleCloseCreatePlayerModal = () => {
+    if (createPlayerSubmitting) return;
+    setShowCreatePlayerModal(false);
+  };
+
+  const handleCreatePlayerInputChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>,
+  ) => {
+    const { name, value } = e.target;
+    setCreatePlayerForm((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+  };
+
+  const handleSubmitCreatePlayer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!createPlayerForm.first_name.trim() || !createPlayerForm.last_name.trim()) {
+      setCreatePlayerError('Укажи фамилию и имя игрока');
+      return;
+    }
+
+    setCreatePlayerSubmitting(true);
+    setCreatePlayerError(null);
+
+    const payload: CreatePlayerAndLinkPayload = {
+      last_name: createPlayerForm.last_name.trim(),
+      first_name: createPlayerForm.first_name.trim(),
+      patronymic: createPlayerForm.patronymic.trim() || undefined,
+      level: createPlayerForm.level || undefined,
+      birth_date: createPlayerForm.birth_date || undefined,
+      phone: createPlayerForm.phone.trim() || undefined,
+      display_name: createPlayerForm.display_name.trim() || undefined,
+      city: createPlayerForm.city.trim() || undefined,
+      gender: (createPlayerForm.gender || undefined) as 'male' | 'female' | undefined,
+      force: createPlayerForceAllowed || undefined,
+    };
+
+    try {
+      const updated = await profileApi.createPlayerAndLink(payload);
+      setProfile(updated);
+      setSuccess('Создан новый игрок и профиль успешно связан');
+
+      if (updated.player) {
+        setFormData((prev) => ({
+          ...prev,
+          patronymic: updated.player?.patronymic || '',
+          birth_date: updated.player?.birth_date || '',
+          gender: (updated.player?.gender as any) || undefined,
+          phone: updated.player?.phone || '',
+          display_name: updated.player?.display_name || '',
+          city: updated.player?.city || '',
+          level: updated.player?.level || '',
+        }));
+      }
+
+      setShowCreatePlayerModal(false);
+      setCreatePlayerSimilar([]);
+      setCreatePlayerForceAllowed(false);
+      // Обновляем AuthContext, чтобы user.player_id стал актуальным
+      await refreshMe();
+    } catch (err: any) {
+      const data = err.response?.data;
+      if (data?.code === 'similar_players_found') {
+        setCreatePlayerError(
+          data.detail ||
+            'Найдены игроки с таким же ФИО. Проверь список ниже. Если это не ты, можно создать нового игрока повторно.',
+        );
+        setCreatePlayerSimilar(data.similar_players || []);
+        setCreatePlayerForceAllowed(true);
+      } else if (data?.code === 'player_already_created') {
+        setCreatePlayerError(String(data.detail || 'Ты уже создавал игрока. Создать ещё одного нельзя.'));
+      } else {
+        const firstValue = data && (Object.values(data)[0] as any);
+        const detail =
+          (typeof data === 'string' && data) ||
+          data?.detail ||
+          (Array.isArray(firstValue) ? firstValue[0] : firstValue) ||
+          'Ошибка создания игрока';
+        setCreatePlayerError(String(detail));
+      }
+    } finally {
+      setCreatePlayerSubmitting(false);
+    }
+  };
+
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -246,6 +370,8 @@ const ProfilePage: React.FC = () => {
       const updated = await profileApi.linkPlayer(playerId);
       setProfile(updated);
       setSuccess('Профиль успешно связан с игроком');
+      // Обновляем AuthContext, чтобы user.player_id стал актуальным (важно для TournamentRegistrationPage)
+      await refreshMe();
       // Пробрасываем player-поля в форму
       if (updated.player) {
         setFormData((prev) => ({
@@ -291,6 +417,8 @@ const ProfilePage: React.FC = () => {
       }));
       // После отвязки — показать новых кандидатов
       await loadPlayerCandidates();
+      // Обновляем AuthContext, чтобы user.player_id сбросился
+      await refreshMe();
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Ошибка отвязки игрока');
     } finally {
@@ -668,7 +796,9 @@ const ProfilePage: React.FC = () => {
                       {searchResults.map((player) => (
                         <div
                           key={player.id}
-                          className="px-4 py-3 border-b border-gray-100 hover:bg-gray-50 flex justify-between items-center"
+                          className={`px-4 py-3 border-b border-gray-100 flex justify-between items-center ${
+                            player.is_occupied ? 'opacity-60 cursor-not-allowed' : 'hover:bg-gray-50'
+                          }`}
                         >
                           <div>
                             <p className="font-medium text-gray-900">
@@ -685,13 +815,18 @@ const ProfilePage: React.FC = () => {
                                 🏆 BTR Профи
                               </span>
                             )}
+                            {player.is_occupied && (
+                              <p className="text-xs text-red-500 mt-1">
+                                Уже связан с другим аккаунтом. Нельзя выбрать.
+                              </p>
+                            )}
                           </div>
                           <button
-                            onClick={() => handleLinkPlayer(player.id)}
-                            disabled={saving}
-                            className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:bg-gray-400"
+                            onClick={() => !player.is_occupied && handleLinkPlayer(player.id)}
+                            disabled={saving || !!player.is_occupied}
+                            className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
                           >
-                            Связать
+                            {player.is_occupied ? 'Занят' : 'Связать'}
                           </button>
                         </div>
                       ))}
@@ -704,6 +839,19 @@ const ProfilePage: React.FC = () => {
                     Игроки не найдены. Попробуй изменить запрос.
                   </div>
                 )}
+
+                <div className="mt-6 border-t border-gray-200 pt-4">
+                  <p className="text-sm text-gray-600 mb-2">
+                    Не нашёл себя в списке? Можно создать нового игрока и сразу привязать к аккаунту.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleOpenCreatePlayerModal}
+                    className="bg-purple-600 text-white px-4 py-2 rounded-md hover:bg-purple-700"
+                  >
+                    Создать нового игрока
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -786,6 +934,181 @@ const ProfilePage: React.FC = () => {
           </form>
         )}
       </div>
+
+      {/* Модалка создания нового игрока */}
+      {showCreatePlayerModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white rounded-lg shadow-lg max-w-lg w-full mx-4">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h3 className="text-lg font-semibold">Создание нового игрока</h3>
+              <button
+                type="button"
+                onClick={handleCloseCreatePlayerModal}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                ✕
+              </button>
+            </div>
+            <form onSubmit={handleSubmitCreatePlayer}>
+              <div className="px-6 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
+                {createPlayerError && (
+                  <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded text-sm">
+                    {createPlayerError}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Фамилия *</label>
+                    <input
+                      type="text"
+                      name="last_name"
+                      value={createPlayerForm.last_name}
+                      onChange={handleCreatePlayerInputChange}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Имя *</label>
+                    <input
+                      type="text"
+                      name="first_name"
+                      value={createPlayerForm.first_name}
+                      onChange={handleCreatePlayerInputChange}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Отчество</label>
+                    <input
+                      type="text"
+                      name="patronymic"
+                      value={createPlayerForm.patronymic}
+                      onChange={handleCreatePlayerInputChange}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Пол</label>
+                    <select
+                      name="gender"
+                      value={createPlayerForm.gender}
+                      onChange={handleCreatePlayerInputChange}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">Не указан</option>
+                      <option value="male">Мужской</option>
+                      <option value="female">Женский</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Город</label>
+                    <input
+                      type="text"
+                      name="city"
+                      value={createPlayerForm.city}
+                      onChange={handleCreatePlayerInputChange}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Телефон</label>
+                    <input
+                      type="tel"
+                      name="phone"
+                      value={createPlayerForm.phone}
+                      onChange={handleCreatePlayerInputChange}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Дата рождения</label>
+                    <input
+                      type="date"
+                      name="birth_date"
+                      value={createPlayerForm.birth_date}
+                      onChange={handleCreatePlayerInputChange}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Уровень игры</label>
+                    <select
+                      name="level"
+                      value={createPlayerForm.level}
+                      onChange={handleCreatePlayerInputChange}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+                    >
+                      {GAME_LEVELS.map((level) => (
+                        <option key={level.value} value={level.value}>
+                          {level.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Отображаемое имя</label>
+                    <input
+                      type="text"
+                      name="display_name"
+                      value={createPlayerForm.display_name}
+                      onChange={handleCreatePlayerInputChange}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+
+                {createPlayerSimilar.length > 0 && (
+                  <div className="mt-4 border border-yellow-200 bg-yellow-50 rounded-md p-3">
+                    <p className="text-sm font-medium text-yellow-800 mb-2">
+                      Похожие игроки уже существуют. Убедись, что среди них нет тебя:
+                    </p>
+                    <div className="max-h-40 overflow-y-auto divide-y divide-yellow-100 text-sm text-gray-700">
+                      {createPlayerSimilar.map((p) => (
+                        <div key={p.id} className="py-1">
+                          <span className="font-medium">
+                            {p.last_name} {p.first_name}
+                            {p.patronymic && ` ${p.patronymic}`}
+                          </span>
+                          {p.city && <span className="ml-2 text-gray-500">📍 {p.city}</span>}
+                          {typeof p.current_rating === 'number' && (
+                            <span className="ml-2 text-gray-500">⭐ {p.current_rating}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    {createPlayerForceAllowed && (
+                      <p className="text-xs text-yellow-700 mt-2">
+                        Если это не ты, можешь повторно нажать «Создать игрока» — будет создан новый профиль, связанный с твоим аккаунтом.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={handleCloseCreatePlayerModal}
+                  disabled={createPlayerSubmitting}
+                  className="px-4 py-2 rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300 disabled:opacity-60"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="submit"
+                  disabled={createPlayerSubmitting}
+                  className="px-4 py-2 rounded-md bg-purple-600 text-white hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                >
+                  {createPlayerSubmitting ? 'Создание...' : 'Создать игрока'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Telegram */}
       <div className="bg-white shadow rounded-lg p-6">

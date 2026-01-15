@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { formatDate } from '../services/date';
 import api, { matchApi, tournamentApi, Ruleset as ApiRuleset, ratingApi } from '../services/api';
 import { getAccessToken } from '../services/auth';
@@ -95,7 +95,7 @@ const toRoman = (num: number) => {
 export const TournamentDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const idNum = id ? Number(id) : NaN;
   const role = user?.role;
   const canManageTournament = role === 'ADMIN' || role === 'ORGANIZER';
@@ -162,6 +162,17 @@ export const TournamentDetailPage: React.FC = () => {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleCompleteTournamentClick = () => {
+    if (!t) return;
+    // Если в турнире есть игроки без рейтинга, сначала показываем диалог выбора способа завершения
+    if (t.has_zero_rating_players) {
+      setShowCompleteRatingChoice(true);
+      return;
+    }
+    // Иначе сразу запускаем процедуру завершения турнира
+    completeTournament();
   };
 
   // Универсальный поиск матча по паре ID команд в группе: учитывает разные формы сериализации
@@ -417,8 +428,13 @@ export const TournamentDetailPage: React.FC = () => {
       setError(null);
       const { data } = await api.get(`/tournaments/${id}/`);
 
-      // Для зарегистрированных пользователей при статусе created отправляем на страницу регистрации
-      if (data.status === 'created' && user?.role === 'REGISTERED') {
+      // Для турниров в статусе created отправляем на страницу регистрации,
+      // если пользователь не является организатором или администратором.
+      // Важно: не делаем этот редирект, пока AuthContext ещё загружается,
+      // чтобы после создания турнира организатор не попадал на страницу регистрации.
+      const role = user?.role;
+      const isOrganizerOrAdmin = role === 'ADMIN' || role === 'ORGANIZER';
+      if (!authLoading && data.status === 'created' && !isOrganizerOrAdmin) {
         nav(`/tournaments/${id}/registration`);
         return false;
       }
@@ -2467,7 +2483,7 @@ export const TournamentDetailPage: React.FC = () => {
 
       {/* Нижняя панель действий (в выгрузку не включаем) */}
       <div style={{ marginTop: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }} data-export-exclude="true">
-        {canManageTournament && t.status === 'created' && (
+        {t && canManageTournament && t.status === 'created' && (
           <button
             className="btn"
             onClick={handleOpenEditSettings}
@@ -2476,7 +2492,7 @@ export const TournamentDetailPage: React.FC = () => {
             Поменять настройки турнира
           </button>
         )}
-        {canManageTournament && t.status === 'active' && (
+        {t && canManageTournament && t.status === 'active' && (
           <button className="btn" onClick={handleCompleteTournamentClick} disabled={saving}>Завершить турнир</button>
         )}
         {canManageTournament && (
@@ -2489,7 +2505,7 @@ export const TournamentDetailPage: React.FC = () => {
             Удалить турнир
           </button>
         )}
-        {canManageTournament && t.status === 'active' && (
+        {t && canManageTournament && t.status === 'active' && (
           <button
             className="btn"
             onClick={async () => {

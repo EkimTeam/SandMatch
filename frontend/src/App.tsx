@@ -83,10 +83,11 @@ function App() {
                 <Route path="/rating" element={<RatingPage />} />
                 <Route path="/stats" element={<StatsPage />} />
 
-                {/* Детали турниров доступны анонимам в режиме read-only, UI-гейтинг по ролям внутри страниц */}
+                {/* Детали турниров доступны анонимам в режиме read-only, UI-гейтинг по ролям внутри страниц.
+                    Страница регистрации турнира доступна всем, включая анонимов. */}
                 <Route path="/tournaments/:id/round_robin" element={<TournamentDetailPage />} />
                 <Route path="/tournaments/:id" element={<TournamentDetailPage />} />
-                <Route path="/tournaments/:id/registration" element={<RequireAuth><TournamentRegistrationPage /></RequireAuth>} />
+                <Route path="/tournaments/:id/registration" element={<TournamentRegistrationPage />} />
                 <Route path="/tournaments/:id/knockout" element={<KnockoutPage />} />
                 <Route path="/tournaments/:id/king" element={<KingPage />} />
                 <Route path="/tournaments/:id/king-old" element={<RequireAdmin><KingPageOld /></RequireAdmin>} />

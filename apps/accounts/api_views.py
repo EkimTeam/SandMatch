@@ -78,10 +78,33 @@ def me(request):
     """Информация о текущем пользователе и его профиле."""
 
     user: User = request.user
+
     try:
         profile = user.profile
     except UserProfile.DoesNotExist:  # type: ignore[attr-defined]
         profile = None
+
+    # Определяем player_id через TelegramUser, чтобы учитывать новую логику привязки игрока
+    telegram_id = getattr(profile, "telegram_id", None)
+    telegram_username = getattr(profile, "telegram_username", None)
+    player_id = getattr(profile, "player_id", None)
+
+    try:
+        from apps.telegram_bot.models import TelegramUser
+
+        tu = (
+            TelegramUser.objects.select_related("player")
+            .filter(user=user)
+            .first()
+        )
+        if tu and tu.player:
+            player_id = tu.player_id
+            # Приоритетно берём telegram_id/username из фактической Telegram-связки
+            telegram_id = tu.telegram_id
+            telegram_username = tu.username
+    except Exception:
+        # Если модель TelegramUser недоступна или произошла ошибка, тихо игнорируем
+        pass
 
     return Response(
         {
@@ -93,9 +116,9 @@ def me(request):
             "is_staff": user.is_staff,
             "is_superuser": user.is_superuser,
             "role": getattr(profile, "role", None),
-            "player_id": getattr(profile, "player_id", None),
-            "telegram_id": getattr(profile, "telegram_id", None),
-            "telegram_username": getattr(profile, "telegram_username", None),
+            "player_id": player_id,
+            "telegram_id": telegram_id,
+            "telegram_username": telegram_username,
         }
     )
 
@@ -408,6 +431,253 @@ def update_profile(request):
     if serializer.is_valid():
         user = serializer.save()
         return Response(UserProfileSerializer(user).data)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def create_player_and_link(request):
+    """Создать нового игрока и связать его с текущим пользователем."""
+
+    from datetime import date as _date
+    from apps.players.models import Player
+    from apps.telegram_bot.models import TelegramUser
+    from .serializers import UserProfileSerializer
+
+    user = request.user
+    data = request.data or {}
+
+    last_name = (data.get("last_name") or "").strip()
+    first_name = (data.get("first_name") or "").strip()
+    if not last_name or not first_name:
+        return Response({"detail": "last_name и first_name обязательны"}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Пользователь может создать только одного игрока
+    if Player.objects.filter(created_by=user).exists():
+        return Response(
+            {
+                "detail": "Вы уже создавали игрока. Повторное создание недоступно. Обратитесь к администратору, если нужна помощь.",
+                "code": "player_already_created",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    force = bool(data.get("force"))
+
+    # Проверяем наличие похожих игроков (фамилия+имя)
+    similar_qs = Player.objects.filter(
+        last_name__iexact=last_name,
+        first_name__iexact=first_name,
+    )
+
+    if similar_qs.exists() and not force:
+        tus = TelegramUser.objects.filter(player__in=similar_qs).values("player_id", "user_id")
+        by_player_id = {row["player_id"]: row["user_id"] for row in tus}
+
+        similar = []
+        for p in similar_qs[:10]:
+            linked_user_id = by_player_id.get(p.id)
+            similar.append(
+                {
+                    "id": p.id,
+                    "last_name": p.last_name,
+                    "first_name": p.first_name,
+                    "patronymic": p.patronymic or "",
+                    "city": p.city or "",
+                    "current_rating": p.current_rating,
+                    "is_occupied": linked_user_id is not None,
+                }
+            )
+
+        return Response(
+            {
+                "detail": "Найдены игроки с таким же ФИО.",
+                "code": "similar_players_found",
+                "similar_players": similar,
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    # Создаём игрока
+    player = Player(
+        last_name=last_name,
+        first_name=first_name,
+        patronymic=(data.get("patronymic") or "").strip() or None,
+        level=(data.get("level") or "").strip() or None,
+        city=(data.get("city") or "").strip(),
+        phone=(data.get("phone") or "").strip() or None,
+        gender=(data.get("gender") or None) or None,
+        created_by=user,
+    )
+
+    birth_raw = (data.get("birth_date") or "").strip()
+    if birth_raw:
+        try:
+            player.birth_date = _date.fromisoformat(birth_raw)
+        except Exception:
+            return Response({"detail": "Некорректная дата рождения"}, status=status.HTTP_400_BAD_REQUEST)
+
+    display_name = (data.get("display_name") or "").strip()
+    if display_name:
+        player.display_name = display_name
+
+    player.save()
+
+    # Связываем через TelegramUser
+    telegram_user = TelegramUser.objects.filter(user=user).first()
+    if telegram_user:
+        if telegram_user.player and telegram_user.player != player:
+            return Response(
+                {
+                    "detail": f"Вы уже связаны с игроком {telegram_user.player.first_name} {telegram_user.player.last_name}",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        telegram_user.player = player
+        telegram_user.save(update_fields=["player"])
+    else:
+        TelegramUser.objects.create(
+            telegram_id=None,
+            user=user,
+            player=player,
+            first_name=user.first_name or "",
+            last_name=user.last_name or "",
+        )
+
+    return Response(UserProfileSerializer(user).data)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def create_player_and_link(request):
+    """Создать нового игрока и связать его с текущим пользователем.
+
+    POST /api/auth/profile/create-player-and-link/
+
+    Body: {
+      "last_name": str,
+      "first_name": str,
+      "patronymic"?: str,
+      "level"?: str,
+      "birth_date"?: "YYYY-MM-DD",
+      "phone"?: str,
+      "display_name"?: str,
+      "city"?: str,
+      "gender"?: "male"|"female",
+      "force"?: bool  # игнорировать предупреждение о похожих игроках
+    }
+    """
+
+    from datetime import date as _date
+    from django.db.models import Q
+    from apps.players.models import Player
+    from apps.telegram_bot.models import TelegramUser
+    from .serializers import UserProfileSerializer
+
+    user = request.user
+    data = request.data or {}
+
+    last_name = (data.get("last_name") or "").strip()
+    first_name = (data.get("first_name") or "").strip()
+    if not last_name or not first_name:
+        return Response({"detail": "last_name и first_name обязательны"}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Пользователь может создать только одного игрока
+    if Player.objects.filter(created_by=user).exists():
+        return Response(
+            {
+                "detail": "Вы уже создавали игрока. Повторное создание недоступно. Обратитесь к администратору, если нужна помощь.",
+                "code": "player_already_created",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    force = bool(data.get("force"))
+
+    # Поиск похожих игроков по ФИО
+    similar_qs = Player.objects.filter(
+        last_name__iexact=last_name,
+        first_name__iexact=first_name,
+    )
+
+    if similar_qs.exists() and not force:
+        tus = (
+            TelegramUser.objects.filter(player__in=similar_qs)
+            .values("player_id", "user_id")
+        )
+        by_player_id = {row["player_id"]: row["user_id"] for row in tus}
+
+        similar = []
+        for p in similar_qs[:10]:
+            linked_user_id = by_player_id.get(p.id)
+            similar.append(
+                {
+                    "id": p.id,
+                    "last_name": p.last_name,
+                    "first_name": p.first_name,
+                    "patronymic": p.patronymic or "",
+                    "city": p.city or "",
+                    "current_rating": p.current_rating,
+                    "is_occupied": linked_user_id is not None,
+                }
+            )
+
+        return Response(
+            {
+                "detail": "Найдены игроки с таким же ФИО.",
+                "code": "similar_players_found",
+                "similar_players": similar,
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    # Создаём игрока
+    player = Player(
+        last_name=last_name,
+        first_name=first_name,
+        patronymic=(data.get("patronymic") or "").strip() or None,
+        level=(data.get("level") or "").strip() or None,
+        city=(data.get("city") or "").strip(),
+        phone=(data.get("phone") or "").strip() or None,
+        gender=(data.get("gender") or None) or None,
+        created_by=user,
+    )
+
+    birth_raw = (data.get("birth_date") or "").strip()
+    if birth_raw:
+        try:
+            player.birth_date = _date.fromisoformat(birth_raw)
+        except Exception:
+            return Response({"detail": "Некорректная дата рождения"}, status=status.HTTP_400_BAD_REQUEST)
+
+    display_name = (data.get("display_name") or "").strip()
+    if display_name:
+        player.display_name = display_name
+
+    # current_rating остаётся по умолчанию = 0
+    player.save()
+
+    # Линкуем пользователя с созданным игроком
+    telegram_user = TelegramUser.objects.filter(user=user).first()
+    if telegram_user:
+        if telegram_user.player and telegram_user.player != player:
+            return Response(
+                {
+                    "detail": f"Вы уже связаны с игроком {telegram_user.player.first_name} {telegram_user.player.last_name}",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        telegram_user.player = player
+        telegram_user.save(update_fields=["player"])
+    else:
+        TelegramUser.objects.create(
+            telegram_id=None,
+            user=user,
+            player=player,
+            first_name=user.first_name or "",
+            last_name=user.last_name or "",
+        )
+
+    return Response(UserProfileSerializer(user).data)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -515,31 +785,41 @@ def search_players_for_link(request):
     Поиск игроков для связывания с пользователем
     
     GET /api/auth/profile/search-players/?q=Иван+Иванов
+    Возвращает также флаг is_occupied для игроков, уже связанных с другими аккаунтами.
     """
     from apps.players.models import Player
+    from apps.telegram_bot.models import TelegramUser
     from django.db.models import Q
     
     query = request.GET.get('q', '').strip()
     if not query or len(query) < 2:
         return Response({"players": []})
-    
-    # Разбиваем запрос на слова (первое слово - имя, второе - фамилия)
+
     parts = query.split()
-    first = parts[0]
-    last = parts[1] if len(parts) > 1 else ''
-    
-    # Ищем по имени и фамилии
-    q_filter = Q()
-    if first:
-        q_filter &= Q(first_name__icontains=first)
-    if last:
-        q_filter &= Q(last_name__icontains=last)
-    
-    # Исключаем игроков, уже связанных с кем-то через TelegramUser
-    players = Player.objects.filter(q_filter).filter(telegram_profile__isnull=True)[:20]
+
+    # Базовый фильтр: одно слово — ищем и по имени, и по фамилии
+    if len(parts) == 1:
+        term = parts[0]
+        q_filter = Q(first_name__icontains=term) | Q(last_name__icontains=term)
+    else:
+        # Два и более слова — поддерживаем оба порядка: "имя фамилия" и "фамилия имя"
+        first = parts[0]
+        last = parts[1]
+
+        q_name_first = Q(first_name__icontains=first) & Q(last_name__icontains=last)
+        q_name_last = Q(first_name__icontains=last) & Q(last_name__icontains=first)
+        q_filter = q_name_first | q_name_last
+
+    players = list(Player.objects.filter(q_filter)[:20])
+
+    # Определяем занятость игроков через TelegramUser
+    tus = TelegramUser.objects.filter(player__in=players).values("player_id", "user_id")
+    occupied_map = {row["player_id"]: row["user_id"] for row in tus}
     
     results = []
     for player in players:
+        linked_user_id = occupied_map.get(player.id)
+        is_occupied = linked_user_id is not None and linked_user_id != request.user.id
         results.append({
             'id': player.id,
             'first_name': player.first_name,
@@ -550,6 +830,7 @@ def search_players_for_link(request):
             'level': player.level or '',
             'city': player.city or '',
             'is_profi': player.is_profi,
+            'is_occupied': is_occupied,
         })
     
     return Response({"players": results})
