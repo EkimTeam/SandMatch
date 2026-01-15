@@ -45,7 +45,7 @@ type SetFormatDict = { id: number; name: string };
 export const KingPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const role = user?.role;
   const canManageTournament = role === 'ADMIN' || role === 'ORGANIZER';
   const canManageMatches = canManageTournament || role === 'REFEREE';
@@ -256,8 +256,13 @@ export const KingPage: React.FC = () => {
       setLoading(true);
       const data = await tournamentApi.getById(Number(id));
 
-      // REGISTERED-пользователь в статусе created должен видеть страницу регистрации, а не страницу управления King-турниром
-      if (user?.role === 'REGISTERED' && (data as any).status === 'created') {
+      // Турнир в статусе created: только ORGANIZER/ADMIN видят страницу King,
+      // остальные (включая анонимов, REGISTERED и REFEREE) попадают на страницу регистрации.
+      // Не выполняем редирект, пока AuthContext ещё загружается, чтобы сразу после создания
+      // организатора не отправляло на страницу регистрации.
+      const role = user?.role;
+      const isOrganizerOrAdmin = role === 'ADMIN' || role === 'ORGANIZER';
+      if (!authLoading && (data as any).status === 'created' && !isOrganizerOrAdmin) {
         nav(`/tournaments/${id}/registration`);
         return;
       }

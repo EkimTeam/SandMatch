@@ -18,7 +18,7 @@ import { useAuth } from '../context/AuthContext';
 export const KnockoutPage: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const role = user?.role;
   const canManageStructure = role === 'ADMIN' || role === 'ORGANIZER';
   const canManageMatches = canManageStructure || role === 'REFEREE';
@@ -275,8 +275,12 @@ export const KnockoutPage: React.FC = () => {
       try {
         const tournament = await tournamentApi.getById(tournamentId);
 
-        // REGISTERED-пользователь в статусе created должен работать через страницу регистрации, а не через страницу сетки
-        if (role === 'REGISTERED' && tournament.status === 'created') {
+        // Турнир в статусе created: только ORGANIZER/ADMIN видят сетку,
+        // остальные (включая анонимов и REFEREE/REGISTERED) работают через страницу регистрации.
+        // Не выполняем редирект, пока AuthContext ещё загружается, чтобы сразу после создания
+        // организатора не отправляло на страницу регистрации.
+        const isOrganizerOrAdmin = role === 'ADMIN' || role === 'ORGANIZER';
+        if (!authLoading && tournament.status === 'created' && !isOrganizerOrAdmin) {
           navigate(`/tournaments/${tournamentId}/registration`);
           return;
         }

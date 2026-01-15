@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { formatDate, formatDateTime } from '../services/date';
 import { tournamentRegistrationApi, WebRegistrationStateResponse, WebTournamentRegistration } from '../services/api';
 
 const TournamentRegistrationPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const idNum = id ? Number(id) : NaN;
 
@@ -15,13 +16,19 @@ const TournamentRegistrationPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const canView = !!user;
-
   const loadState = async () => {
     if (!idNum || Number.isNaN(idNum)) return;
     try {
       setLoading(true);
       setError(null);
+
+      // Анонимный пользователь: используем публичный эндпоинт, который не требует авторизации
+      if (!user) {
+        const data = await tournamentRegistrationApi.getPublicState(idNum);
+        setState(data);
+        return;
+      }
+
       const data = await tournamentRegistrationApi.getState(idNum);
       setState(data);
     } catch (e: any) {
@@ -75,14 +82,6 @@ const TournamentRegistrationPage: React.FC = () => {
     }
   };
 
-  if (!canView) {
-    return (
-      <div className="container mx-auto px-4 py-8">
-        <div className="text-center text-gray-700">Необходимо войти в систему.</div>
-      </div>
-    );
-  }
-
   if (loading || !state) {
     return (
       <div className="container mx-auto px-4 py-8">
@@ -93,6 +92,10 @@ const TournamentRegistrationPage: React.FC = () => {
 
   const { tournament, participants } = state;
   const myReg: WebTournamentRegistration | null = state.my_registration;
+
+  const isAnon = !user;
+  const isRegisteredUser = !!user && user.role === 'REGISTERED';
+  const hasLinkedPlayer = !!user?.player_id;
 
   const renderStatusLabel = (status: string) => {
     if (status === 'created') return 'Идет регистрация';
@@ -153,6 +156,7 @@ const TournamentRegistrationPage: React.FC = () => {
 
       <div className="bg-white shadow rounded-lg p-4 mb-6">
         <h2 className="text-xl font-semibold mb-3">Мой статус</h2>
+
         {myReg ? (
           <div className="mb-3">
             <p className="text-gray-800 mb-1">
@@ -171,22 +175,43 @@ const TournamentRegistrationPage: React.FC = () => {
           <p className="mb-3 text-gray-700">Вы еще не зарегистрированы на этот турнир.</p>
         )}
 
-        <div className="flex flex-wrap gap-2">
-          {!myReg && tournament.participant_mode === 'singles' && (
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          {/* Анонимный пользователь */}
+          {isAnon && (
+            <>
+              <p className="text-gray-700 text-sm">
+                Для регистрации на турнир надо зарегистрироваться на BeachPlay.ru и связать свой аккаунт с игроком из базы данных BeachPlay.ru.
+              </p>
+              <button
+                type="button"
+                onClick={() => navigate('/register')}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm self-start"
+              >
+                Перейти к регистрации в BeachPlay.ru
+              </button>
+            </>
+          )}
+
+          {/* REGISTERED без привязанного BP-игрока и без регистрации на этот турнир
+              (временно отключено, т.к. признак hasLinkedPlayer на фронте может быть неточным) */}
+
+          {/* REGISTERED c привязанным BP-игроком — кнопка регистрации */}
+          {isRegisteredUser && hasLinkedPlayer && !myReg && tournament.participant_mode === 'singles' && (
             <button
               onClick={handleRegisterSingle}
               disabled={actionLoading}
-              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400"
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 text-sm self-start"
             >
               Зарегистрироваться
             </button>
           )}
 
-          {myReg && (
+          {/* Отмена регистрации доступна для вошедшего пользователя с myReg */}
+          {myReg && !!user && (
             <button
               onClick={handleCancelRegistration}
               disabled={actionLoading}
-              className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:bg-gray-400"
+              className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:bg-gray-400 text-sm self-start"
             >
               Отменить регистрацию
             </button>

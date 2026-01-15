@@ -1,4 +1,6 @@
 from django.db import models
+from django.contrib.auth.models import User
+from django.contrib.auth.models import User
 
 class Player(models.Model):
     last_name = models.CharField("Фамилия", max_length=100)
@@ -22,6 +24,22 @@ class Player(models.Model):
     display_name = models.CharField("Отображаемое имя", max_length=150, blank=True)
     city = models.CharField("Город", max_length=100, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_players",
+        verbose_name="Создан пользователем",
+    )
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_players",
+        verbose_name="Создан пользователем",
+    )
     btr_player = models.OneToOneField(
         "btr.BtrPlayer",
         verbose_name="Профиль BTR",

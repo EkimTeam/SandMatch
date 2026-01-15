@@ -34,8 +34,29 @@ export async function obtainToken(username: string, password: string): Promise<T
     body: JSON.stringify({ username, password })
   });
   if (!resp.ok) {
-    const errText = await resp.text();
-    throw new Error(errText || 'Failed to obtain token');
+    let message = 'Не удалось выполнить вход. Попробуйте ещё раз.';
+    try {
+      const data = await resp.json();
+      const detail = (data && (data.detail || (Array.isArray(data.non_field_errors) ? data.non_field_errors[0] : null))) || '';
+
+      if (resp.status === 401) {
+        // Неверный логин или пароль / неактивный аккаунт
+        message = 'Неверный логин или пароль.';
+      }
+
+      if (typeof detail === 'string' && detail) {
+        if (detail.includes('No active account found with the given credentials')) {
+          message = 'Неверный логин или пароль.';
+        } else {
+          // Если бэкенд вернул осмысленное сообщение (в том числе на русском) — покажем его
+          message = detail;
+        }
+      }
+    } catch {
+      // Если не удалось распарсить JSON, оставляем общее сообщение
+    }
+
+    throw new Error(message);
   }
   const data = await resp.json();
   // data shape: { access, refresh }

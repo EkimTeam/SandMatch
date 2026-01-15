@@ -11,6 +11,8 @@ from .api_views import (
     search_players_for_link,
     link_player,
     unlink_player,
+    create_player_and_link,
+    create_player_and_link,
     users_list,
     set_user_role,
     delete_user,
@@ -30,6 +32,8 @@ urlpatterns = [
     path("profile/search-players/", search_players_for_link, name="auth_search_players"),
     path("profile/link-player/", link_player, name="auth_link_player"),
     path("profile/unlink-player/", unlink_player, name="auth_unlink_player"),
+    path("profile/create-player-and-link/", create_player_and_link, name="auth_create_player_and_link"),
+    path("profile/create-player-and-link/", create_player_and_link, name="auth_create_player_and_link"),
     # Admin endpoints
     path("users/", users_list, name="auth_users_list"),
     path("users/<int:user_id>/set_role/", set_user_role, name="auth_set_user_role"),

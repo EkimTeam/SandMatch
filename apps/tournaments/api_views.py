@@ -1135,7 +1135,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["get"], url_path="registration_state", permission_classes=[IsAuthenticated])
     def registration_state(self, request, pk=None):
-        """Состояние регистрации турнира для веб-интерфейса.
+        """Состояние регистрации турнира для веб-интерфейса (для аутентифицированных пользователей).
 
         Возвращает:
         - краткие данные турнира;
@@ -1191,6 +1191,60 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 },
                 "participants": participants_payload,
                 "my_registration": my_registration_data,
+            }
+        )
+
+    @action(detail=True, methods=["get"], url_path="registration_state_public", permission_classes=[AllowAny])
+    def registration_state_public(self, request, pk=None):
+        """Публичное состояние регистрации турнира для веб-интерфейса.
+
+        Доступно анонимным пользователям и возвращает:
+        - краткие данные турнира;
+        - список участников (основной список, резерв, ищущие пару);
+        - my_registration всегда = null.
+        """
+
+        tournament: Tournament = self.get_object()
+        self._ensure_can_view_tournament(request, tournament)
+
+        registrations_qs = TournamentRegistration.objects.filter(tournament=tournament).select_related("player", "partner")
+
+        main_list = registrations_qs.filter(status=TournamentRegistration.Status.MAIN_LIST)
+        reserve_list = registrations_qs.filter(status=TournamentRegistration.Status.RESERVE_LIST)
+        looking_for_partner = registrations_qs.filter(status=TournamentRegistration.Status.LOOKING_FOR_PARTNER)
+
+        participants_payload = MiniAppTournamentParticipantsSerializer(
+            {
+                "main_list": main_list,
+                "reserve_list": reserve_list,
+                "looking_for_partner": looking_for_partner,
+            }
+        ).data
+
+        total_registered = registrations_qs.count()
+        total_entries = getattr(tournament, "entries", None)
+        participants_count = total_entries.count() if total_entries is not None else None
+
+        return Response(
+            {
+                "tournament": {
+                    "id": tournament.id,
+                    "name": tournament.name,
+                    "status": tournament.status,
+                    "system": tournament.system,
+                    "participant_mode": tournament.participant_mode,
+                    "planned_participants": tournament.planned_participants,
+                    "date": tournament.date,
+                    "participants_count": participants_count,
+                    "registered_count": total_registered,
+                    "get_system_display": tournament.get_system_display() if hasattr(tournament, "get_system_display") else None,
+                    "get_participant_mode_display": tournament.get_participant_mode_display() if hasattr(tournament, "get_participant_mode_display") else None,
+                    "organizer_name": (
+                        tournament.created_by.get_full_name() or tournament.created_by.username
+                    ) if getattr(tournament, "created_by", None) else None,
+                },
+                "participants": participants_payload,
+                "my_registration": None,
             }
         )
 
