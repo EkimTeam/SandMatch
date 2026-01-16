@@ -17,6 +17,7 @@ export const RegisterPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+  const [pdnConsent, setPdnConsent] = useState(false);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,6 +43,11 @@ export const RegisterPage: React.FC = () => {
       return;
     }
 
+    if (!pdnConsent) {
+      setError('Для регистрации необходимо согласие на обработку персональных данных.');
+      return;
+    }
+
     setLoading(true);
     try {
       await authApi.register({
@@ -50,6 +56,7 @@ export const RegisterPage: React.FC = () => {
         email: email || undefined,
         first_name: firstName || undefined,
         last_name: lastName || undefined,
+        pdn_consent: true,
       });
       // сразу логиним пользователя
       await obtainToken(username, password);
@@ -109,6 +116,28 @@ export const RegisterPage: React.FC = () => {
               {showPassword ? 'Скрыть' : 'Показать'}
             </button>
           </div>
+        </div>
+        <div className="flex items-start gap-2 text-sm text-gray-700">
+          <input
+            id="pdn-consent"
+            type="checkbox"
+            checked={pdnConsent}
+            onChange={(e) => setPdnConsent(e.target.checked)}
+            className="mt-1"
+            required
+          />
+          <label htmlFor="pdn-consent">
+            Я даю согласие на обработку моих персональных данных и соглашаюсь с{' '}
+            <a
+              href="/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary-600 hover:underline"
+            >
+              Политикой обработки персональных данных
+            </a>
+            .
+          </label>
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Ввести пароль еще раз</label>

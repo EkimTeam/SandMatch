@@ -2,6 +2,7 @@ from django.urls import path
 from .api_views import (
     register,
     me,
+    export_me,
     password_reset,
     password_reset_confirm,
     get_profile,
@@ -22,6 +23,7 @@ from .api_views import (
 urlpatterns = [
     path("register/", register, name="auth_register"),
     path("me/", me, name="auth_me"),
+    path("profile/export/", export_me, name="auth_export_me"),
     path("password/reset/", password_reset, name="auth_password_reset"),
     path("password/reset/confirm/", password_reset_confirm, name="auth_password_reset_confirm"),
     # Profile endpoints

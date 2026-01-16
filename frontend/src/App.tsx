@@ -20,6 +20,7 @@ import { PasswordResetConfirmPage } from './pages/PasswordResetConfirmPage';
 import { ForbiddenPage } from './pages/ForbiddenPage';
 import { UserRolesPage } from './pages/UserRolesPage';
 import ProfilePage from './pages/ProfilePage';
+import PrivacyPolicyPage from './pages/PrivacyPolicyPage';
 import { getAccessToken } from './services/auth';
 import { AuthProvider, useAuth } from './context/AuthContext';
 
@@ -77,6 +78,7 @@ function App() {
                 <Route path="/register" element={<RegisterPage />} />
                 <Route path="/reset-password" element={<PasswordResetRequestPage />} />
                 <Route path="/reset-password/confirm" element={<PasswordResetConfirmPage />} />
+                <Route path="/privacy" element={<PrivacyPolicyPage />} />
                 {/* Публичные страницы: турнирный обзор, рейтинг и сводная статистика */}
                 <Route path="/" element={<TournamentListPage />} />
                 <Route path="/tournaments" element={<TournamentListPage />} />

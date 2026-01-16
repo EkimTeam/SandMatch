@@ -3736,7 +3736,10 @@ class PlayerCreateView(APIView):
     def post(self, request):
         serializer = PlayerSerializer(data=request.data)
         if serializer.is_valid():
-            player = serializer.save()
+            # При создании игрока из модалки выбора участника турнира
+            # сохраняем информацию о пользователе, который создал игрока.
+            # Лимитов по количеству таких игроков не вводим.
+            player = serializer.save(created_by=request.user)
             return Response(PlayerSerializer(player).data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 

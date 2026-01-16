@@ -84,7 +84,7 @@ services:
 
 ## Мониторинг и логирование
 
-### Просмотр логов:
+### Просмотр логов (общий случай):
 
 ```bash
 # Последние 100 строк лога
@@ -95,6 +95,19 @@ tail -f /var/log/btr_import.log
 
 # Поиск ошибок в логе
 grep -i "error\|ошибка" /var/log/btr_import.log
+```
+
+Для прод-конфигурации SandMatch пути отличаются:
+
+```bash
+# Последние 100 строк crontab-лога импорта BTR на проде
+tail -n 100 /opt/sandmatch/logs/btr_cron.log
+
+# Следить за логом в реальном времени
+tail -f /opt/sandmatch/logs/btr_cron.log
+
+# Поиск ошибок
+grep -i "error\|ошибка" /opt/sandmatch/logs/btr_cron.log
 ```
 
 ### Проверка статуса последнего импорта:

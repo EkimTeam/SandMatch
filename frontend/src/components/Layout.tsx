@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import CookieNotice from './CookieNotice';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -261,12 +262,15 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
           )}
         </div>
       </header>
-      
+
       <main className="py-6">
         <div className="container">
           {children}
         </div>
       </main>
+
+      {/* Баннер про использование cookies */}
+      <CookieNotice />
     </div>
   );
 };

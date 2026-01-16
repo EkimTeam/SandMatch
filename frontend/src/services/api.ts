@@ -975,6 +975,12 @@ export interface CreatePlayerAndLinkPayload {
   force?: boolean;
 }
 
+export interface ProfileExportPayload {
+  user: any;
+  profile: any;
+  tournament_registrations: any[];
+}
+
 export const profileApi = {
   // Получение профиля
   getProfile: async (): Promise<UserProfile> => {
@@ -1020,6 +1026,12 @@ export const profileApi = {
   createPlayerAndLink: async (payload: CreatePlayerAndLinkPayload): Promise<UserProfile> => {
     const { data } = await api.post('/auth/profile/create-player-and-link/', payload);
     return data;
+  },
+
+  // Выгрузка всех персональных данных текущего пользователя
+  exportData: async (): Promise<ProfileExportPayload> => {
+    const { data } = await api.get('/auth/profile/export/');
+    return data as ProfileExportPayload;
   },
 };
 
