@@ -268,6 +268,8 @@ export const MatchScoreModal: React.FC<MatchScoreModalProps> = ({
           padding: 24,
           minWidth: 420,
           maxWidth: 640,
+          maxHeight: '90vh',
+          overflowY: 'auto',
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -290,23 +292,49 @@ export const MatchScoreModal: React.FC<MatchScoreModalProps> = ({
               </div>
               {s.expanded && (
                 <div style={{ padding: '8px 12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  {/* Быстрые кнопки для обычного сета (в решающем TB-сете скрыты) */}
-                  <div>
-                    <div style={{ fontWeight: 600, marginBottom: 6 }}>{team1.name}</div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                      {(allowTBOnly && idx === maxSets - 1) ? null : quickPresets().map(([a,b], i) => (
-                        <button key={i} type="button" className="btn btn-outline" onClick={() => applyScore(idx, a, b)}>{a}:{b}</button>
-                      ))}
-                    </div>
+                  <div style={{ gridColumn: '1 / span 2', display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                    <div style={{ flex: 1, fontWeight: 600, textAlign: 'center' }}>{team1.name}</div>
+                    <div style={{ flex: 1, fontWeight: 600, textAlign: 'center' }}>{team2.name}</div>
                   </div>
-                  <div>
-                    <div style={{ fontWeight: 600, marginBottom: 6 }}>{team2.name}</div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                      {(allowTBOnly && idx === maxSets - 1) ? null : quickPresets().map(([a,b], i) => (
-                        <button key={i} type="button" className="btn btn-outline" onClick={() => applyScore(idx, b, a)}>{b}:{a}</button>
-                      ))}
-                    </div>
-                  </div>
+
+                  {!(allowTBOnly && idx === maxSets - 1) && (() => {
+                    const presets = quickPresets();
+                    const combined: Array<[number, number]> = [];
+                    presets.forEach(([a, b]) => {
+                      combined.push([a, b]);
+                      combined.push([b, a]);
+                    });
+                    const rows: Array<Array<[number, number]>> = [];
+                    for (let i = 0; i < combined.length; i += 6) {
+                      rows.push(combined.slice(i, i + 6));
+                    }
+                    return (
+                      <div style={{ gridColumn: '1 / span 2', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {rows.map((row, rIdx) => (
+                          <div
+                            key={rIdx}
+                            style={{
+                              display: 'flex',
+                              flexWrap: 'wrap',
+                              gap: 6,
+                              justifyContent: 'center',
+                            }}
+                          >
+                            {row.map(([a, b], i) => (
+                              <button
+                                key={`${rIdx}-${i}`}
+                                type="button"
+                                className="btn btn-outline"
+                                onClick={() => applyScore(idx, a, b)}
+                              >
+                                {a}:{b}
+                              </button>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
 
                   {/* Уточнение тай-брейка для 7:6 / 6:7 */}
                   {s.games1 != null && s.games2 != null && isTiebreakScore(s.games1, s.games2) && (
