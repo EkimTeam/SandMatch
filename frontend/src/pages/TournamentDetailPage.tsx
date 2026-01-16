@@ -2392,6 +2392,17 @@ export const TournamentDetailPage: React.FC = () => {
         />
       )}
 
+      {/* Модалка редактирования настроек турнира (круговая система) */}
+      {showEditModal && t && (
+        <EditTournamentModal
+          tournament={t}
+          setFormats={setFormats}
+          rulesets={rrRulesets}
+          onSubmit={handleEditSettingsSubmit}
+          onClose={() => setShowEditModal(false)}
+        />
+      )}
+
       {/* Модалка выбора формата расписания */}
       {schedulePatternModal && (
         <SchedulePatternModal
