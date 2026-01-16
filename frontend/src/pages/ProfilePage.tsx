@@ -65,6 +65,7 @@ const ProfilePage: React.FC = () => {
   const [createPlayerError, setCreatePlayerError] = useState<string | null>(null);
   const [createPlayerSimilar, setCreatePlayerSimilar] = useState<any[]>([]);
   const [createPlayerForceAllowed, setCreatePlayerForceAllowed] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     loadProfile();
@@ -176,6 +177,29 @@ const ProfilePage: React.FC = () => {
       setError(String(detail));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleExportData = async () => {
+    try {
+      setExporting(true);
+      setError(null);
+      setSuccess(null);
+      const data = await profileApi.exportData();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `sandmatch_profile_export_${profile.username}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setSuccess('Файл с персональными данными успешно сформирован и скачан.');
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || 'Ошибка выгрузки персональных данных');
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -741,7 +765,11 @@ const ProfilePage: React.FC = () => {
                   </div>
                 </div>
               </div>
-            ) : null}
+            ) : (
+              <p className="text-sm text-gray-500 mb-4">
+                Мы не нашли игроков с таким ФИО. Попробуй поиск или создание нового игрока.
+              </p>
+            )}
 
             {!showPlayerSearch ? (
               <button
@@ -1109,6 +1137,22 @@ const ProfilePage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Выгрузка персональных данных */}
+      <div className="bg-white shadow rounded-lg p-6 mb-6">
+        <h2 className="text-2xl font-semibold mb-4">Персональные данные</h2>
+        <p className="text-sm text-gray-600 mb-4">
+          Здесь можно скачать файл с основными персональными данными, которые хранятся в SandMatch по вашему аккаунту.
+        </p>
+        <button
+          type="button"
+          onClick={handleExportData}
+          disabled={exporting}
+          className="bg-indigo-600 text-white px-6 py-2 rounded-md hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+        >
+          {exporting ? 'Формирование файла...' : 'Скачать мои данные (JSON)'}
+        </button>
+      </div>
 
       {/* Telegram */}
       <div className="bg-white shadow rounded-lg p-6">

@@ -3,13 +3,14 @@ from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.utils import timezone
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 
-from .models import UserProfile
+from .models import UserProfile, PDNActionLog
 from .permissions import IsAdmin, _get_user_role, Role
 
 @api_view(["POST"])
@@ -36,9 +37,14 @@ def register(request):
     email = (data.get("email") or "").strip()
     first_name = (data.get("first_name") or "").strip()
     last_name = (data.get("last_name") or "").strip()
+    pdn_consent = bool(data.get("pdn_consent"))
 
     if not username or not password:
         return Response({"detail": "username и password обязательны"}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Явное согласие на обработку ПДн обязательно при регистрации
+    if not pdn_consent:
+        return Response({"detail": "Требуется согласие на обработку персональных данных"}, status=status.HTTP_400_BAD_REQUEST)
 
     if User.objects.filter(username=username).exists():
         return Response({"detail": "Пользователь с таким username уже существует"}, status=status.HTTP_400_BAD_REQUEST)
@@ -58,6 +64,10 @@ def register(request):
 
     # Профиль создаётся сигналами, но на всякий случай убедимся, что он есть
     profile, _ = UserProfile.objects.get_or_create(user=user)
+    # Фиксируем факт согласия на обработку ПДн
+    profile.pdn_consent_given_at = timezone.now()
+    profile.pdn_consent_version = "1.0"
+    profile.save(update_fields=["pdn_consent_given_at", "pdn_consent_version"])
 
     return Response(
         {
@@ -119,6 +129,116 @@ def me(request):
             "player_id": player_id,
             "telegram_id": telegram_id,
             "telegram_username": telegram_username,
+        }
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def export_me(request):
+    """Выгрузка персональных данных текущего пользователя.
+
+    Возвращает агрегированный JSON с основными данными User, UserProfile
+    и связанным Player (через существующие сериализаторы профиля).
+    """
+
+    from .serializers import UserProfileSerializer
+    from apps.players.models import Player
+    from apps.tournaments.registration_models import TournamentRegistration
+
+    user: User = request.user
+
+    try:
+        profile = user.profile
+    except UserProfile.DoesNotExist:  # type: ignore[attr-defined]
+        profile = None
+
+    user_block = UserProfileSerializer(user).data
+
+    profile_block = None
+    if profile is not None:
+        profile_block = {
+            "role": profile.role,
+            "telegram_id": getattr(profile, "telegram_id", None),
+            "telegram_username": getattr(profile, "telegram_username", None),
+            "pdn_consent_given_at": profile.pdn_consent_given_at,
+            "pdn_consent_version": profile.pdn_consent_version,
+            "created_at": profile.created_at,
+            "updated_at": profile.updated_at,
+        }
+
+    # Определяем всех игроков, связанных с пользователем
+    player_ids = set()
+
+    # 1) Связь через TelegramUser (используется в профиле)
+    try:
+        from apps.telegram_bot.models import TelegramUser
+
+        tu = TelegramUser.objects.select_related("player").filter(user=user).first()
+        if tu and tu.player_id:
+            player_ids.add(tu.player_id)
+    except Exception:
+        pass
+
+    # 2) Связь через UserProfile.player (если используется)
+    if profile is not None and getattr(profile, "player_id", None):
+        player_ids.add(profile.player_id)  # type: ignore[attr-defined]
+
+    # 3) Игроки, созданные самим пользователем
+    created_players = Player.objects.filter(created_by=user).values_list("id", flat=True)
+    player_ids.update(created_players)
+
+    tournament_registrations_block = []
+    if player_ids:
+        regs = (
+            TournamentRegistration.objects
+            .select_related("tournament", "player", "partner", "team")
+            .filter(player_id__in=player_ids)
+            .order_by("registered_at")
+        )
+
+        for reg in regs:
+            t = reg.tournament
+            team = reg.team
+            tournament_registrations_block.append(
+                {
+                    "id": reg.id,
+                    "tournament": {
+                        "id": t.id,
+                        "name": t.name,
+                        "start_date": t.start_date,
+                        "system": t.system,
+                    },
+                    "player_id": reg.player_id,
+                    "partner_id": reg.partner_id,
+                    "team_id": team.id if team else None,
+                    "status": reg.status,
+                    "registered_at": reg.registered_at,
+                    "updated_at": reg.updated_at,
+                }
+            )
+
+    # Логируем факт выгрузки персональных данных
+    try:
+        PDNActionLog.objects.create(
+            user=user,
+            action=PDNActionLog.ACTION_EXPORT,
+            meta={
+                "source": "api",
+                "endpoint": "export_me",
+                "ip": request.META.get("REMOTE_ADDR"),
+                "user_agent": request.META.get("HTTP_USER_AGENT"),
+            },
+        )
+    except Exception:
+        # Аудит не должен ломать основной функционал экспорта
+        pass
+
+    return Response(
+        {
+            "user": user_block,
+            "profile": profile_block,
+            "tournament_registrations": tournament_registrations_block,
         }
     )
 
@@ -430,6 +550,24 @@ def update_profile(request):
     
     if serializer.is_valid():
         user = serializer.save()
+
+        # Аудит обновления профиля
+        try:
+            PDNActionLog.objects.create(
+                user=user,
+                action=PDNActionLog.ACTION_UPDATE_PROFILE,
+                meta={
+                    "source": "api",
+                    "endpoint": "update_profile",
+                    "fields": sorted(list((request.data or {}).keys())),
+                    "ip": request.META.get("REMOTE_ADDR"),
+                    "user_agent": request.META.get("HTTP_USER_AGENT"),
+                },
+            )
+        except Exception:
+            # Логирование не должно ломать основной сценарий
+            pass
+
         return Response(UserProfileSerializer(user).data)
 
 
@@ -521,6 +659,23 @@ def create_player_and_link(request):
         player.display_name = display_name
 
     player.save()
+
+    # Аудит создания игрока пользователем
+    try:
+        PDNActionLog.objects.create(
+            user=user,
+            action=PDNActionLog.ACTION_CREATE_PLAYER,
+            meta={
+                "source": "api",
+                "endpoint": "create_player_and_link",
+                "player_id": player.id,
+                "player_name": str(player),
+                "ip": request.META.get("REMOTE_ADDR"),
+                "user_agent": request.META.get("HTTP_USER_AGENT"),
+            },
+        )
+    except Exception:
+        pass
 
     # Связываем через TelegramUser
     telegram_user = TelegramUser.objects.filter(user=user).first()
@@ -696,8 +851,27 @@ def unlink_player(request):
     if not telegram_user.player:
         return Response({"detail": "Связь с игроком отсутствует"}, status=status.HTTP_400_BAD_REQUEST)
 
+    player = telegram_user.player
+
     telegram_user.player = None
     telegram_user.save(update_fields=["player"])
+
+    # Аудит отвязки игрока
+    try:
+        PDNActionLog.objects.create(
+            user=request.user,
+            action=PDNActionLog.ACTION_UNLINK_PLAYER,
+            meta={
+                "source": "api",
+                "endpoint": "unlink_player",
+                "player_id": getattr(player, "id", None),
+                "player_name": str(player) if player is not None else None,
+                "ip": request.META.get("REMOTE_ADDR"),
+                "user_agent": request.META.get("HTTP_USER_AGENT"),
+            },
+        )
+    except Exception:
+        pass
 
     return Response(UserProfileSerializer(request.user).data)
 
@@ -726,10 +900,23 @@ def change_password(request):
         # Устанавливаем новый пароль
         request.user.set_password(serializer.validated_data['new_password'])
         request.user.save()
-        
-        return Response({
-            "detail": "Пароль успешно изменён"
-        })
+
+        # Аудит смены пароля
+        try:
+            PDNActionLog.objects.create(
+                user=request.user,
+                action=PDNActionLog.ACTION_CHANGE_PASSWORD,
+                meta={
+                    "source": "api",
+                    "endpoint": "change_password",
+                    "ip": request.META.get("REMOTE_ADDR"),
+                    "user_agent": request.META.get("HTTP_USER_AGENT"),
+                },
+            )
+        except Exception:
+            pass
+
+        return Response({"detail": "Пароль успешно изменён"})
     
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -896,6 +1083,23 @@ def link_player(request):
             last_name=user.last_name or '',
         )
     
+    # Аудит связывания игрока
+    try:
+        PDNActionLog.objects.create(
+            user=user,
+            action=PDNActionLog.ACTION_LINK_PLAYER,
+            meta={
+                "source": "api",
+                "endpoint": "link_player",
+                "player_id": player.id,
+                "player_name": str(player),
+                "ip": request.META.get("REMOTE_ADDR"),
+                "user_agent": request.META.get("HTTP_USER_AGENT"),
+            },
+        )
+    except Exception:
+        pass
+
     # Синхронизируем данные User и Player
     if user.first_name:
         player.first_name = user.first_name
