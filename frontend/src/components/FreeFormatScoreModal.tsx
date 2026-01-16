@@ -311,57 +311,78 @@ const FreeFormatScoreModal: React.FC<FreeFormatScoreModalProps> = ({
           {sets.map((set, setIndex) => (
             <div key={set.index} style={{ border: '1px solid #e5e7eb', borderRadius: 8, marginBottom: 12 }}>
               {/* Шапка сета */}
-              <div style={{ display: 'flex', alignItems: 'center', padding: '8px 12px', justifyContent: 'space-between' }}>
-                <div style={{ fontWeight: 600 }}>
-                  Сет {set.index} {formatSetScore(set) && <span style={{ color: '#2563eb', marginLeft: 8 }}>{formatSetScore(set)}</span>}
+              <div
+                style={{
+                  padding: '8px 12px',
+                  borderBottom: '1px solid #f3f4f6',
+                }}
+              >
+                <div style={{ textAlign: 'center', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8 }}>
+                  <div style={{ fontWeight: 600 }}>Сет {set.index}</div>
+                  {formatSetScore(set) && (
+                    <span style={{ color: '#2563eb', fontWeight: 600 }}>{formatSetScore(set)}</span>
+                  )}
                 </div>
                 {sets.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveSet(setIndex)}
-                    style={{ color: '#dc2626', fontSize: 14, background: 'none', border: 'none', cursor: 'pointer' }}
-                  >
-                    Удалить
-                  </button>
+                  <div style={{ marginTop: 4, display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveSet(setIndex)}
+                      style={{ color: '#dc2626', fontSize: 14, background: 'none', border: 'none', cursor: 'pointer' }}
+                    >
+                      Удалить
+                    </button>
+                  </div>
                 )}
               </div>
               
               <div style={{ padding: '8px 12px' }}>
 
-              {/* Пресеты в два столбца */}
+              {/* Пресеты: имена по центру и общая область плиток */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-                <div>
-                  <div style={{ fontWeight: 600, marginBottom: 6 }}>{team1Name}</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {presets.map(([g1, g2]) => (
-                      <button
-                        key={`${g1}-${g2}`}
-                        type="button"
-                        className="btn btn-outline"
-                        onClick={() => handlePresetClick(setIndex, g1, g2)}
-                        disabled={set.champion_tb_enabled}
-                      >
-                        {g1}:{g2}
-                      </button>
-                    ))}
-                  </div>
+                <div style={{ gridColumn: '1 / span 2', display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                  <div style={{ flex: 1, fontWeight: 600, textAlign: 'center' }}>{team1Name}</div>
+                  <div style={{ flex: 1, fontWeight: 600, textAlign: 'center' }}>{team2Name}</div>
                 </div>
-                <div>
-                  <div style={{ fontWeight: 600, marginBottom: 6 }}>{team2Name}</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {presets.map(([g1, g2]) => (
-                      <button
-                        key={`${g2}-${g1}`}
-                        type="button"
-                        className="btn btn-outline"
-                        onClick={() => handlePresetClick(setIndex, g2, g1)}
-                        disabled={set.champion_tb_enabled}
-                      >
-                        {g2}:{g1}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+
+                {!set.champion_tb_enabled && (() => {
+                  const combined: Array<[number, number]> = [];
+                  presets.forEach(([g1, g2]) => {
+                    combined.push([g1, g2]);
+                    combined.push([g2, g1]);
+                  });
+                  const rows: Array<Array<[number, number]>> = [];
+                  for (let i = 0; i < combined.length; i += 6) {
+                    rows.push(combined.slice(i, i + 6));
+                  }
+                  return (
+                    <div style={{ gridColumn: '1 / span 2', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {rows.map((row, rIdx) => (
+                        <div
+                          key={rIdx}
+                          style={{
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            gap: 6,
+                            justifyContent: 'center',
+                          }}
+                        >
+                          {row.map(([g1, g2], i) => (
+                            <button
+                              key={`${rIdx}-${i}`}
+                              type="button"
+                              className="btn btn-outline"
+                              onClick={() => handlePresetClick(setIndex, g1, g2)}
+                              disabled={set.champion_tb_enabled}
+                            >
+                              {g1}:{g2}
+                            </button>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Ваш счет */}
