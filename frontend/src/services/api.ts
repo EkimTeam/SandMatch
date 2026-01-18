@@ -445,6 +445,12 @@ export const tournamentApi = {
     return data;
   },
 
+  // Текстовые результаты турнира (готовый текст для копирования)
+  getTextResults: async (tournamentId: number): Promise<{ ok: boolean; text: string }> => {
+    const { data } = await api.get(`/tournaments/${tournamentId}/text_results/`);
+    return data;
+  },
+
   complete: async (tournamentId: number, force: boolean = false) => {
     const { data } = await api.post(`/tournaments/${tournamentId}/complete/`, { force });
     return data;

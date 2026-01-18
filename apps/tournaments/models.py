@@ -380,6 +380,40 @@ class TournamentEntryStats(models.Model):
         return f"Stats: {self.entry}"
 
 
+class TournamentPlacement(models.Model):
+    """Занятое место команды (TournamentEntry) в турнире.
+
+    Хранит как одиночные места (place_from == place_to), так и диапазоны мест
+    (например, 5–8 места для выбывших в одном раунде олимпийки).
+    """
+
+    tournament = models.ForeignKey(
+        Tournament,
+        on_delete=models.CASCADE,
+        related_name="placements",
+    )
+    entry = models.ForeignKey(
+        TournamentEntry,
+        on_delete=models.CASCADE,
+        related_name="placements",
+    )
+    place_from = models.PositiveIntegerField()
+    place_to = models.PositiveIntegerField()
+
+    class Meta:
+        verbose_name = "Место в турнире"
+        verbose_name_plural = "Места в турнире"
+        ordering = ["place_from", "place_to", "id"]
+
+    def __str__(self) -> str:
+        if self.place_from == self.place_to:
+            return f"{self.tournament}: {self.entry.team} — {self.place_from}-е место"
+        return (
+            f"{self.tournament}: {self.entry.team} — "
+            f"{self.place_from}-{self.place_to} места"
+        )
+
+
 # --- Олимпийская сетка (Knockout) ---
 class KnockoutBracket(models.Model):
     """Метаданные одной сетки плей-офф в рамках турнира.

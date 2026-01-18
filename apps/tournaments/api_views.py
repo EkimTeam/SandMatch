@@ -52,6 +52,7 @@ from apps.tournaments.services.knockout import (
     seed_participants,
     advance_winner,
 )
+from apps.tournaments.services.placements import recalc_tournament_placements
 from apps.tournaments.services.round_robin import (
     generate_matches_for_group,
     persist_generated_matches,
@@ -2609,6 +2610,105 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 payload["groups"][int(gi)] = { "stats": {}, "placements": {} }
         return Response(payload)
 
+    @action(detail=True, methods=["get"], url_path="text_results", permission_classes=[AllowAny])
+    def text_results(self, request, pk=None):
+        """Вернуть текстовое представление результатов турнира.
+
+        Формат:
+        По итогам соревнований
+
+        ДД.ММ.ГГ:
+
+        Название турнира
+
+        1-е место 🥇 Фамилия Имя / Фамилия2 Имя2
+        2-е место 🥈 ...
+        3-е место 🥉 ...
+        4-е место 🎉 ...
+        и т.д.
+        """
+
+        tournament: Tournament = self.get_object()
+
+        # Гостям нельзя смотреть завершённые турниры King, но для text_results
+        # используем те же ограничения, что и для просмотра турнира в целом.
+        self._ensure_can_view_tournament(request, tournament)
+
+        # Если турнир завершён, но места ещё не посчитаны, пересчитаем их лениво.
+        if tournament.status == Tournament.Status.COMPLETED and not tournament.placements.exists():
+            try:
+                recalc_tournament_placements(tournament)
+            except Exception:
+                # В случае ошибки просто вернём пустой текст
+                return Response({"ok": True, "text": ""})
+
+        placements_qs = tournament.placements.select_related(
+            "entry__team__player_1",
+            "entry__team__player_2",
+        ).all()
+
+        lines = []
+        lines.append("По итогам соревнований")
+
+        date_str = ""
+        if tournament.date:
+            try:
+                date_str = tournament.date.strftime("%d.%m.%y")
+            except Exception:
+                date_str = str(tournament.date)
+
+        if date_str:
+            lines.append("")
+            lines.append(f"{date_str}:")
+
+        if tournament.name:
+            lines.append("")
+            lines.append(str(tournament.name))
+
+        def _format_team(entry: TournamentEntry) -> str:
+            team = entry.team
+            p1 = getattr(team, "player_1", None)
+            p2 = getattr(team, "player_2", None)
+
+            def _name(p) -> str:
+                if not p:
+                    return str(team)
+                last = (getattr(p, "last_name", "") or "").strip()
+                first = (getattr(p, "first_name", "") or "").strip()
+                base = f"{last} {first}".strip()
+                return base or (getattr(p, "display_name", "") or str(team))
+
+            if p1 and p2:
+                return f"{_name(p1)} / {_name(p2)}"
+            if p1:
+                return _name(p1)
+            return str(team)
+
+        def _emoji_for_place(place_from: int) -> str:
+            if place_from == 1:
+                return "🥇"
+            if place_from == 2:
+                return "🥈"
+            if place_from == 3:
+                return "🥉"
+            return "🎉"
+
+        for placement in placements_qs:
+            pf = placement.place_from
+            pt = placement.place_to
+            emoji = _emoji_for_place(pf)
+
+            if pf == pt:
+                place_label = f"{pf}-е место"
+            else:
+                place_label = f"{pf}-{pt}-е места"
+
+            team_text = _format_team(placement.entry)
+            lines.append(f"{place_label} {emoji} {team_text}")
+
+        text = "\n".join(lines)
+        return Response({"ok": True, "text": text})
+
     @method_decorator(csrf_exempt)
     @action(
         detail=False,
@@ -3999,6 +4099,13 @@ def tournament_complete(request, pk: int):
         # 4. Переведём турнир в статус COMPLETED
         t.status = Tournament.Status.COMPLETED
         t.save(update_fields=["status"])
+
+        # 5. Пересчитаем и сохраним места турнира
+        try:
+            recalc_tournament_placements(t)
+        except Exception:
+            # Ошибки пересчёта мест не должны ломать завершение турнира
+            pass
     
     return Response({"ok": True})
 

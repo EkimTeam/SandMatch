@@ -80,6 +80,9 @@ export const KnockoutPage: React.FC = () => {
   }>({ open: false, matchId: null, team1: null, team2: null });
   const [showInitialRatingModal, setShowInitialRatingModal] = useState(false);
   const [showCompleteRatingChoice, setShowCompleteRatingChoice] = useState(false);
+  const [showTextResultsModal, setShowTextResultsModal] = useState(false);
+  const [textResults, setTextResults] = useState<string>('');
+  const [loadingTextResults, setLoadingTextResults] = useState(false);
 
   const completeTournamentInternal = async () => {
     if (!tMeta || !canManageStructure) return;
@@ -120,6 +123,44 @@ export const KnockoutPage: React.FC = () => {
       return;
     }
     completeTournamentInternal();
+  };
+
+  const handleShowTextResults = async () => {
+    if (!tMeta) return;
+    try {
+      setLoadingTextResults(true);
+      const res = await tournamentApi.getTextResults(tMeta.id);
+      setTextResults(res?.text || '');
+      setShowTextResultsModal(true);
+    } catch (e) {
+      console.error('Failed to load text results', e);
+      alert('Не удалось загрузить текстовые результаты');
+    } finally {
+      setLoadingTextResults(false);
+    }
+  };
+
+  const handleCopyTextResults = async () => {
+    try {
+      if (!textResults) return;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(textResults);
+        alert('Текст результатов скопирован в буфер обмена');
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = textResults;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-1000px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        alert('Текст результатов скопирован в буфер обмена');
+      }
+    } catch (e) {
+      console.error('Copy failed', e);
+      alert('Не удалось скопировать текст результатов');
+    }
   };
 
   // Динамическая загрузка html2canvas с CDN
@@ -1276,7 +1317,19 @@ export const KnockoutPage: React.FC = () => {
           </button>
         )}
         {role !== 'REFEREE' && (
-          <button className="btn" disabled={saving} onClick={handleShare}>Поделиться</button>
+          <>
+            <button className="btn" disabled={saving} onClick={handleShare}>Поделиться</button>
+            {tMeta && tMeta.status === 'completed' && (
+              <button
+                className="btn"
+                type="button"
+                disabled={loadingTextResults}
+                onClick={handleShowTextResults}
+              >
+                Результаты текстом
+              </button>
+            )}
+          </>
         )}
       </div>
 
@@ -1311,6 +1364,47 @@ export const KnockoutPage: React.FC = () => {
         usedPlayerIds={usedPlayerIds}
         onSaved={handleParticipantSaved}
       />
+
+      {showTextResultsModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => setShowTextResultsModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: '#fff',
+              padding: 20,
+              maxWidth: 600,
+              width: '100%',
+              maxHeight: '80vh',
+              overflow: 'auto',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <textarea
+              readOnly
+              value={textResults}
+              style={{ width: '100%', height: 260, resize: 'vertical', marginTop: 8, whiteSpace: 'pre' }}
+            />
+            <div style={{ marginTop: 10, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn" type="button" onClick={() => setShowTextResultsModal(false)}>
+                Закрыть
+              </button>
+              <button className="btn" type="button" onClick={handleCopyTextResults} disabled={!textResults}>
+                Копировать
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Модалка редактирования настроек турнира */}
       {showEditModal && tMeta && (
