@@ -91,6 +91,9 @@ export const KingPage: React.FC = () => {
     existingSets?: any[];
   }>(null);
   const [showCalcTip, setShowCalcTip] = useState(false);
+  const [showTextResultsModal, setShowTextResultsModal] = useState(false);
+  const [textResults, setTextResults] = useState<string>('');
+  const [loadingTextResults, setLoadingTextResults] = useState(false);
   
   // Статистика King с бэкенда (аналогично groupStats в круговой)
   // Бэкенд отдаёт сразу три режима: NO, G-, M+ (поля без суффикса, с _g и _m)
@@ -129,7 +132,6 @@ export const KingPage: React.FC = () => {
 
   // Функция генерации расписания King по количеству участников
   const generateKingSchedule = (participantsCount: number): { round: number; matches: [number[], number[]][] }[] => {
-    
     const generateEvenRR = (m: number): Array<Array<[number, number]>> => {
       const rounds: Array<Array<[number, number]>> = [];
       const players = Array.from({ length: m }, (_, i) => i);
@@ -142,7 +144,7 @@ export const KingPage: React.FC = () => {
       }
       return rounds;
     };
-    
+
     const generateOddRR = (m: number): Array<Array<[number, number]>> => {
       const rounds: Array<Array<[number, number]>> = [];
       let arr = Array.from({ length: m }, (_, i) => i);
@@ -158,9 +160,8 @@ export const KingPage: React.FC = () => {
       }
       return rounds;
     };
-    
     const res: { round: number; matches: [number[], number[]][] }[] = [];
-    
+
     if (participantsCount === 4) {
       const cfg: [number[], number[]][] = [[[0,1],[2,3]], [[0,2],[1,3]], [[0,3],[1,2]]];
       cfg.forEach((m,i)=>res.push({ round: i+1, matches: [m] }));
@@ -178,7 +179,6 @@ export const KingPage: React.FC = () => {
       cfg.forEach(([a,b],i)=>res.push({ round: i+1, matches: [[a,b]] }));
       return res;
     }
-    
     const rr = (participantsCount % 2 === 0) ? generateEvenRR(participantsCount) : generateOddRR(participantsCount);
     rr.forEach((pairs, rIdx) => {
       const matches: [number[], number[]][] = [];
@@ -187,8 +187,45 @@ export const KingPage: React.FC = () => {
       }
       res.push({ round: rIdx + 1, matches });
     });
-    
     return res;
+  };
+
+  const handleShowTextResults = async () => {
+    if (!t) return;
+    try {
+      setLoadingTextResults(true);
+      const res = await tournamentApi.getTextResults(t.id);
+      setTextResults(res?.text || '');
+      setShowTextResultsModal(true);
+    } catch (e) {
+      console.error('Failed to load text results', e);
+      alert('Не удалось загрузить текстовые результаты');
+    } finally {
+      setLoadingTextResults(false);
+    }
+  };
+
+  const handleCopyTextResults = async () => {
+    try {
+      if (!textResults) return;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(textResults);
+        alert('Текст результатов скопирован в буфер обмена');
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = textResults;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-1000px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        alert('Текст результатов скопирован в буфер обмена');
+      }
+    } catch (e) {
+      console.error('Copy failed', e);
+      alert('Не удалось скопировать текст результатов');
+    }
   };
 
   const startKingMatch = async () => {
@@ -1781,7 +1818,21 @@ export const KingPage: React.FC = () => {
                   Вернуть статус "Регистрация"
                 </button>
               )}
-              <button className="btn" onClick={handleShare}>Поделиться</button>
+              {role !== 'REFEREE' && (
+                <>
+                  <button className="btn" onClick={handleShare}>Поделиться</button>
+                  {t.status === 'completed' && (
+                    <button
+                      className="btn"
+                      type="button"
+                      disabled={loadingTextResults}
+                      onClick={handleShowTextResults}
+                    >
+                      Результаты текстом
+                    </button>
+                  )}
+                </>
+              )}
             </div>
           </div>
         )}
@@ -2066,32 +2117,7 @@ export const KingPage: React.FC = () => {
         />
       )}
 
-      {t.status === 'created' && (
-        <div style={{ marginTop: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }} data-export-exclude="true">
-          {canManageTournament && (
-            <button
-              className="btn"
-              onClick={handleOpenEditSettings}
-              disabled={saving}
-            >
-              Поменять настройки турнира
-            </button>
-          )}
-          {canManageTournament && (
-            <button
-              className="btn"
-              onClick={deleteTournament}
-              disabled={saving}
-              style={{ background: '#dc3545', borderColor: '#dc3545' }}
-            >
-              Удалить турнир
-            </button>
-          )}
-          {role !== 'REFEREE' && (
-            <button className="btn" onClick={handleShare}>Поделиться</button>
-          )}
-        </div>
-      )}
+      {/* Дополнительный нижний блок действий больше не нужен, основной футер выше */}
 
       {showEditModal && t && (
         <EditTournamentModal
@@ -2101,6 +2127,47 @@ export const KingPage: React.FC = () => {
           onSubmit={handleEditSettingsSubmit}
           onClose={() => setShowEditModal(false)}
         />
+      )}
+
+      {showTextResultsModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => setShowTextResultsModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: '#fff',
+              padding: 20,
+              maxWidth: 600,
+              width: '100%',
+              maxHeight: '80vh',
+              overflow: 'auto',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <textarea
+              readOnly
+              value={textResults}
+              style={{ width: '100%', height: 260, resize: 'vertical', marginTop: 8, whiteSpace: 'pre' }}
+            />
+            <div style={{ marginTop: 10, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn" type="button" onClick={() => setShowTextResultsModal(false)}>
+                Закрыть
+              </button>
+              <button className="btn" type="button" onClick={handleCopyTextResults} disabled={!textResults}>
+                Копировать
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

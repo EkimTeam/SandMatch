@@ -118,6 +118,9 @@ export const TournamentDetailPage: React.FC = () => {
   });
   const [simplifiedDropSlots, setSimplifiedDropSlots] = useState<SimplifiedDropSlot[]>([]);
   const [dragDropPickerOpen, setDragDropPickerOpen] = useState(false);
+  const [showTextResultsModal, setShowTextResultsModal] = useState(false);
+  const [textResults, setTextResults] = useState<string>('');
+  const [loadingTextResults, setLoadingTextResults] = useState(false);
   // Модалка действий по ячейке счёта
   const [scoreDialog, setScoreDialog] = useState<null | { group: number; a: number; b: number; matchId?: number; isLive: boolean; matchTeam1Id?: number | null; matchTeam2Id?: number | null }>(null);
   // Модалка ввода счёта (унифицированная с олимпийкой)
@@ -173,6 +176,44 @@ export const TournamentDetailPage: React.FC = () => {
     }
     // Иначе сразу запускаем процедуру завершения турнира
     completeTournament();
+  };
+
+  const handleShowTextResults = async () => {
+    if (!t) return;
+    try {
+      setLoadingTextResults(true);
+      const res = await tournamentApi.getTextResults(t.id);
+      setTextResults(res?.text || '');
+      setShowTextResultsModal(true);
+    } catch (e) {
+      console.error('Failed to load text results', e);
+      alert('Не удалось загрузить текстовые результаты');
+    } finally {
+      setLoadingTextResults(false);
+    }
+  };
+
+  const handleCopyTextResults = async () => {
+    try {
+      if (!textResults) return;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(textResults);
+        alert('Текст результатов скопирован в буфер обмена');
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = textResults;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-1000px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        alert('Текст результатов скопирован в буфер обмена');
+      }
+    } catch (e) {
+      console.error('Copy failed', e);
+      alert('Не удалось скопировать текст результатов');
+    }
   };
 
   // Универсальный поиск матча по паре ID команд в группе: учитывает разные формы сериализации
@@ -2548,9 +2589,62 @@ export const TournamentDetailPage: React.FC = () => {
         )}
         {/* REFEREE по плану не должен пользоваться кнопкой "Поделиться" */}
         {role !== 'REFEREE' && (
-          <button className="btn" onClick={handleShare}>Поделиться</button>
+          <>
+            <button className="btn" onClick={handleShare}>Поделиться</button>
+            {t && t.status === 'completed' && (
+              <button
+                className="btn"
+                type="button"
+                disabled={loadingTextResults}
+                onClick={handleShowTextResults}
+              >
+                Результаты текстом
+              </button>
+            )}
+          </>
         )}
       </div>
+
+      {showTextResultsModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => setShowTextResultsModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: '#fff',
+              padding: 20,
+              maxWidth: 600,
+              width: '100%',
+              maxHeight: '80vh',
+              overflow: 'auto',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <textarea
+              readOnly
+              value={textResults}
+              style={{ width: '100%', height: 260, resize: 'vertical', marginTop: 8, whiteSpace: 'pre' }}
+            />
+            <div style={{ marginTop: 10, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn" type="button" onClick={() => setShowTextResultsModal(false)}>
+                Закрыть
+              </button>
+              <button className="btn" type="button" onClick={handleCopyTextResults} disabled={!textResults}>
+                Копировать
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
