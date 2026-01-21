@@ -12,6 +12,8 @@ export interface DraggableParticipant {
   rating?: number; // рейтинг для круговой системы и King
   groupIndex?: number | null; // индекс группы (для круговой и King)
   rowIndex?: number | null; // индекс строки в группе (для круговой и King)
+  listStatus?: 'main' | 'reserve'; // статус списка: основной или резерв
+  registrationOrder?: number; // порядок регистрации (для сортировки резерва)
 }
 
 export interface DropSlot {
@@ -23,6 +25,8 @@ export interface DropSlot {
 
 export interface DragDropState {
   participants: DraggableParticipant[];
+  mainParticipants?: DraggableParticipant[]; // участники основного списка
+  reserveParticipants?: DraggableParticipant[]; // участники резервного списка
   dropSlots: DropSlot[];
   isSelectionLocked: boolean; // заблокирована ли возможность редактирования
 }

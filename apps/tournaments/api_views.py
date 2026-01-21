@@ -2895,46 +2895,79 @@ class TournamentViewSet(viewsets.ModelViewSet):
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=["get"], url_path="participants", permission_classes=[AllowAny])
     def get_participants(self, request, pk=None):
-        """Получить список участников турнира для Drag-and-Drop."""
+        """Получить список участников турнира для Drag-and-Drop.
+        
+        Возвращает данные из TournamentRegistration (MAIN_LIST/RESERVE_LIST),
+        чтобы корректно разделить участников на основной состав и резерв.
+        """
+        from apps.tournaments.registration_models import TournamentRegistration
+        
         tournament: Tournament = self.get_object()
-        entries = tournament.entries.select_related('team__player_1', 'team__player_2').all()
+        
+        # Получаем регистрации из основного и резервного списков
+        registrations = TournamentRegistration.objects.filter(
+            tournament=tournament,
+            status__in=[
+                TournamentRegistration.Status.MAIN_LIST,
+                TournamentRegistration.Status.RESERVE_LIST
+            ]
+        ).select_related('player', 'partner', 'team').order_by('registration_order')
         
         participants = []
-        for entry in entries:
-            team = entry.team
-            name = str(team)
+        seen_teams = set()  # Чтобы не дублировать пары
+        
+        for reg in registrations:
+            # Для пар: добавляем только один раз (по первому игроку)
+            if reg.team_id:
+                if reg.team_id in seen_teams:
+                    continue
+                seen_teams.add(reg.team_id)
             
-            # Получить full_name для отображения в списке участников
-            full_name = name
-            if team.player_1:
-                p1 = team.player_1
-                if team.player_2:
-                    # Пара
-                    p2 = team.player_2
-                    full_name = f"{p1.last_name} {p1.first_name} / {p2.last_name} {p2.first_name}"
-                else:
-                    # Одиночка
-                    full_name = f"{p1.last_name} {p1.first_name}"
+            # Формируем имя
+            if reg.partner:
+                # Пара
+                full_name = f"{reg.player.last_name} {reg.player.first_name} / {reg.partner.last_name} {reg.partner.first_name}"
+            else:
+                # Одиночка
+                full_name = f"{reg.player.last_name} {reg.player.first_name}"
             
-            # Текущий рейтинг: для пар - средний, для одиночек - рейтинг игрока
+            # Рейтинг
             rating = 0
             try:
-                if team.player_1 and team.player_2:
+                if reg.partner:
                     # Для пар - средний рейтинг
-                    r1 = int(team.player_1.current_rating or 0)
-                    r2 = int(team.player_2.current_rating or 0)
+                    r1 = int(reg.player.current_rating or 0)
+                    r2 = int(reg.partner.current_rating or 0)
                     rating = round((r1 + r2) / 2) if (r1 > 0 or r2 > 0) else 0
-                elif team.player_1:
+                else:
                     # Для одиночек - рейтинг игрока
-                    rating = int(team.player_1.current_rating or 0)
+                    rating = int(reg.player.current_rating or 0)
             except Exception:
                 rating = 0
             
+            # Находим соответствующий TournamentEntry для получения entry.id
+            entry_id = None
+            team_id = None
+            if reg.team_id:
+                try:
+                    entry = tournament.entries.filter(team_id=reg.team_id).first()
+                    if entry:
+                        entry_id = entry.id
+                        team_id = entry.team_id
+                except Exception:
+                    pass
+            
+            # Если нет TournamentEntry, пропускаем (это игроки только в регистрации, без команды)
+            if not entry_id:
+                continue
+            
             participants.append({
-                'id': entry.id,
-                'name': full_name,  # Всегда полное ФИО для списка участников
-                'team_id': team.id,
+                'id': entry_id,  # ID TournamentEntry для DnD
+                'name': full_name,
+                'team_id': team_id,
                 'rating': rating,
+                'list_status': 'main' if reg.status == TournamentRegistration.Status.MAIN_LIST else 'reserve',
+                'registration_order': reg.registration_order,  # Для сортировки резервного списка
                 'isInBracket': False
             })
         
@@ -3653,6 +3686,8 @@ class TournamentViewSet(viewsets.ModelViewSet):
             import random
             from django.db.models import Q
             
+            from apps.tournaments.registration_models import TournamentRegistration
+            
             # Сначала очищаем все позиции (аналог "Очистить таблицы")
             tournament.entries.filter(
                 group_index__isnull=False
@@ -3661,8 +3696,22 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 row_index=None
             )
             
-            # Получаем всех участников (теперь все без позиции) с prefetch для BTR
-            entries = list(tournament.entries.select_related(
+            # Получаем только участников из ОСНОВНОГО СОСТАВА (MAIN_LIST)
+            # Находим team_id всех регистраций в основном списке
+            main_list_registrations = TournamentRegistration.objects.filter(
+                tournament=tournament,
+                status=TournamentRegistration.Status.MAIN_LIST
+            ).values_list('team_id', flat=True).distinct()
+            
+            main_list_team_ids = [tid for tid in main_list_registrations if tid is not None]
+            
+            if not main_list_team_ids:
+                return Response({'ok': False, 'error': 'Нет участников в основном составе для посева'}, status=400)
+            
+            # Получаем TournamentEntry только для команд из основного списка
+            entries = list(tournament.entries.filter(
+                team_id__in=main_list_team_ids
+            ).select_related(
                 'team__player_1__btr_player', 
                 'team__player_2__btr_player'
             ).prefetch_related(
@@ -3671,7 +3720,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
             ).all())
             
             if not entries:
-                return Response({'ok': False, 'error': 'Нет участников для посева'}, status=400)
+                return Response({'ok': False, 'error': 'Нет участников в основном составе для посева'}, status=400)
             
             # Функция для вычисления рейтинга участника (BP)
             def get_entry_rating(entry):

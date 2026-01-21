@@ -594,20 +594,27 @@ export const TournamentDetailPage: React.FC = () => {
     try {
       const participantsResp = await tournamentApi.getTournamentParticipants(tournamentData.id);
       
-      // НЕ фильтруем участников - показываем всех, но с флагом isInBracket
-      const availableParticipants: DraggableParticipant[] = participantsResp
+      // Маппим участников с учетом list_status
+      const allParticipants: DraggableParticipant[] = participantsResp
         .map((p: any) => ({
           id: p.id,
           name: p.name,
           fullName: p.name, // В get_participants уже возвращается полное имя
           teamId: p.team_id,
           isInBracket: participantsInSlots.has(p.id), // Флаг: участник в таблице или нет
-          currentRating: typeof p.rating === 'number' ? p.rating : undefined
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name, 'ru')); // Сортировка по алфавиту
+          currentRating: typeof p.rating === 'number' ? p.rating : undefined,
+          listStatus: p.list_status || 'main', // Статус списка: main или reserve
+          registrationOrder: p.registration_order // Порядок регистрации для сортировки резерва
+        }));
+      
+      // Разделяем на основной и резервный списки
+      const mainParticipants = allParticipants.filter(p => p.listStatus === 'main');
+      const reserveParticipants = allParticipants.filter(p => p.listStatus === 'reserve');
       
       setDragDropState({
-        participants: availableParticipants,
+        participants: allParticipants, // Сохраняем все для обратной совместимости
+        mainParticipants: mainParticipants,
+        reserveParticipants: reserveParticipants,
         dropSlots: [],
         isSelectionLocked: tournamentData.status !== 'created'
       });
@@ -615,6 +622,8 @@ export const TournamentDetailPage: React.FC = () => {
       console.error('Failed to load tournament entries:', error);
       setDragDropState({
         participants: [],
+        mainParticipants: [],
+        reserveParticipants: [],
         dropSlots: [],
         isSelectionLocked: tournamentData.status !== 'created'
       });
@@ -1825,6 +1834,8 @@ export const TournamentDetailPage: React.FC = () => {
           <div className="participants-panel">
             <DraggableParticipantList
               participants={dragDropState.participants}
+              mainParticipants={dragDropState.mainParticipants}
+              reserveParticipants={dragDropState.reserveParticipants}
               onRemoveParticipant={handleRemoveParticipantFromList}
               onAddParticipant={() => setDragDropPickerOpen(true)}
               onAutoSeed={handleAutoSeed}
