@@ -285,3 +285,35 @@ def send_status_changed_notification(registration_id, old_status, new_status):
     except Exception as e:
         logger.error(f"Ошибка отправки уведомления об изменении статуса {registration_id}: {e}")
         return f"Ошибка: {e}"
+
+
+@shared_task
+def send_partner_left_notification(registration_id: int):
+    """Заглушка задачи уведомления напарнику о выходе из пары.
+
+    Функция нужна, чтобы избежать ошибок импорта из RegistrationService.leave_pair.
+    Сейчас она просто пишет в лог и ничего не отправляет в Telegram.
+    """
+
+    logger.info(
+        "[send_partner_left_notification] Игрок вышел из пары, registration_id=%s",
+        registration_id,
+    )
+    return "ok"
+
+
+@shared_task
+def send_partner_cancelled_notification(registration_id: int):
+    """Заглушка задачи уведомления напарнику об отмене регистрации.
+
+    Используется в RegistrationService.cancel_registration. Пока что задача
+    только логирует событие, чтобы не блокировать веб-интерфейс при отсутствии
+    полноценной интеграции с NotificationService.
+    """
+
+    logger.info(
+        "[send_partner_cancelled_notification] Регистрация напарника переведена "
+        "в 'ищет пару', registration_id=%s",
+        registration_id,
+    )
+    return "ok"

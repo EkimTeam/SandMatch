@@ -23,14 +23,25 @@ def sync_tournament_entry_created(sender, instance, created, **kwargs):
 def sync_tournament_entry_deleted(sender, instance, **kwargs):
     """
     Удалить соответствующие TournamentRegistration при удалении TournamentEntry.
+
+    Этот сигнал в первую очередь обслуживает действия организатора/админа
+    в интерфейсе управления участниками (удаление команды из турнира).
+
+    Для пользовательских сценариев (отмена регистрации, выход из пары)
+    RegistrationService сперва обновляет/обнуляет связанные регистрации,
+    поэтому на момент удаления TournamentEntry у них уже нет ссылки на
+    команду и они не будут затронуты этим сигналом.
     """
     from apps.tournaments.registration_models import TournamentRegistration
-    
+
     if instance.team:
-        # Удаляем регистрации для этой команды
         TournamentRegistration.objects.filter(
             tournament=instance.tournament,
-            team=instance.team
+            team=instance.team,
+            status__in=[
+                TournamentRegistration.Status.MAIN_LIST,
+                TournamentRegistration.Status.RESERVE_LIST,
+            ],
         ).delete()
 
 

@@ -383,6 +383,8 @@ class TournamentRegistrationSerializer(serializers.Serializer):
     status = serializers.CharField(read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     registered_at = serializers.DateTimeField(read_only=True)
+    # BP-рейтинг строки: для пары усреднённый рейтинг обоих игроков, для одиночки — рейтинг игрока
+    rating_bp = serializers.SerializerMethodField()
     
     def get_player_name(self, obj):
         """Получить ФИО игрока"""
@@ -395,6 +397,39 @@ class TournamentRegistrationSerializer(serializers.Serializer):
         if obj.partner:
             return str(obj.partner)  # Использует __str__ модели Player
         return None
+
+    def get_rating_bp(self, obj):
+        """BP-рейтинг для отображения рядом с ФИО.
+
+        Для парной команды берём средний рейтинг обоих игроков команды.
+        Для одиночного случая / "ищет пару" используем рейтинг самого игрока.
+        Возвращаем целое число или None, если рейтинги недоступны.
+        """
+
+        def _get_rating(player):
+            if not player:
+                return None
+            # В модели Player рейтинг хранится в current_rating
+            value = getattr(player, "current_rating", None)
+            return float(value) if value is not None else None
+
+        ratings = []
+
+        team = getattr(obj, "team", None)
+        if team and (team.player_1 or team.player_2):
+            ratings.append(_get_rating(team.player_1))
+            ratings.append(_get_rating(team.player_2))
+        else:
+            # Одиночный случай или "ищет пару" без команды
+            ratings.append(_get_rating(getattr(obj, "player", None)))
+
+        numeric = [r for r in ratings if r is not None]
+        if not numeric:
+            return None
+
+        avg = sum(numeric) / len(numeric)
+        # Как и в других местах Mini App, показываем целым числом
+        return int(round(avg))
 
 
 class PairInvitationSerializer(serializers.Serializer):

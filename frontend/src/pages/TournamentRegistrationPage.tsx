@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { formatDate, formatDateTime } from '../services/date';
 import { tournamentRegistrationApi, WebRegistrationStateResponse, WebTournamentRegistration } from '../services/api';
+import PartnerSearchModalWeb from '../components/PartnerSearchModalWeb';
 
 const TournamentRegistrationPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -15,6 +16,7 @@ const TournamentRegistrationPage: React.FC = () => {
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [showPartnerModal, setShowPartnerModal] = useState(false);
 
   const loadState = async () => {
     if (!idNum || Number.isNaN(idNum)) return;
@@ -42,7 +44,7 @@ const TournamentRegistrationPage: React.FC = () => {
   useEffect(() => {
     loadState();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idNum]);
+  }, [idNum, user]);
 
   const handleAfterAction = async (msg?: string) => {
     if (msg) setSuccess(msg);
@@ -65,22 +67,40 @@ const TournamentRegistrationPage: React.FC = () => {
     }
   };
 
-  const handleCancelRegistration = async () => {
+  const handleRegisterLookingForPartner = async () => {
     if (!idNum) return;
-    if (!window.confirm('Отменить регистрацию на турнир?')) return;
     setActionLoading(true);
     setError(null);
     setSuccess(null);
     try {
-      const resp = await tournamentRegistrationApi.cancelRegistration(idNum);
-      await handleAfterAction(resp.detail || 'Регистрация отменена');
+      await tournamentRegistrationApi.registerLookingForPartner(idNum);
+      await handleAfterAction('Регистрация выполнена');
     } catch (e: any) {
-      const detail = e?.response?.data?.detail || 'Ошибка отмены регистрации';
+      const detail = e?.response?.data?.detail || 'Ошибка регистрации';
       setError(String(detail));
     } finally {
       setActionLoading(false);
     }
   };
+
+  const handleRegisterWithPartner = async (partnerId: number, partnerName: string) => {
+    if (!idNum) return;
+    setActionLoading(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await tournamentRegistrationApi.registerWithPartner(idNum, partnerId);
+      await handleAfterAction(`Вы зарегистрировались в паре с ${partnerName}`);
+      setShowPartnerModal(false);
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail || 'Ошибка регистрации в паре';
+      setError(String(detail));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Отмена регистрации выполняется инлайном в кнопке, отдельный хэндлер не нужен
 
   if (loading || !state) {
     return (
@@ -104,7 +124,28 @@ const TournamentRegistrationPage: React.FC = () => {
     return status;
   };
 
-  const registeredCount = tournament.registered_count ?? participants.main_list.length + participants.reserve_list.length;
+  const registeredCount =
+    tournament.registered_count ?? participants.main_list.length + participants.reserve_list.length;
+
+  const isDoubles = tournament.participant_mode === 'doubles';
+  const isSingles = tournament.participant_mode === 'singles';
+
+  const isInAnyList = !!myReg;
+
+  const dedupePairs = (list: WebTournamentRegistration[]): WebTournamentRegistration[] => {
+    const seen = new Set<string>();
+    return list.filter((reg) => {
+      const id1 = reg.player_id;
+      const id2 = reg.partner_id || 0;
+      const key = id1 < id2 ? `${id1}-${id2}` : `${id2}-${id1}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+
+  const mainList = isDoubles ? dedupePairs(participants.main_list) : participants.main_list;
+  const reserveList = isDoubles ? dedupePairs(participants.reserve_list) : participants.reserve_list;
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-5xl">
@@ -195,8 +236,8 @@ const TournamentRegistrationPage: React.FC = () => {
           {/* REGISTERED без привязанного BP-игрока и без регистрации на этот турнир
               (временно отключено, т.к. признак hasLinkedPlayer на фронте может быть неточным) */}
 
-          {/* REGISTERED c привязанным BP-игроком — кнопка регистрации */}
-          {isRegisteredUser && hasLinkedPlayer && !myReg && tournament.participant_mode === 'singles' && (
+          {/* REGISTERED c привязанным BP-игроком — кнопки регистрации */}
+          {isRegisteredUser && hasLinkedPlayer && !myReg && isSingles && (
             <button
               onClick={handleRegisterSingle}
               disabled={actionLoading}
@@ -206,10 +247,58 @@ const TournamentRegistrationPage: React.FC = () => {
             </button>
           )}
 
+          {isRegisteredUser && hasLinkedPlayer && !myReg && isDoubles && (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowPartnerModal(true)}
+                disabled={actionLoading}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 text-sm self-start"
+              >
+                Зарегистрироваться парой
+              </button>
+              <button
+                type="button"
+                onClick={handleRegisterLookingForPartner}
+                disabled={actionLoading}
+                className="px-4 py-2 bg-gray-100 text-gray-900 border border-gray-300 rounded hover:bg-gray-200 disabled:bg-gray-200 text-sm self-start"
+              >
+                Зарегистрироваться без пары
+              </button>
+            </>
+          )}
+
+          {/* Дополнительные действия для парных турниров */}
+          {isDoubles && myReg && !!user && myReg.status === 'looking_for_partner' && (
+            <button
+              type="button"
+              onClick={() => setShowPartnerModal(true)}
+              disabled={actionLoading}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 text-sm self-start"
+            >
+              Зарегистрироваться парой
+            </button>
+          )}
+
           {/* Отмена регистрации доступна для вошедшего пользователя с myReg */}
           {myReg && !!user && (
             <button
-              onClick={handleCancelRegistration}
+              onClick={async () => {
+                if (!idNum) return;
+                if (!window.confirm('Отменить регистрацию на турнир?')) return;
+                setActionLoading(true);
+                setError(null);
+                setSuccess(null);
+                try {
+                  const resp = await tournamentRegistrationApi.cancelRegistration(idNum);
+                  await handleAfterAction(resp.detail || 'Регистрация отменена');
+                } catch (e: any) {
+                  const detail = e?.response?.data?.detail || 'Ошибка отмены регистрации';
+                  setError(String(detail));
+                } finally {
+                  setActionLoading(false);
+                }
+              }}
               disabled={actionLoading}
               className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:bg-gray-400 text-sm self-start"
             >
@@ -219,23 +308,32 @@ const TournamentRegistrationPage: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className={`grid grid-cols-1 ${isDoubles ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-4`}>
         <div className="bg-white shadow rounded-lg p-4">
-          <h2 className="text-xl font-semibold mb-3">Основной список</h2>
-          {participants.main_list.length === 0 ? (
+          <h2 className="text-xl font-semibold mb-3">Основной состав</h2>
+          {mainList.length === 0 ? (
             <p className="text-gray-500 text-sm">Пока никого нет.</p>
           ) : (
             <ul className="divide-y divide-gray-100">
-              {participants.main_list.map((reg, idx) => (
+              {mainList
+                .slice()
+                .sort((a, b) => {
+                  const nameA = `${a.player_name}${a.partner_name ? ' ' + a.partner_name : ''}`;
+                  const nameB = `${b.player_name}${b.partner_name ? ' ' + b.partner_name : ''}`;
+                  return nameA.localeCompare(nameB, 'ru');
+                })
+                .map((reg, idx) => (
                 <li key={reg.id} className="py-2 flex justify-between items-center">
                   <div>
                     <p className="font-medium text-gray-900">
                       {idx + 1}. {reg.player_name}
                       {reg.partner_name && ` / ${reg.partner_name}`}
+                      {typeof reg.rating_bp === 'number' && (
+                        <span className="ml-2 text-xs text-gray-500">BP {reg.rating_bp}</span>
+                      )}
                     </p>
-                    <p className="text-xs text-gray-500">{reg.status_display}</p>
                   </div>
-                  {myReg && myReg.id === reg.id && (
+                  {myReg && (myReg.player_id === reg.player_id || myReg.player_id === reg.partner_id) && (
                     <span className="text-xs px-2 py-1 rounded bg-blue-100 text-blue-800">Это вы</span>
                   )}
                 </li>
@@ -245,21 +343,23 @@ const TournamentRegistrationPage: React.FC = () => {
         </div>
 
         <div className="bg-white shadow rounded-lg p-4">
-          <h2 className="text-xl font-semibold mb-3">Резерв</h2>
-          {participants.reserve_list.length === 0 ? (
+          <h2 className="text-xl font-semibold mb-3">Резервный список</h2>
+          {reserveList.length === 0 ? (
             <p className="text-gray-500 text-sm">Резерв пока пуст.</p>
           ) : (
             <ul className="divide-y divide-gray-100">
-              {participants.reserve_list.map((reg, idx) => (
+              {reserveList.map((reg, idx) => (
                 <li key={reg.id} className="py-2 flex justify-between items-center">
                   <div>
                     <p className="font-medium text-gray-900">
                       {idx + 1}. {reg.player_name}
                       {reg.partner_name && ` / ${reg.partner_name}`}
+                      {typeof reg.rating_bp === 'number' && (
+                        <span className="ml-2 text-xs text-gray-500">BP {reg.rating_bp}</span>
+                      )}
                     </p>
-                    <p className="text-xs text-gray-500">{reg.status_display}</p>
                   </div>
-                  {myReg && myReg.id === reg.id && (
+                  {myReg && (myReg.player_id === reg.player_id || myReg.player_id === reg.partner_id) && (
                     <span className="text-xs px-2 py-1 rounded bg-blue-100 text-blue-800">Это вы</span>
                   )}
                 </li>
@@ -267,7 +367,82 @@ const TournamentRegistrationPage: React.FC = () => {
             </ul>
           )}
         </div>
+
+        {isDoubles && (
+          <div className="bg-white shadow rounded-lg p-4">
+            <h2 className="text-xl font-semibold mb-3">Поиск пары</h2>
+            {participants.looking_for_partner.length === 0 ? (
+              <p className="text-gray-500 text-sm">Пока никто не ищет пару.</p>
+            ) : (
+              <ul className="divide-y divide-gray-100">
+                {participants.looking_for_partner
+                  .slice()
+                  .sort((a, b) => a.player_name.localeCompare(b.player_name, 'ru'))
+                  .map((reg) => {
+                    const isMe = myReg && myReg.player_id === reg.player_id;
+                    // Разрешаем присоединяться к игрокам из списка "Поиск пары",
+                    // даже если текущий пользователь сам уже в статусе looking_for_partner.
+                    // Запрещаем только если у пользователя уже есть сформированная пара
+                    // (partner_id задан и статус не looking_for_partner).
+                    const hasFormedPair =
+                      !!myReg && myReg.partner_id != null && myReg.status !== 'looking_for_partner';
+                    const canJoin = !hasFormedPair && isRegisteredUser && hasLinkedPlayer && !isMe;
+                    return (
+                      <li key={reg.id} className="py-2 flex justify-between items-center">
+                        <div>
+                          <p className="font-medium text-gray-900">
+                            {reg.player_name}
+                            {typeof reg.rating_bp === 'number' && (
+                              <span className="ml-2 text-xs text-gray-500">BP {reg.rating_bp}</span>
+                            )}
+                            {isMe && (
+                              <span className="ml-2 text-xs px-2 py-1 rounded bg-blue-100 text-blue-800">Это вы</span>
+                            )}
+                          </p>
+                        </div>
+                        {canJoin && (
+                          <button
+                            type="button"
+                            disabled={actionLoading}
+                            onClick={async () => {
+                              if (!idNum) return;
+                              if (!window.confirm(`Вы уверены, что хотите зарегистрироваться на турнир в паре с ${reg.player_name}?`)) {
+                                return;
+                              }
+                              setActionLoading(true);
+                              setError(null);
+                              setSuccess(null);
+                              try {
+                                await tournamentRegistrationApi.registerWithPartner(idNum, reg.player_id);
+                                await handleAfterAction('Регистрация выполнена');
+                              } catch (e: any) {
+                                const detail = e?.response?.data?.detail || 'Ошибка регистрации в паре';
+                                setError(String(detail));
+                              } finally {
+                                setActionLoading(false);
+                              }
+                            }}
+                            className="px-3 py-1.5 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 disabled:bg-gray-400"
+                          >
+                            Присоединиться
+                          </button>
+                        )}
+                      </li>
+                    );
+                  })}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
+
+      {showPartnerModal && idNum && (
+        <PartnerSearchModalWeb
+          tournamentId={idNum}
+          onClose={() => setShowPartnerModal(false)}
+          onConfirm={handleRegisterWithPartner}
+        />
+      )}
     </div>
   );
 };
