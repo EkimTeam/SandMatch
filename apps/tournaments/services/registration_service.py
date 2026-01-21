@@ -53,36 +53,88 @@ class RegistrationService:
         Пересчитать статусы всех регистраций (основной состав / резерв).
         Вызывается при изменении planned_participants или при изменении регистраций.
         """
-        # Получаем все пары (main_list и reserve_list)
+        # Получаем все регистрации основного и резервного списка
         registrations = TournamentRegistration.objects.filter(
             tournament=tournament,
             status__in=[
                 TournamentRegistration.Status.MAIN_LIST,
-                TournamentRegistration.Status.RESERVE_LIST
-            ]
+                TournamentRegistration.Status.RESERVE_LIST,
+            ],
         ).order_by('registration_order', 'registered_at')
-        
+
         max_teams = tournament.planned_participants or 0
-        
-        # Обновляем статусы
-        for idx, reg in enumerate(registrations):
-            new_status = (
-                TournamentRegistration.Status.MAIN_LIST
-                if idx < max_teams
-                else TournamentRegistration.Status.RESERVE_LIST
-            )
-            
+
+        # Работает по КОМАНДАМ, а не по отдельным строкам регистрации.
+        # Важный инвариант: если основной список уже заполнен (есть max_teams
+        # команд со статусом MAIN_LIST), формирование новых пар не должно
+        # вытеснять существующие команды в резерв только из-за более раннего
+        # registration_order (например, когда игрок давно был в LOOKING_FOR_PARTNER).
+
+        # Шаг 1. Собираем команды в порядке регистрации.
+        teams_ordered: list[int] = []
+        team_current_status: dict[int, str] = {}
+
+        for reg in registrations:
+            team_id = reg.team_id or reg.id  # подстраховка на случай отсутствия team
+
+            if team_id not in team_current_status:
+                team_current_status[team_id] = reg.status
+                teams_ordered.append(team_id)
+
+        # Делим команды на текущие MAIN и RESERVE в порядке регистрации.
+        main_teams: list[int] = [tid for tid in teams_ordered if team_current_status[tid] == TournamentRegistration.Status.MAIN_LIST]
+        reserve_teams: list[int] = [tid for tid in teams_ordered if team_current_status[tid] == TournamentRegistration.Status.RESERVE_LIST]
+
+        # Шаг 2. Определяем желаемый статус для каждой команды.
+        desired_team_status: dict[int, str] = {}
+
+        # Если текущих MAIN больше, чем лимит, оставляем в MAIN только
+        # самые ранние по очереди, остальные отправляем в резерв.
+        if len(main_teams) > max_teams:
+            keep_main = set(main_teams[:max_teams])
+            for tid in main_teams:
+                desired_team_status[tid] = (
+                    TournamentRegistration.Status.MAIN_LIST
+                    if tid in keep_main
+                    else TournamentRegistration.Status.RESERVE_LIST
+                )
+        else:
+            # Иначе все текущие MAIN остаются MAIN.
+            for tid in main_teams:
+                desired_team_status[tid] = TournamentRegistration.Status.MAIN_LIST
+
+            # Считаем, сколько слотов в основном списке ещё свободно.
+            remaining_slots = max_teams - len(main_teams)
+
+            # Заполняем оставшиеся слоты резервными командами по очереди.
+            for tid in reserve_teams:
+                if remaining_slots > 0:
+                    desired_team_status[tid] = TournamentRegistration.Status.MAIN_LIST
+                    remaining_slots -= 1
+                else:
+                    desired_team_status[tid] = TournamentRegistration.Status.RESERVE_LIST
+
+        # На всякий случай для команд без явного решения сохраняем текущий статус.
+        for tid in teams_ordered:
+            if tid not in desired_team_status:
+                desired_team_status[tid] = team_current_status.get(tid, TournamentRegistration.Status.RESERVE_LIST)
+
+        # Шаг 3. Применяем изменения к записям регистрации.
+        for reg in registrations:
+            team_id = reg.team_id or reg.id
+            new_status = desired_team_status.get(team_id, reg.status)
+
             if reg.status != new_status:
                 old_status = reg.status
                 reg.status = new_status
-                
+
                 # Устанавливаем флаг для избежания рекурсии в сигналах
                 reg._skip_recalculation = True
                 reg.save(update_fields=['status', 'updated_at'])
-                
+
                 # Синхронизируем с TournamentEntry
                 RegistrationService._sync_to_tournament_entry(reg)
-                
+
                 # Отправляем уведомление об изменении статуса
                 from apps.telegram_bot.tasks import send_status_changed_notification
                 send_status_changed_notification.delay(reg.id, old_status, new_status)
@@ -150,10 +202,17 @@ class RegistrationService:
         team, _ = Team.objects.get_or_create(player_1=player, player_2=None)
         
         # Определяем статус (основной состав или резерв)
-        current_main_count = TournamentRegistration.objects.filter(
-            tournament=tournament,
-            status=TournamentRegistration.Status.MAIN_LIST
-        ).count()
+        # Считаем количество КОМАНД в основном списке, а не количество записей регистрации.
+        current_main_count = (
+            TournamentRegistration.objects
+            .filter(
+                tournament=tournament,
+                status=TournamentRegistration.Status.MAIN_LIST,
+            )
+            .values('team_id')
+            .distinct()
+            .count()
+        )
         
         max_teams = tournament.planned_participants or 0
         status = (
@@ -234,68 +293,124 @@ class RegistrationService:
             TournamentRegistration игрока-инициатора
             
         Raises:
-            ValidationError: если игрок или напарник уже зарегистрированы
+            ValidationError: если игрок или напарник уже состоят в паре на этот турнир
         """
-        # Проверяем, что оба игрока ещё не зарегистрированы
+        # Получаем существующие регистрации (если есть)
         player_reg = TournamentRegistration.objects.filter(
             tournament=tournament,
             player=player
         ).first()
-        
+
         partner_reg = TournamentRegistration.objects.filter(
             tournament=tournament,
             player=partner
         ).first()
-        
-        if player_reg:
-            raise ValidationError(f'Игрок {player} уже зарегистрирован на турнир')
-        
-        if partner_reg:
-            raise ValidationError(f'Напарник {partner} уже зарегистрирован на турнир')
-        
+
+        # Нельзя формировать пару, если кто-то уже в основной/резервной паре
+        forbidden_statuses = {
+            TournamentRegistration.Status.MAIN_LIST,
+            TournamentRegistration.Status.RESERVE_LIST,
+        }
+
+        if player_reg and player_reg.status in forbidden_statuses:
+            raise ValidationError(f'Игрок {player} уже зарегистрирован в паре на этот турнир')
+
+        if partner_reg and partner_reg.status in forbidden_statuses:
+            raise ValidationError(f'Напарник {partner} уже зарегистрирован в паре на этот турнир')
+
         # Получаем или создаём команду
         team = RegistrationService._get_or_create_team(player, partner)
-        
+
         # Определяем статус (основной состав или резерв)
-        current_main_count = TournamentRegistration.objects.filter(
-            tournament=tournament,
-            status=TournamentRegistration.Status.MAIN_LIST
-        ).count()
-        
+        # Считаем количество КОМАНД в основном списке, а не количество записей регистрации.
+        current_main_count = (
+            TournamentRegistration.objects
+            .filter(
+                tournament=tournament,
+                status=TournamentRegistration.Status.MAIN_LIST,
+            )
+            .values('team_id')
+            .distinct()
+            .count()
+        )
+
         max_teams = tournament.planned_participants or 0
         status = (
             TournamentRegistration.Status.MAIN_LIST
             if current_main_count < max_teams
             else TournamentRegistration.Status.RESERVE_LIST
         )
-        
-        # Создаём регистрацию для игрока
-        player_registration = TournamentRegistration.objects.create(
-            tournament=tournament,
-            player=player,
-            partner=partner,
-            team=team,
-            status=status
+
+        # Базовый registration_order: НОВАЯ пара всегда встаёт в КОНЕЦ очереди.
+        # Игроки из LOOKING_FOR_PARTNER могли иметь старый registration_order,
+        # но он не должен вытеснять уже сформированные команды из основного состава.
+        from django.db.models import Max
+
+        max_order = (
+            TournamentRegistration.objects
+            .filter(tournament=tournament)
+            .aggregate(Max("registration_order"))
+            .get("registration_order__max")
+            or 0
         )
-        
-        # Создаём регистрацию для напарника (с тем же порядком)
-        partner_registration = TournamentRegistration.objects.create(
-            tournament=tournament,
-            player=partner,
-            partner=player,
-            team=team,
-            status=status,
-            registration_order=player_registration.registration_order
-        )
-        
+        registration_order: int = max_order + 1
+
+        # Обновляем/создаём регистрацию для инициатора
+        if player_reg and player_reg.status == TournamentRegistration.Status.LOOKING_FOR_PARTNER:
+            player_registration = player_reg
+            player_registration.partner = partner
+            player_registration.team = team
+            player_registration.status = status
+            player_registration.registration_order = registration_order
+            player_registration.save(update_fields=[
+                'partner',
+                'team',
+                'status',
+                'registration_order',
+                'updated_at',
+            ])
+        else:
+            player_registration = TournamentRegistration.objects.create(
+                tournament=tournament,
+                player=player,
+                partner=partner,
+                team=team,
+                status=status,
+                registration_order=registration_order,
+            )
+
+        # Обновляем/создаём регистрацию для напарника
+        if partner_reg and partner_reg.status == TournamentRegistration.Status.LOOKING_FOR_PARTNER:
+            partner_registration = partner_reg
+            partner_registration.partner = player
+            partner_registration.team = team
+            partner_registration.status = status
+            partner_registration.registration_order = registration_order
+            partner_registration.save(update_fields=[
+                'partner',
+                'team',
+                'status',
+                'registration_order',
+                'updated_at',
+            ])
+        else:
+            partner_registration = TournamentRegistration.objects.create(
+                tournament=tournament,
+                player=partner,
+                partner=player,
+                team=team,
+                status=status,
+                registration_order=registration_order,
+            )
+
         # Синхронизируем с TournamentEntry
         RegistrationService._sync_to_tournament_entry(player_registration)
-        
+
         # Отправляем уведомление напарнику
         if notify_partner:
             from apps.telegram_bot.tasks import send_partner_registration_notification
             transaction.on_commit(lambda: send_partner_registration_notification.delay(partner_registration.id))
-        
+
         return player_registration
     
     @staticmethod
@@ -584,34 +699,32 @@ class RegistrationService:
         tournament = registration.tournament
         partner = registration.partner
         team = registration.team
-        
+
         # Удаляем TournamentEntry если есть команда
         if team:
             TournamentEntry.objects.filter(
                 tournament=tournament,
                 team=team
             ).delete()
-        
-        # Если игрок в паре, обновляем регистрацию напарника
-        if partner:
-            partner_reg = TournamentRegistration.objects.filter(
-                tournament=tournament,
-                player=partner
-            ).first()
-            
-            if partner_reg:
-                partner_reg.partner = None
-                partner_reg.team = None
-                partner_reg.status = TournamentRegistration.Status.LOOKING_FOR_PARTNER
-                # Сигнал post_save автоматически вызовет пересчёт
-                partner_reg.save(update_fields=['partner', 'team', 'status', 'updated_at'])
-                
-                # Отправляем уведомление напарнику
-                from apps.telegram_bot.tasks import send_partner_cancelled_notification
-                transaction.on_commit(lambda: send_partner_cancelled_notification.delay(partner_reg.id))
-        
-        # Удаляем регистрацию - сигнал post_delete автоматически вызовет пересчёт
+
+        # Удаляем регистрацию текущего игрока - сигнал post_delete автоматически вызовет пересчёт
         registration.delete()
+
+        # Если игрок был в паре, после полной отмены регистрации
+        # явно регистрируем напарника в режиме "ищет пару".
+        # Это эквивалентно нажатию кнопки "Зарегистрироваться без пары" за напарника
+        # и не зависит от того, что могло сделать удаление TournamentEntry через сигналы.
+        if partner:
+            from django.core.exceptions import ValidationError
+
+            try:
+                # Пытаемся создать/обновить регистрацию напарника как "ищет пару"
+                RegistrationService.register_looking_for_partner(tournament, partner)
+            except ValidationError:
+                # Если по каким-то причинам напарник не может быть зарегистрирован
+                # (например, турнир заблокирован для регистраций), просто игнорируем
+                # эту ошибку, чтобы не ломать отмену регистрации инициатора.
+                pass
     
     @staticmethod
     @transaction.atomic

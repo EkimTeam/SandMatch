@@ -1101,6 +1101,7 @@ export interface WebTournamentRegistration {
   status: WebRegistrationStatus;
   status_display: string;
   registered_at: string;
+  rating_bp?: number | null;
 }
 
 export interface WebTournamentParticipants {
@@ -1167,8 +1168,14 @@ export const tournamentRegistrationApi = {
   searchPlayers: async (
     tournamentId: number,
     query: string,
-  ): Promise<{ players: Array<{ id: number; full_name: string; is_registered: boolean }> }> => {
+  ): Promise<{ players: Array<{ id: number; full_name: string; is_registered: boolean; rating_bp?: number | null }> }> => {
     const { data } = await api.get(`/tournaments/${tournamentId}/search_players/`, { params: { q: query } });
+    return data;
+  },
+  getRecentPartners: async (
+    tournamentId: number,
+  ): Promise<{ players: Array<{ id: number; full_name: string; is_registered: boolean; rating_bp?: number | null }> }> => {
+    const { data } = await api.get(`/tournaments/${tournamentId}/recent_partners/`);
     return data;
   },
 };

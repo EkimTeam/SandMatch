@@ -1168,9 +1168,11 @@ class TournamentViewSet(viewsets.ModelViewSet):
             if my_reg:
                 my_registration_data = MiniAppTournamentRegistrationSerializer(my_reg).data
 
-        total_registered = registrations_qs.count()
+        # Количество участников считаем по TournamentEntry (реальные команды),
+        # а не по числу регистраций (чтобы "ищу пару" не засчитывались как занятое место)
         total_entries = getattr(tournament, "entries", None)
         participants_count = total_entries.count() if total_entries is not None else None
+        total_registered = participants_count
 
         return Response(
             {
@@ -1222,9 +1224,11 @@ class TournamentViewSet(viewsets.ModelViewSet):
             }
         ).data
 
-        total_registered = registrations_qs.count()
+        # Количество участников считаем по TournamentEntry (реальные команды),
+        # а не по числу регистраций (чтобы "ищу пару" не засчитывались как занятое место)
         total_entries = getattr(tournament, "entries", None)
         participants_count = total_entries.count() if total_entries is not None else None
+        total_registered = participants_count
 
         return Response(
             {
@@ -1437,26 +1441,165 @@ class TournamentViewSet(viewsets.ModelViewSet):
 
         from django.db.models import Q
 
+        # Базовый запрос по ФИО
         players_qs = Player.objects.filter(
             Q(first_name__icontains=query)
             | Q(last_name__icontains=query)
             | Q(patronymic__icontains=query)
-        ).order_by("last_name", "first_name")[:50]
-
-        # помечаем, зарегистрирован ли игрок уже на этот турнир
-        registered_ids = set(
-            TournamentRegistration.objects.filter(tournament=tournament, player_id__in=players_qs.values_list("id", flat=True))
-            .values_list("player_id", flat=True)
         )
 
-        players_payload = [
-            {
-                "id": p.id,
-                "full_name": str(p),
-                "is_registered": p.id in registered_ids,
-            }
-            for p in players_qs
-        ]
+        # Исключаем текущего игрока из результатов (чтобы он не выбирал сам себя)
+        current_player = self._get_current_player(request, tournament)
+        if current_player:
+            players_qs = players_qs.exclude(id=current_player.id)
+
+        players_qs = players_qs.order_by("last_name", "first_name")
+
+        # помечаем, зарегистрирован ли игрок уже в СФОРМИРОВАННОЙ ПАРЕ на этот турнир
+        # (основной или резервный список). Игроки в статусе LOOKING_FOR_PARTNER
+        # остаются доступными для выбора напарника.
+        #
+        # Важно: пары, созданные организатором через TournamentEntry, могут иметь
+        # только одного игрока в поле player и второго в поле partner, поэтому
+        # учитываем оба поля.
+        candidate_ids = list(players_qs.values_list("id", flat=True))
+        base_qs = TournamentRegistration.objects.filter(
+            tournament=tournament,
+            status__in=[
+                TournamentRegistration.Status.MAIN_LIST,
+                TournamentRegistration.Status.RESERVE_LIST,
+            ],
+        )
+
+        player_ids = base_qs.filter(player_id__in=candidate_ids).values_list("player_id", flat=True)
+        partner_ids = base_qs.filter(partner_id__in=candidate_ids).values_list("partner_id", flat=True)
+        registered_ids = set(player_ids) | set(partner_ids)
+
+        players_payload = []
+        for p in players_qs:
+            rating = getattr(p, "current_rating", None)
+            rating_bp = int(rating) if rating is not None else None
+            players_payload.append(
+                {
+                    "id": p.id,
+                    "full_name": str(p),
+                    "is_registered": p.id in registered_ids,
+                    "rating_bp": rating_bp,
+                }
+            )
+
+        return Response({"players": players_payload})
+
+    @action(detail=True, methods=["get"], url_path="recent_partners", permission_classes=[IsAuthenticated])
+    def web_recent_partners(self, request, pk=None):
+        """Вернуть до 5 самых частых напарников текущего игрока.
+
+        Используется в веб-модалке поиска напарника. Формат ответа такой же,
+        как у web_search_players: {"players": [{id, full_name, is_registered}]}.
+        """
+
+        tournament: Tournament = self.get_object()
+        self._ensure_can_view_tournament(request, tournament)
+
+        current_player = self._get_current_player(request, tournament)
+        if not current_player:
+            return Response({"players": []})
+
+        # Собираем всех напарников по командам Team
+        from apps.teams.models import Team
+
+        # команды, где текущий игрок в player_1
+        qs1 = (
+            Team.objects.filter(player_1=current_player, player_2__isnull=False)
+            .values("player_2")
+        )
+        # команды, где текущий игрок в player_2
+        qs2 = (
+            Team.objects.filter(player_2=current_player, player_1__isnull=False)
+            .values("player_1")
+        )
+
+        # агрегируем в питоне, т.к. напарник хранится в разных полях
+        from collections import Counter
+
+        counter: Counter[int] = Counter()
+        recent_ids: list[int] = []
+
+        # Сначала собираем все пары с сохранением порядка (по id команды как приближению к "последним")
+        teams_with_partner = list(
+            Team.objects.filter(
+                (Q(player_1=current_player, player_2__isnull=False))
+                | (Q(player_2=current_player, player_1__isnull=False))
+            )
+            .order_by("-id")
+        )
+
+        for team in teams_with_partner:
+            if team.player_1_id == current_player.id and team.player_2_id:
+                partner_id = team.player_2_id
+            elif team.player_2_id == current_player.id and team.player_1_id:
+                partner_id = team.player_1_id
+            else:
+                continue
+
+            counter[partner_id] += 1
+
+            # формируем список последних напарников (до 3 уникальных)
+            if partner_id not in recent_ids:
+                recent_ids.append(partner_id)
+                if len(recent_ids) >= 3:
+                    # продолжаем считать counter, но новые recent_ids не добавляем
+                    pass
+
+        if not counter:
+            return Response({"players": []})
+
+        # top-2 по частоте
+        frequent_ids = [pid for pid, _cnt in counter.most_common(2)]
+
+        # Объединяем: сначала последние напарники (до 3), затем частые (до 2), без повторов
+        merged_ids: list[int] = []
+        for pid in recent_ids:
+            if pid not in merged_ids:
+                merged_ids.append(pid)
+        for pid in frequent_ids:
+            if pid not in merged_ids:
+                merged_ids.append(pid)
+
+        top_ids = merged_ids[:5]
+
+        players_qs = Player.objects.filter(id__in=top_ids)
+
+        # Финальный список: сортируем по ФИО
+        players_list = sorted(players_qs, key=lambda p: str(p))
+
+        # помечаем, зарегистрирован ли игрок уже в СФОРМИРОВАННОЙ ПАРЕ на этот турнир.
+        # Учитываем, что игрок может быть как в поле player, так и в поле partner.
+        candidate_ids = [p.id for p in players_list]
+        base_qs = TournamentRegistration.objects.filter(
+            tournament=tournament,
+            status__in=[
+                TournamentRegistration.Status.MAIN_LIST,
+                TournamentRegistration.Status.RESERVE_LIST,
+            ],
+        )
+
+        player_ids = base_qs.filter(player_id__in=candidate_ids).values_list("player_id", flat=True)
+        partner_ids = base_qs.filter(partner_id__in=candidate_ids).values_list("partner_id", flat=True)
+        registered_ids = set(player_ids) | set(partner_ids)
+
+        players_payload = []
+        for p in players_list:
+            rating = getattr(p, "current_rating", None)
+            rating_bp = int(rating) if rating is not None else None
+            players_payload.append(
+                {
+                    "id": p.id,
+                    "full_name": str(p),
+                    "is_registered": p.id in registered_ids,
+                    "rating_bp": rating_bp,
+                }
+            )
 
         return Response({"players": players_payload})
 
