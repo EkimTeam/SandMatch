@@ -42,11 +42,14 @@ export const ParticipantPickerModal: React.FC<Props> = ({ open, onClose, tournam
     setError(null); setNewLast(''); setNewFirst('');
     search('A', '');
     if (isDoubles) search('B', '');
-    // Подтянуть актуальных участников турнира, чтобы заблокировать их для выбора
+    // Подтянуть актуальных участников турнира (TournamentEntry), чтобы заблокировать их для выбора
+    // НЕ блокируем игроков из LOOKING_FOR_PARTNER - они должны быть доступны для добавления
     (async () => {
       try {
         const { data } = await api.get(`/tournaments/${tournamentId}/`);
         const ids = new Set<number>(usedPlayerIds || []);
+        // Блокируем только игроков из TournamentEntry (participants)
+        // Это игроки, которые уже входят в команды турнира (основной список или резерв)
         (data.participants || []).forEach((p: any) => {
           const team = p.team || {};
           const raw1 = team.player_1 ?? team.player_1_id;
@@ -59,7 +62,7 @@ export const ParticipantPickerModal: React.FC<Props> = ({ open, onClose, tournam
         setBlockedIds(ids);
       } catch {}
     })();
-  }, [open, isDoubles]);
+  }, [open, isDoubles, tournamentId, usedPlayerIds]);
 
   const disabledIds = useMemo(() => blockedIds, [blockedIds]);
 

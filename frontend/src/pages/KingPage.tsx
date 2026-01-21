@@ -521,63 +521,81 @@ export const KingPage: React.FC = () => {
 
   useEffect(() => {
     if (!t || t.status !== 'created') return;
-    const parts = (t.participants || []).filter(p => p.team);
     
-    // ВСЕ участники должны быть в списке слева
-    const draggableParticipants: DraggableParticipant[] = parts.map(p => {
-      const team = p.team!;
-      const p1 = typeof team.player_1 === 'object' ? team.player_1?.id : team.player_1;
-      const p2 = typeof team.player_2 === 'object' ? team.player_2?.id : team.player_2;
-      const r1 = typeof p1 === 'number' ? playerRatings.get(p1) : undefined;
-      const r2 = typeof p2 === 'number' ? playerRatings.get(p2) : undefined;
-      let rating: number | undefined = undefined;
-      if (r1 !== undefined && r2 !== undefined) {
-        rating = Math.round((r1 + r2) / 2);
-      } else if (r1 !== undefined) {
-        rating = r1;
-      }
-      
-      return {
-        id: p.id,
-        teamId: team.id,
-        teamName: team.name || '',
-        displayName: team.display_name || team.name || '',
-        fullName: team.full_name || '',
-        name: team.full_name || team.name || '', // Отображаем ФИО в списке слева
-        currentRating: rating, // Используем currentRating для совместимости с DraggableParticipantList
-        rating,
-        groupIndex: p.group_index,
-        rowIndex: p.row_index,
-        isInBracket: p.group_index != null && p.row_index != null,
-      };
-    });
-
-    const totalParticipants = t.planned_participants || 0;
-    const groupsCount = t.groups_count || 1;
-    const base = Math.floor(totalParticipants / groupsCount);
-    const remainder = totalParticipants % groupsCount;
-
-    const slots: SimplifiedDropSlot[] = [];
-    for (let gi = 0; gi < groupsCount; gi++) {
-      const plannedPerGroup = gi < remainder ? base + 1 : base;
-      for (let ri = 0; ri < plannedPerGroup; ri++) {
-        // Ищем участника, который уже размещён в этой позиции (group_index и row_index заполнены)
-        const existing = draggableParticipants.find(p => p.groupIndex === gi + 1 && p.rowIndex === ri + 1);
-        slots.push({
-          groupIndex: gi,
-          rowIndex: ri,
-          currentParticipant: existing || null,
+    // Загружаем участников через API для получения list_status
+    const loadParticipantsWithStatus = async () => {
+      try {
+        const participantsList = await tournamentApi.getTournamentParticipants(t.id);
+        
+        // Создаем Map для быстрого поиска позиций из t.participants
+        const positionMap = new Map();
+        (t.participants || []).forEach((p: any) => {
+          if (p.id) {
+            positionMap.set(p.id, {
+              groupIndex: p.group_index,
+              rowIndex: p.row_index
+            });
+          }
         });
-      }
-    }
+        
+        const allParticipants: DraggableParticipant[] = participantsList.map((p: any) => {
+          const position = positionMap.get(p.id) || {};
+          return {
+            id: p.id,
+            teamId: p.team_id,
+            name: p.name,
+            fullName: p.name,
+            displayName: p.name,
+            currentRating: typeof p.rating === 'number' ? p.rating : undefined,
+            rating: typeof p.rating === 'number' ? p.rating : undefined,
+            groupIndex: position.groupIndex,
+            rowIndex: position.rowIndex,
+            isInBracket: position.groupIndex != null && position.rowIndex != null,
+            listStatus: p.list_status || 'main',
+            registrationOrder: p.registration_order
+          };
+        });
+        
+        const draggableParticipants = allParticipants;
+        
+        // Разделяем на основной и резервный списки
+        const mainParticipants = allParticipants.filter(p => p.listStatus === 'main');
+        const reserveParticipants = allParticipants.filter(p => p.listStatus === 'reserve');
 
-    setDragDropState({
-      participants: draggableParticipants, // Показываем ВСЕХ участников в списке
-      dropSlots: [],
-      isSelectionLocked: false,
-    });
-    setSimplifiedDropSlots(slots);
-  }, [t, playerRatings]);
+        const totalParticipants = t.planned_participants || 0;
+        const groupsCount = t.groups_count || 1;
+        const base = Math.floor(totalParticipants / groupsCount);
+        const remainder = totalParticipants % groupsCount;
+
+        const slots: SimplifiedDropSlot[] = [];
+        for (let gi = 0; gi < groupsCount; gi++) {
+          const plannedPerGroup = gi < remainder ? base + 1 : base;
+          for (let ri = 0; ri < plannedPerGroup; ri++) {
+            // Ищем участника, который уже размещён в этой позиции (group_index и row_index заполнены)
+            const existing = draggableParticipants.find(p => p.groupIndex === gi + 1 && p.rowIndex === ri + 1);
+            slots.push({
+              groupIndex: gi,
+              rowIndex: ri,
+              currentParticipant: existing || null,
+            });
+          }
+        }
+
+        setDragDropState({
+          participants: draggableParticipants,
+          mainParticipants,
+          reserveParticipants,
+          dropSlots: [],
+          isSelectionLocked: false,
+        });
+        setSimplifiedDropSlots(slots);
+      } catch (error) {
+        console.error('Failed to load participants with status:', error);
+      }
+    };
+    
+    loadParticipantsWithStatus();
+  }, [t]);
 
   const handleDropParticipant = async (groupIndex: number, rowIndex: number, participant: DraggableParticipant) => {
     if (!t) return;
@@ -816,12 +834,15 @@ export const KingPage: React.FC = () => {
             <div className="participants-panel">
               <DraggableParticipantList
                 participants={dragDropState.participants}
+                mainParticipants={dragDropState.mainParticipants}
+                reserveParticipants={dragDropState.reserveParticipants}
                 onRemoveParticipant={handleRemoveParticipantFromList}
                 onAddParticipant={() => setDragDropPickerOpen(true)}
                 onAutoSeed={handleAutoSeed}
                 onClearTables={handleClearTables}
                 maxParticipants={t.planned_participants || 32}
                 canAddMore={true}
+                tournamentSystem="king"
               />
             </div>
 

@@ -368,17 +368,27 @@ export const KnockoutPage: React.FC = () => {
     if (!tournamentId) return;
     try {
       const participantsList = await tournamentApi.getTournamentParticipants(tournamentId);
-      const participants: DraggableParticipant[] = participantsList
+      const allParticipants: DraggableParticipant[] = participantsList
         .map((p: any) => ({
           id: p.id,
           name: p.name,
           teamId: p.team_id,
           isInBracket: false, // будет обновлено при проверке слотов
           currentRating: typeof p.rating === 'number' ? p.rating : undefined,
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name, 'ru')); // Сортировка по имени
+          listStatus: p.list_status || 'main',
+          registrationOrder: p.registration_order
+        }));
       
-      setDragDropState(prev => ({ ...prev, participants }));
+      // Разделяем на основной и резервный списки
+      const mainParticipants = allParticipants.filter(p => p.listStatus === 'main');
+      const reserveParticipants = allParticipants.filter(p => p.listStatus === 'reserve');
+      
+      setDragDropState(prev => ({ 
+        ...prev, 
+        participants: allParticipants,
+        mainParticipants,
+        reserveParticipants
+      }));
     } catch (error) {
       console.error('Failed to load participants:', error);
     }
@@ -1070,6 +1080,8 @@ export const KnockoutPage: React.FC = () => {
         <div className="participants-panel" data-export-exclude="true">
           <DraggableParticipantList
             participants={dragDropState.participants}
+            mainParticipants={dragDropState.mainParticipants}
+            reserveParticipants={dragDropState.reserveParticipants}
             onRemoveParticipant={handleRemoveParticipant}
             onAddParticipant={() => setPickerOpen(true)}
             onAutoSeed={handleAutoSeed}

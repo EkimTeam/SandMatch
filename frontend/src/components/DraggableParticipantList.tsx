@@ -3,6 +3,8 @@ import { DraggableParticipant } from '../types/dragdrop';
 
 interface Props {
   participants: DraggableParticipant[];
+  mainParticipants?: DraggableParticipant[];
+  reserveParticipants?: DraggableParticipant[];
   onRemoveParticipant: (id: number) => void;
   onAddParticipant: () => void;
   onAutoSeed: () => void;
@@ -14,6 +16,8 @@ interface Props {
 
 export const DraggableParticipantList: React.FC<Props> = ({
   participants,
+  mainParticipants,
+  reserveParticipants,
   onRemoveParticipant,
   onAddParticipant,
   onAutoSeed,
@@ -127,22 +131,72 @@ export const DraggableParticipantList: React.FC<Props> = ({
     });
   };
 
-  // Сортировка участников
-  const sortedParticipants = [...participants].sort((a, b) => {
-    if (sortBy === 'rating') {
-      // Сортировка по рейтингу (по убыванию)
-      const ratingA = a.currentRating || 0;
-      const ratingB = b.currentRating || 0;
-      if (ratingB !== ratingA) {
-        return ratingB - ratingA;
+  // Функция сортировки для основного списка
+  const sortMainParticipants = (list: DraggableParticipant[]) => {
+    return [...list].sort((a, b) => {
+      if (sortBy === 'rating') {
+        const ratingA = a.currentRating || 0;
+        const ratingB = b.currentRating || 0;
+        if (ratingB !== ratingA) {
+          return ratingB - ratingA;
+        }
+        return a.name.localeCompare(b.name, 'ru');
+      } else {
+        return a.name.localeCompare(b.name, 'ru');
       }
-      // При равном рейтинге - по имени
-      return a.name.localeCompare(b.name, 'ru');
-    } else {
-      // Сортировка по имени (по возрастанию)
-      return a.name.localeCompare(b.name, 'ru');
-    }
-  });
+    });
+  };
+
+  // Функция сортировки для резервного списка (всегда по очереди регистрации)
+  const sortReserveParticipants = (list: DraggableParticipant[]) => {
+    return [...list].sort((a, b) => {
+      const orderA = a.registrationOrder || 0;
+      const orderB = b.registrationOrder || 0;
+      return orderA - orderB;
+    });
+  };
+
+  // Используем разделённые списки если они переданы, иначе используем общий список
+  const usesSeparateLists = mainParticipants !== undefined && reserveParticipants !== undefined;
+  const sortedMainParticipants = usesSeparateLists ? sortMainParticipants(mainParticipants!) : [];
+  const sortedReserveParticipants = usesSeparateLists ? sortReserveParticipants(reserveParticipants!) : [];
+  const sortedParticipants = !usesSeparateLists ? sortMainParticipants(participants) : [];
+
+  const renderParticipantItem = (participant: DraggableParticipant) => (
+    <div
+      key={participant.id}
+      className={`participant-item ${participant.isInBracket ? 'in-bracket' : ''} ${!participant.isInBracket ? 'draggable' : ''} ${draggedParticipant?.id === participant.id ? 'dragging' : ''}`}
+      draggable={!participant.isInBracket}
+      onDragStart={(e) => handleDragStart(e, participant)}
+      onDragEnd={handleDragEnd}
+      onTouchStart={(e) => handleTouchStart(e, participant)}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+    >
+      <span className="participant-name" style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+        <span>{participant.name}</span>
+        {typeof participant.currentRating === 'number' && (
+          <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 2 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1 }}>{participant.currentRating}</span>
+            <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.7 }}>BP</span>
+          </span>
+        )}
+      </span>
+      <div className="participant-actions">
+        {participant.isInBracket ? (
+          <span className="in-bracket-badge">В сетке</span>
+        ) : (
+          <button
+            className="btn-remove"
+            onClick={() => onRemoveParticipant(participant.id)}
+            title="Удалить из списка"
+          >
+            ×
+          </button>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <div className="participant-list-container">
@@ -190,58 +244,53 @@ export const DraggableParticipantList: React.FC<Props> = ({
         </div>
       </div>
       
-      <div 
-        className="participant-list"
-        onDragOver={handleDragOver}
-      >
-        {sortedParticipants.map(participant => (
-          <div
-            key={participant.id}
-            className={`participant-item ${participant.isInBracket ? 'in-bracket' : ''} ${!participant.isInBracket ? 'draggable' : ''} ${draggedParticipant?.id === participant.id ? 'dragging' : ''}`}
-            draggable={!participant.isInBracket}
-            onDragStart={(e) => handleDragStart(e, participant)}
-            onDragEnd={handleDragEnd}
-            onTouchStart={(e) => handleTouchStart(e, participant)}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
-          >
-            <span className="participant-name" style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-              <span>{participant.name}</span>
-              {typeof participant.currentRating === 'number' && (
-                <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 2 }}>
-                  <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1 }}>{participant.currentRating}</span>
-                  <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.7 }}>BP</span>
-                </span>
-              )}
-            </span>
-            <div className="participant-actions">
-              {participant.isInBracket ? (
-                <span className="in-bracket-badge">В сетке</span>
-              ) : (
-                <button
-                  className="btn-remove"
-                  onClick={() => onRemoveParticipant(participant.id)}
-                  title="Удалить из списка"
-                >
-                  ×
-                </button>
+      {usesSeparateLists ? (
+        <>
+          {/* Основной состав */}
+          <div style={{ marginBottom: 16 }}>
+            <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: '#333' }}>
+              Основной состав ({sortedMainParticipants.length})
+            </h4>
+            <div className="participant-list" onDragOver={handleDragOver}>
+              {sortedMainParticipants.map(renderParticipantItem)}
+              {sortedMainParticipants.length === 0 && (
+                <div className="empty-state" style={{ fontSize: 13, padding: 12 }}>
+                  Нет участников в основном составе
+                </div>
               )}
             </div>
           </div>
-        ))}
-        
-        {participants.length === 0 && (
-          <div className="empty-state">
-            Добавьте участников для заполнения сетки
+
+          {/* Резервный список */}
+          <div>
+            <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: '#333' }}>
+              Резервный список ({sortedReserveParticipants.length})
+            </h4>
+            <div className="participant-list" onDragOver={handleDragOver}>
+              {sortedReserveParticipants.map(renderParticipantItem)}
+              {sortedReserveParticipants.length === 0 && (
+                <div className="empty-state" style={{ fontSize: 13, padding: 12 }}>
+                  Нет участников в резерве
+                </div>
+              )}
+            </div>
           </div>
-        )}
-        
-        {!canAddMore && participants.length > 0 && (
-          <div className="info-message">
-            Достигнуто максимальное количество участников
-          </div>
-        )}
-      </div>
+        </>
+      ) : (
+        <div className="participant-list" onDragOver={handleDragOver}>
+          {sortedParticipants.map(renderParticipantItem)}
+          {participants.length === 0 && (
+            <div className="empty-state">
+              Добавьте участников для заполнения сетки
+            </div>
+          )}
+          {!canAddMore && participants.length > 0 && (
+            <div className="info-message">
+              Достигнуто максимальное количество участников
+            </div>
+          )}
+        </div>
+      )}
       
       {/* Ghost элемент для визуализации перетаскивания */}
       {draggedParticipant && ghostPosition && (

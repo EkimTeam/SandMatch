@@ -59,6 +59,7 @@ class TeamSerializer(serializers.ModelSerializer):
 class ParticipantSerializer(serializers.ModelSerializer):
     team = TeamSerializer(read_only=True)
     team_id = serializers.IntegerField(write_only=True)
+    list_status = serializers.SerializerMethodField()
 
     class Meta:
         model = TournamentEntry
@@ -69,7 +70,47 @@ class ParticipantSerializer(serializers.ModelSerializer):
             "group_index",
             "row_index",
             "is_out_of_competition",
+            "list_status",
         ]
+    
+    def get_list_status(self, obj: TournamentEntry) -> str:
+        """Определяет статус команды в списках регистрации (main/reserve)"""
+        from apps.tournaments.registration_models import TournamentRegistration
+        
+        # Получаем tournament из контекста или из объекта
+        tournament = obj.tournament
+        team = obj.team
+        
+        if not team:
+            return "main"  # По умолчанию основной список
+        
+        # Ищем регистрации игроков этой команды
+        player_ids = []
+        if team.player_1_id:
+            player_ids.append(team.player_1_id)
+        if team.player_2_id:
+            player_ids.append(team.player_2_id)
+        
+        if not player_ids:
+            return "main"
+        
+        # Проверяем статус регистрации любого из игроков команды
+        registration = TournamentRegistration.objects.filter(
+            tournament=tournament,
+            player_id__in=player_ids,
+            status__in=[
+                TournamentRegistration.Status.MAIN_LIST,
+                TournamentRegistration.Status.RESERVE_LIST
+            ]
+        ).first()
+        
+        if registration:
+            if registration.status == TournamentRegistration.Status.MAIN_LIST:
+                return "main"
+            elif registration.status == TournamentRegistration.Status.RESERVE_LIST:
+                return "reserve"
+        
+        return "main"  # По умолчанию основной список
 
 
 class MatchSerializer(serializers.ModelSerializer):
