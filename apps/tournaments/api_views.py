@@ -671,8 +671,23 @@ class TournamentViewSet(viewsets.ModelViewSet):
         except KnockoutBracket.DoesNotExist:
             return Response({"ok": False, "error": "Сетка не найдена"}, status=404)
 
-        # Получить всех участников турнира
-        all_entries = list(tournament.entries.select_related("team__player_1", "team__player_2"))
+        # Получить только участников из ОСНОВНОГО СОСТАВА (MAIN_LIST)
+        from apps.tournaments.registration_models import TournamentRegistration
+        
+        main_list_registrations = TournamentRegistration.objects.filter(
+            tournament=tournament,
+            status=TournamentRegistration.Status.MAIN_LIST
+        ).values_list('team_id', flat=True).distinct()
+        
+        main_list_team_ids = [tid for tid in main_list_registrations if tid is not None]
+        
+        if not main_list_team_ids:
+            return Response({"ok": False, "error": "Нет участников в основном составе для посева"}, status=400)
+        
+        # Получаем только участников из основного списка
+        all_entries = list(tournament.entries.filter(
+            team_id__in=main_list_team_ids
+        ).select_related("team__player_1", "team__player_2"))
         
         # Отсортировать по рейтингу (убывание) и взять только первых planned_participants
         planned_count = tournament.planned_participants or len(all_entries)
