@@ -449,21 +449,35 @@ export const KnockoutPage: React.FC = () => {
       
       // Обновить статус isInBracket для участников
       setDragDropState(prev => {
-        const participantsInSlots = new Set<number>();
+        const teamsInSlots = new Set<number>();
         dropSlots.forEach(slot => {
           if (slot.currentParticipant && slot.currentParticipant.name !== 'BYE') {
-            participantsInSlots.add(slot.currentParticipant.id);
+            // slot.currentParticipant.id это team.id из match.team_1/team_2
+            teamsInSlots.add(slot.currentParticipant.id);
           }
         });
         
         const updatedParticipants = prev.participants.map(p => ({
           ...p,
-          isInBracket: participantsInSlots.has(p.teamId || 0)
+          isInBracket: teamsInSlots.has(p.teamId || 0)
+        }));
+        
+        // Также обновляем mainParticipants и reserveParticipants
+        const updatedMainParticipants = prev.mainParticipants?.map(p => ({
+          ...p,
+          isInBracket: teamsInSlots.has(p.teamId || 0)
+        }));
+        
+        const updatedReserveParticipants = prev.reserveParticipants?.map(p => ({
+          ...p,
+          isInBracket: teamsInSlots.has(p.teamId || 0)
         }));
         
         return { 
           ...prev, 
           participants: updatedParticipants,
+          mainParticipants: updatedMainParticipants,
+          reserveParticipants: updatedReserveParticipants,
           dropSlots,
           // Не включаем фиксацию автоматически — пользователь делает это вручную
           isSelectionLocked: prev.isSelectionLocked
