@@ -513,6 +513,8 @@ def register_with_partner(request, tournament_id):
     
     POST /api/mini-app/tournaments/{id}/register-with-partner/
     Body: { "partner_search": "Иванов Иван" }
+    или
+    Body: { "partner_id": 123 }
     """
     from apps.tournaments.services import RegistrationService
     from .api_serializers import RegisterWithPartnerSerializer, TournamentRegistrationSerializer
@@ -528,32 +530,40 @@ def register_with_partner(request, tournament_id):
     if not telegram_user or not telegram_user.player_id:
         return Response({'error': 'Игрок не найден'}, status=status.HTTP_400_BAD_REQUEST)
     
-    serializer = RegisterWithPartnerSerializer(data=request.data)
-    if not serializer.is_valid():
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
     try:
         tournament = Tournament.objects.get(id=tournament_id)
         player = Player.objects.get(id=telegram_user.player_id)
         
-        # Поиск напарника по ФИО
-        search_query = serializer.validated_data['partner_search'].strip()
-        partners = Player.objects.filter(
-            Q(first_name__icontains=search_query) |
-            Q(last_name__icontains=search_query) |
-            Q(patronymic__icontains=search_query)
-        )
-        
-        if partners.count() == 0:
-            return Response({'error': 'Игрок не найден'}, status=status.HTTP_404_NOT_FOUND)
-        elif partners.count() > 1:
-            # Возвращаем список найденных игроков для уточнения
-            return Response({
-                'error': 'Найдено несколько игроков. Уточните запрос.',
-                'players': [{'id': p.id, 'full_name': p.get_full_name()} for p in partners]
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        partner = partners.first()
+        # Проверяем, передан ли partner_id (для выбора из модалки)
+        partner_id = request.data.get('partner_id')
+        if partner_id:
+            try:
+                partner = Player.objects.get(id=partner_id)
+            except Player.DoesNotExist:
+                return Response({'error': 'Игрок не найден'}, status=status.HTTP_404_NOT_FOUND)
+        else:
+            # Поиск напарника по ФИО
+            serializer = RegisterWithPartnerSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+            search_query = serializer.validated_data['partner_search'].strip()
+            partners = Player.objects.filter(
+                Q(first_name__icontains=search_query) |
+                Q(last_name__icontains=search_query) |
+                Q(patronymic__icontains=search_query)
+            )
+            
+            if partners.count() == 0:
+                return Response({'error': 'Игрок не найден'}, status=status.HTTP_404_NOT_FOUND)
+            elif partners.count() > 1:
+                # Возвращаем список найденных игроков для уточнения
+                return Response({
+                    'error': 'Найдено несколько игроков. Уточните запрос.',
+                    'players': [{'id': p.id, 'full_name': str(p)} for p in partners]
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            partner = partners.first()
         
     except Tournament.DoesNotExist:
         return Response({'error': 'Турнир не найден'}, status=status.HTTP_404_NOT_FOUND)
@@ -957,17 +967,21 @@ def recent_partners(request, tournament_id):
     if not counter:
         return Response({'players': []})
     
-    # Top-2 по частоте
-    frequent_ids = [pid for pid, _cnt in counter.most_common(2)]
-    
-    # Объединяем: сначала последние напарники (до 3), затем частые (до 2), без повторов
+    # Формируем итоговый список: 3 последних уникальных + заполнение до 5 из наиболее частых
     merged_ids = []
+    
+    # Добавляем последних 3 уникальных напарников
     for pid in recent_ids[:3]:
         if pid not in merged_ids:
             merged_ids.append(pid)
-    for pid in frequent_ids:
+    
+    # Дополняем из наиболее частых напарников (исключая уже добавленных)
+    # Берём всех частых по порядку убывания частоты и добавляем, пока не наберём 5
+    for pid, _cnt in counter.most_common():
         if pid not in merged_ids:
             merged_ids.append(pid)
+            if len(merged_ids) >= 5:
+                break
     
     top_ids = merged_ids[:5]
     

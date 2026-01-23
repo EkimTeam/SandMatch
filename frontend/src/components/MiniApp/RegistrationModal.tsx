@@ -77,7 +77,7 @@ const RegistrationModal = ({ tournamentId, tournamentName, isIndividual, onClose
       setLoading(true)
       hapticFeedback.medium()
       
-      await miniAppAPI.registerWithPartner(tournamentId, selectedPartner.name)
+      await miniAppAPI.registerWithPartner(tournamentId, selectedPartner.id)
       
       hapticFeedback.success()
       alert('✅ Вы зарегистрированы с напарником!\n\nНапарнику отправлено уведомление.')
