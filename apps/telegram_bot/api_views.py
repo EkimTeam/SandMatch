@@ -410,17 +410,17 @@ def tournament_participants(request, tournament_id):
     main_list = TournamentRegistration.objects.filter(
         tournament=tournament,
         status=TournamentRegistration.Status.MAIN_LIST
-    ).select_related('player', 'partner')
+    ).select_related('player', 'partner', 'team', 'team__player_1', 'team__player_2').order_by('id')
     
     reserve_list = TournamentRegistration.objects.filter(
         tournament=tournament,
         status=TournamentRegistration.Status.RESERVE_LIST
-    ).select_related('player', 'partner')
+    ).select_related('player', 'partner', 'team', 'team__player_1', 'team__player_2').order_by('id')
     
     looking_for_partner = TournamentRegistration.objects.filter(
         tournament=tournament,
         status=TournamentRegistration.Status.LOOKING_FOR_PARTNER
-    ).select_related('player')
+    ).select_related('player').order_by('id')
     
     data = {
         'main_list': TournamentRegistrationSerializer(main_list, many=True).data,
@@ -878,7 +878,109 @@ def search_players(request, tournament_id):
         result.append({
             'id': player.id,
             'full_name': player.get_full_name(),
-            'is_registered': player.id in registered_player_ids
+            'is_registered': player.id in registered_player_ids,
+            'rating_bp': player.current_rating if player.current_rating else None
         })
     
     return Response({'players': result})
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def recent_partners(request, tournament_id):
+    """
+    Получить список рекомендованных напарников (последние и частые)
+    
+    GET /api/mini-app/tournaments/{id}/recent_partners/
+    """
+    from django.db.models import Q
+    from apps.tournaments.registration_models import TournamentRegistration
+    from collections import Counter
+    
+    # Аутентификация
+    auth = TelegramWebAppAuthentication()
+    try:
+        user, telegram_user = auth.authenticate(request)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    if not telegram_user or not telegram_user.player_id:
+        return Response({'players': []})
+    
+    try:
+        tournament = Tournament.objects.get(id=tournament_id)
+        current_player = Player.objects.get(id=telegram_user.player_id)
+    except (Tournament.DoesNotExist, Player.DoesNotExist):
+        return Response({'players': []})
+    
+    # Собираем всех напарников по командам Team
+    teams_with_partner = list(
+        Team.objects.filter(
+            (Q(player_1=current_player, player_2__isnull=False)) |
+            (Q(player_2=current_player, player_1__isnull=False))
+        ).order_by('-id')
+    )
+    
+    counter = Counter()
+    recent_ids = []
+    
+    for team in teams_with_partner:
+        if team.player_1_id == current_player.id and team.player_2_id:
+            partner_id = team.player_2_id
+        elif team.player_2_id == current_player.id and team.player_1_id:
+            partner_id = team.player_1_id
+        else:
+            continue
+        
+        counter[partner_id] += 1
+        
+        # Формируем список последних напарников (до 3 уникальных)
+        if partner_id not in recent_ids:
+            recent_ids.append(partner_id)
+    
+    if not counter:
+        return Response({'players': []})
+    
+    # Top-2 по частоте
+    frequent_ids = [pid for pid, _cnt in counter.most_common(2)]
+    
+    # Объединяем: сначала последние напарники (до 3), затем частые (до 2), без повторов
+    merged_ids = []
+    for pid in recent_ids[:3]:
+        if pid not in merged_ids:
+            merged_ids.append(pid)
+    for pid in frequent_ids:
+        if pid not in merged_ids:
+            merged_ids.append(pid)
+    
+    top_ids = merged_ids[:5]
+    
+    players_qs = Player.objects.filter(id__in=top_ids)
+    players_list = sorted(players_qs, key=lambda p: str(p))
+    
+    # Помечаем, зарегистрирован ли игрок уже в сформированной паре на этот турнир
+    candidate_ids = [p.id for p in players_list]
+    base_qs = TournamentRegistration.objects.filter(
+        tournament=tournament,
+        status__in=[
+            TournamentRegistration.Status.MAIN_LIST,
+            TournamentRegistration.Status.RESERVE_LIST,
+        ],
+    )
+    
+    player_ids = base_qs.filter(player_id__in=candidate_ids).values_list('player_id', flat=True)
+    partner_ids = base_qs.filter(partner_id__in=candidate_ids).values_list('partner_id', flat=True)
+    registered_ids = set(player_ids) | set(partner_ids)
+    
+    players_payload = []
+    for p in players_list:
+        rating = getattr(p, 'current_rating', None)
+        rating_bp = int(rating) if rating is not None else None
+        players_payload.append({
+            'id': p.id,
+            'full_name': str(p),
+            'is_registered': p.id in registered_ids,
+            'rating_bp': rating_bp,
+        })
+    
+    return Response({'players': players_payload})
