@@ -265,7 +265,7 @@ const PartnerSearchModal = ({ tournamentId, onClose, onSelect }: PartnerSearchMo
           {/* Подтверждение выбора */}
           {selectedPlayer && (
             <div className="mt-4 p-3 rounded-lg bg-blue-50 border border-blue-100 text-sm text-gray-800">
-              <p className="mb-2">Зарегистрироваться на турнир в паре с:</p>
+              <p className="mb-2">Выбрать себе в напарники:</p>
               <p className="px-2 py-1 rounded bg-green-50 inline-block font-semibold text-gray-900">
                 {selectedPlayer.full_name}
                 {typeof selectedPlayer.rating_bp === 'number' && (
@@ -288,7 +288,7 @@ const PartnerSearchModal = ({ tournamentId, onClose, onSelect }: PartnerSearchMo
               disabled={!selectedPlayer}
               className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
-              Зарегистрироваться парой
+              Выбрать напарника
             </button>
           </div>
         </div>

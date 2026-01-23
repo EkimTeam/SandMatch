@@ -1569,17 +1569,21 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if not counter:
             return Response({"players": []})
 
-        # top-2 по частоте
-        frequent_ids = [pid for pid, _cnt in counter.most_common(2)]
-
-        # Объединяем: сначала последние напарники (до 3), затем частые (до 2), без повторов
+        # Формируем итоговый список: 3 последних уникальных + заполнение до 5 из наиболее частых
         merged_ids: list[int] = []
-        for pid in recent_ids:
+        
+        # Добавляем последних 3 уникальных напарников
+        for pid in recent_ids[:3]:
             if pid not in merged_ids:
                 merged_ids.append(pid)
-        for pid in frequent_ids:
+        
+        # Дополняем из наиболее частых напарников (исключая уже добавленных)
+        # Берём всех частых по порядку убывания частоты и добавляем, пока не наберём 5
+        for pid, _cnt in counter.most_common():
             if pid not in merged_ids:
                 merged_ids.append(pid)
+                if len(merged_ids) >= 5:
+                    break
 
         top_ids = merged_ids[:5]
 

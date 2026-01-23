@@ -174,11 +174,11 @@ class MiniAppAPI {
   }
 
   /**
-   * Зарегистрироваться с напарником (поиск по ФИО)
+   * Зарегистрироваться с напарником (по ID)
    */
-  async registerWithPartner(tournamentId: number, partnerSearch: string): Promise<TournamentRegistration> {
+  async registerWithPartner(tournamentId: number, partnerId: number): Promise<TournamentRegistration> {
     const response = await this.api.post(`/tournaments/${tournamentId}/register-with-partner/`, {
-      partner_search: partnerSearch,
+      partner_id: partnerId,
     })
     return response.data
   }
