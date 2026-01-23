@@ -842,10 +842,17 @@ def search_players(request, tournament_id):
     """
     from django.db.models import Q
     from apps.tournaments.registration_models import TournamentRegistration
-    from apps.telegram_bot.models import TelegramUser
+    
+    # Аутентификация
+    auth = TelegramWebAppAuthentication()
+    try:
+        user, telegram_user = auth.authenticate(request)
+    except Exception:
+        telegram_user = None
     
     query = request.GET.get('q', '').strip()
-    if not query:
+    # Минимальная длина запроса - 2 символа
+    if len(query) < 2:
         return Response({'players': []})
     
     try:
@@ -853,32 +860,41 @@ def search_players(request, tournament_id):
     except Tournament.DoesNotExist:
         return Response({'error': 'Турнир не найден'}, status=status.HTTP_404_NOT_FOUND)
     
-    # Ищем игроков по ФИО, у которых есть привязка к Telegram
-    telegram_user_ids = TelegramUser.objects.filter(
-        player_id__isnull=False
-    ).values_list('player_id', flat=True)
-    
-    players = Player.objects.filter(
-        id__in=telegram_user_ids
-    ).filter(
+    # Базовый запрос по ФИО (ищем среди всех игроков, не только Telegram-пользователей)
+    players_qs = Player.objects.filter(
         Q(first_name__icontains=query) |
         Q(last_name__icontains=query) |
         Q(patronymic__icontains=query)
-    )[:20]  # Ограничиваем 20 результатами
-    
-    # Проверяем, кто уже зарегистрирован на турнир
-    registered_player_ids = set(
-        TournamentRegistration.objects.filter(
-            tournament=tournament
-        ).values_list('player_id', flat=True)
     )
     
+    # Исключаем текущего игрока из результатов (чтобы он не выбирал сам себя)
+    if telegram_user and telegram_user.player_id:
+        players_qs = players_qs.exclude(id=telegram_user.player_id)
+    
+    players_qs = players_qs.order_by('last_name', 'first_name')
+    
+    # Помечаем, зарегистрирован ли игрок уже в СФОРМИРОВАННОЙ ПАРЕ на этот турнир
+    # (основной или резервный список). Игроки в статусе LOOKING_FOR_PARTNER
+    # остаются доступными для выбора напарника.
+    candidate_ids = list(players_qs.values_list('id', flat=True))
+    base_qs = TournamentRegistration.objects.filter(
+        tournament=tournament,
+        status__in=[
+            TournamentRegistration.Status.MAIN_LIST,
+            TournamentRegistration.Status.RESERVE_LIST,
+        ],
+    )
+    
+    player_ids = base_qs.filter(player_id__in=candidate_ids).values_list('player_id', flat=True)
+    partner_ids = base_qs.filter(partner_id__in=candidate_ids).values_list('partner_id', flat=True)
+    registered_ids = set(player_ids) | set(partner_ids)
+    
     result = []
-    for player in players:
+    for player in players_qs:
         result.append({
             'id': player.id,
             'full_name': str(player),
-            'is_registered': player.id in registered_player_ids,
+            'is_registered': player.id in registered_ids,
             'rating_bp': player.current_rating if player.current_rating else None
         })
     
