@@ -667,14 +667,14 @@ class RegistrationService:
         registration.team = None
         registration.status = TournamentRegistration.Status.LOOKING_FOR_PARTNER
         # Сигнал post_save автоматически вызовет пересчёт, не нужно устанавливать флаг
-        registration.save(update_fields=['partner', 'team', 'status', 'updated_at'])
+        registration.save(update_fields=['partner', 'team', 'status'])
         
         if partner_reg:
             partner_reg.partner = None
             partner_reg.team = None
             partner_reg.status = TournamentRegistration.Status.LOOKING_FOR_PARTNER
             # Сигнал post_save автоматически вызовет пересчёт, не нужно устанавливать флаг
-            partner_reg.save(update_fields=['partner', 'team', 'status', 'updated_at'])
+            partner_reg.save(update_fields=['partner', 'team', 'status'])
             
             # Отправляем уведомление напарнику
             from apps.telegram_bot.tasks import send_partner_left_notification
