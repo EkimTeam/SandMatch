@@ -89,7 +89,7 @@ const TournamentParticipants = ({ tournamentId, currentPlayerId, currentPlayerSt
     const reg1 = pairRegs[0]
     
     const isCurrentPlayerInPair = pairRegs.some(r => r.player_id === currentPlayerId)
-    const pairRating = reg1.partner_id ? calculatePairRating() : null
+    const pairRating = (reg1 as any).rating_bp
     
     return (
       <div
@@ -104,7 +104,7 @@ const TournamentParticipants = ({ tournamentId, currentPlayerId, currentPlayerSt
               {reg1.player_name} / {reg1.partner_name}
               {isCurrentPlayerInPair && <span className="ml-2 text-xs text-blue-600">(Вы)</span>}
             </div>
-            {pairRating !== null && (
+            {pairRating !== null && pairRating !== undefined && (
               <div className="text-xs text-gray-500 mt-1">Рейтинг пары: {pairRating}</div>
             )}
           </div>
@@ -115,6 +115,7 @@ const TournamentParticipants = ({ tournamentId, currentPlayerId, currentPlayerSt
 
   const renderSingle = (reg: TournamentRegistration, showInviteButton: boolean = false) => {
     const isCurrentPlayer = reg.player_id === currentPlayerId
+    const playerRating = (reg as any).rating_bp
     
     // Показываем кнопку "Пригласить" если:
     // 1. showInviteButton = true (список "Ищут пару")
@@ -136,6 +137,9 @@ const TournamentParticipants = ({ tournamentId, currentPlayerId, currentPlayerSt
               {reg.player_name}
               {isCurrentPlayer && <span className="ml-2 text-xs text-blue-600">(Вы)</span>}
             </div>
+            {playerRating !== null && playerRating !== undefined && (
+              <div className="text-xs text-gray-500 mt-1">Рейтинг: {playerRating}</div>
+            )}
           </div>
           
           {canInvite && (
@@ -150,12 +154,6 @@ const TournamentParticipants = ({ tournamentId, currentPlayerId, currentPlayerSt
         </div>
       </div>
     )
-  }
-
-  const calculatePairRating = () => {
-    // Здесь можно добавить логику расчёта рейтинга пары, если данные доступны
-    // Пока возвращаем null
-    return null
   }
 
   if (loading) {
