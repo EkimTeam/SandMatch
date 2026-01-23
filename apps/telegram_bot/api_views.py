@@ -877,7 +877,7 @@ def search_players(request, tournament_id):
     for player in players:
         result.append({
             'id': player.id,
-            'full_name': player.get_full_name(),
+            'full_name': str(player),
             'is_registered': player.id in registered_player_ids,
             'rating_bp': player.current_rating if player.current_rating else None
         })

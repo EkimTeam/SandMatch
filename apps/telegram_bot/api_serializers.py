@@ -383,6 +383,7 @@ class TournamentRegistrationSerializer(serializers.Serializer):
     status = serializers.CharField(read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     registered_at = serializers.DateTimeField(read_only=True)
+    registration_order = serializers.IntegerField(read_only=True)
     # BP-рейтинг строки: для пары усреднённый рейтинг обоих игроков, для одиночки — рейтинг игрока
     rating_bp = serializers.SerializerMethodField()
     
@@ -401,7 +402,7 @@ class TournamentRegistrationSerializer(serializers.Serializer):
     def get_rating_bp(self, obj):
         """BP-рейтинг для отображения рядом с ФИО.
 
-        Для парной команды берём средний рейтинг обоих игроков команды.
+        Для парной команды берём средний рейтинг обоих игроков.
         Для одиночного случая / "ищет пару" используем рейтинг самого игрока.
         Возвращаем целое число или None, если рейтинги недоступны.
         """
@@ -415,13 +416,17 @@ class TournamentRegistrationSerializer(serializers.Serializer):
 
         ratings = []
 
-        team = getattr(obj, "team", None)
-        if team and (team.player_1 or team.player_2):
-            ratings.append(_get_rating(team.player_1))
-            ratings.append(_get_rating(team.player_2))
+        # Проверяем наличие напарника (для пар)
+        partner = getattr(obj, "partner", None)
+        player = getattr(obj, "player", None)
+        
+        if partner:
+            # Это пара - берём средний рейтинг обоих игроков
+            ratings.append(_get_rating(player))
+            ratings.append(_get_rating(partner))
         else:
-            # Одиночный случай или "ищет пару" без команды
-            ratings.append(_get_rating(getattr(obj, "player", None)))
+            # Одиночный игрок или "ищет пару" - берём рейтинг игрока
+            ratings.append(_get_rating(player))
 
         numeric = [r for r in ratings if r is not None]
         if not numeric:
