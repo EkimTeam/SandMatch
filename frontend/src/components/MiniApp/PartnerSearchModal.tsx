@@ -32,8 +32,8 @@ const PartnerSearchModal = ({ tournamentId, onClose, onSelect }: PartnerSearchMo
     const loadRecentPartners = async () => {
       try {
         setRecentLoading(true)
-        // Используем веб API для получения рекомендаций
-        const response = await fetch(`/api/tournaments/${tournamentId}/recent_partners/`, {
+        // Используем API мини-аппа для получения рекомендаций
+        const response = await fetch(`/api/mini-app/tournaments/${tournamentId}/recent_partners/`, {
           headers: {
             'X-Telegram-Init-Data': (window as any).Telegram?.WebApp?.initData || ''
           }

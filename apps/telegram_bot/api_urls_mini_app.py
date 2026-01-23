@@ -19,6 +19,7 @@ from .api_views import (
     leave_pair,
     cancel_registration,
     search_players,
+    recent_partners,
 )
 
 router = DefaultRouter()
@@ -32,6 +33,7 @@ urlpatterns = [
     path('tournaments/<int:tournament_id>/my-registration/', my_registration, name='my-registration'),
     path('tournaments/<int:tournament_id>/participants/', tournament_participants, name='tournament-participants'),
     path('tournaments/<int:tournament_id>/search-players/', search_players, name='search-players'),
+    path('tournaments/<int:tournament_id>/recent_partners/', recent_partners, name='recent-partners'),
     path('tournaments/<int:tournament_id>/register-single/', register_single, name='register-single'),
     path('tournaments/<int:tournament_id>/register-looking-for-partner/', register_looking_for_partner, name='register-looking-for-partner'),
     path('tournaments/<int:tournament_id>/register-with-partner/', register_with_partner, name='register-with-partner'),

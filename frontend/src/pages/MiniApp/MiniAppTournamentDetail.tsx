@@ -28,7 +28,7 @@ const MiniAppTournamentDetail = () => {
   const [showRegistrationModal, setShowRegistrationModal] = useState(false)
   const [showCancelModal, setShowCancelModal] = useState(false)
   const [showInvitationsModal, setShowInvitationsModal] = useState(false)
-  const [showParticipants, setShowParticipants] = useState(false)
+  const [showParticipants, setShowParticipants] = useState(true)
 
   useEffect(() => {
     // Показываем кнопку "Назад"
