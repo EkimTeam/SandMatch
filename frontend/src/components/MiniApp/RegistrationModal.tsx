@@ -77,10 +77,24 @@ const RegistrationModal = ({ tournamentId, tournamentName, isIndividual, onClose
       setLoading(true)
       hapticFeedback.medium()
       
-      await miniAppAPI.registerWithPartner(tournamentId, selectedPartner.id)
+      const result = await miniAppAPI.registerWithPartner(tournamentId, selectedPartner.id)
       
       hapticFeedback.success()
-      alert('✅ Вы зарегистрированы с напарником!\n\nНапарнику отправлено уведомление.')
+      
+      // Проверяем, есть ли у напарника связь с Telegram
+      const partnerHasTelegram = (result as any).partner_has_telegram
+      
+      if (partnerHasTelegram) {
+        alert('✅ Вы зарегистрированы с напарником!\n\nНапарнику отправлено уведомление в Telegram.')
+      } else {
+        alert(
+          '✅ Вы зарегистрированы с напарником!\n\n' +
+          '⚠️ Обратите внимание: у вашего напарника не установлена связь между BeachPlay и Telegram-аккаунтом.\n\n' +
+          'Напарник не получит автоматическое уведомление о регистрации. ' +
+          'Пожалуйста, сообщите ему о турнире другим способом.'
+        )
+      }
+      
       onSuccess()
       onClose()
     } catch (err: any) {

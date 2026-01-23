@@ -572,10 +572,15 @@ def register_with_partner(request, tournament_id):
     
     try:
         registration = RegistrationService.register_with_partner(tournament, player, partner)
-        return Response(
-            TournamentRegistrationSerializer(registration).data,
-            status=status.HTTP_201_CREATED
-        )
+        
+        # Проверяем, есть ли у напарника связь с Telegram
+        from apps.telegram_bot.models import TelegramUser
+        partner_has_telegram = TelegramUser.objects.filter(player_id=partner.id).exists()
+        
+        response_data = TournamentRegistrationSerializer(registration).data
+        response_data['partner_has_telegram'] = partner_has_telegram
+        
+        return Response(response_data, status=status.HTTP_201_CREATED)
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
