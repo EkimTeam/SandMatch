@@ -44,10 +44,6 @@ export interface Profile {
   is_linked: boolean
 }
 
-export interface RegisterTournamentData {
-  partner_id?: number
-}
-
 export interface TournamentRegistration {
   id: number
   player_id: number
@@ -132,17 +128,6 @@ class MiniAppAPI {
    */
   async getMyTournaments(): Promise<Tournament[]> {
     const response = await this.api.get('/tournaments/my_tournaments/')
-    return response.data
-  }
-
-  /**
-   * Зарегистрироваться на турнир
-   */
-  async registerForTournament(
-    id: number,
-    data?: RegisterTournamentData
-  ): Promise<{ message: string; tournament: Tournament }> {
-    const response = await this.api.post(`/tournaments/${id}/register/`, data)
     return response.data
   }
 

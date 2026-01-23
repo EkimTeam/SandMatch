@@ -62,15 +62,66 @@ const TournamentParticipants = ({ tournamentId, currentPlayerId, currentPlayerSt
     }
   }
 
-  const renderRegistration = (reg: TournamentRegistration, showInviteButton: boolean = false) => {
-    const isCurrentPlayer = reg.player_id === currentPlayerId
-    const isPair = reg.partner_id !== null && reg.partner_id !== undefined
+  // Группируем регистрации по парам
+  const groupRegistrations = (registrations: TournamentRegistration[]) => {
+    const grouped: { [key: string]: TournamentRegistration[] } = {}
+    const singles: TournamentRegistration[] = []
+
+    registrations.forEach(reg => {
+      if (reg.partner_id) {
+        // Создаём уникальный ключ для пары (меньший ID первым)
+        const pairKey = [reg.player_id, reg.partner_id].sort((a, b) => a - b).join('-')
+        if (!grouped[pairKey]) {
+          grouped[pairKey] = []
+        }
+        grouped[pairKey].push(reg)
+      } else {
+        singles.push(reg)
+      }
+    })
+
+    return { pairs: Object.values(grouped).filter(pair => pair.length > 0), singles }
+  }
+
+  const renderPair = (pairRegs: TournamentRegistration[]) => {
+    if (pairRegs.length === 0) return null
     
-    // Показываем кнопку "Пригласить" только если:
+    const reg1 = pairRegs[0]
+    
+    const isCurrentPlayerInPair = pairRegs.some(r => r.player_id === currentPlayerId)
+    const pairRating = reg1.partner_id ? calculatePairRating() : null
+    
+    return (
+      <div
+        key={`pair-${reg1.player_id}-${reg1.partner_id}`}
+        className={`p-3 rounded-lg border ${
+          isCurrentPlayerInPair ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-200'
+        }`}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex-1">
+            <div className="font-medium text-gray-900">
+              {reg1.player_name} / {reg1.partner_name}
+              {isCurrentPlayerInPair && <span className="ml-2 text-xs text-blue-600">(Вы)</span>}
+            </div>
+            {pairRating !== null && (
+              <div className="text-xs text-gray-500 mt-1">Рейтинг пары: {pairRating}</div>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const renderSingle = (reg: TournamentRegistration, showInviteButton: boolean = false) => {
+    const isCurrentPlayer = reg.player_id === currentPlayerId
+    
+    // Показываем кнопку "Пригласить" если:
     // 1. showInviteButton = true (список "Ищут пару")
     // 2. Это не текущий игрок
-    // 3. Текущий игрок сам в статусе "looking_for_partner"
-    const canInvite = showInviteButton && !isCurrentPlayer && currentPlayerStatus === 'looking_for_partner'
+    // 3. Текущий игрок в статусе "looking_for_partner" ИЛИ ещё не зарегистрирован
+    const canInvite = showInviteButton && !isCurrentPlayer && 
+      (currentPlayerStatus === 'looking_for_partner' || !currentPlayerStatus)
     
     return (
       <div
@@ -85,11 +136,6 @@ const TournamentParticipants = ({ tournamentId, currentPlayerId, currentPlayerSt
               {reg.player_name}
               {isCurrentPlayer && <span className="ml-2 text-xs text-blue-600">(Вы)</span>}
             </div>
-            {isPair && (
-              <div className="text-sm text-gray-600 mt-1">
-                Напарник: {reg.partner_name}
-              </div>
-            )}
           </div>
           
           {canInvite && (
@@ -104,6 +150,12 @@ const TournamentParticipants = ({ tournamentId, currentPlayerId, currentPlayerSt
         </div>
       </div>
     )
+  }
+
+  const calculatePairRating = () => {
+    // Здесь можно добавить логику расчёта рейтинга пары, если данные доступны
+    // Пока возвращаем null
+    return null
   }
 
   if (loading) {
@@ -132,9 +184,36 @@ const TournamentParticipants = ({ tournamentId, currentPlayerId, currentPlayerSt
     return null
   }
 
-  const hasMainList = participants.main_list.length > 0
-  const hasReserveList = participants.reserve_list.length > 0
-  const hasLookingForPartner = participants.looking_for_partner.length > 0
+  // Сортировка и группировка
+  const sortByAlphabet = (regs: TournamentRegistration[]) => {
+    return [...regs].sort((a, b) => a.player_name.localeCompare(b.player_name, 'ru'))
+  }
+
+  const sortByRegistrationOrder = (regs: TournamentRegistration[]) => {
+    return [...regs].sort((a, b) => {
+      const orderA = (a as any).registration_order || 0
+      const orderB = (b as any).registration_order || 0
+      return orderA - orderB
+    })
+  }
+
+  // Основной состав - по алфавиту
+  const mainListSorted = sortByAlphabet(participants.main_list)
+  const mainGrouped = groupRegistrations(mainListSorted)
+  const mainCount = mainGrouped.pairs.length + mainGrouped.singles.length
+
+  // Резервный список - по очереди регистрации
+  const reserveListSorted = sortByRegistrationOrder(participants.reserve_list)
+  const reserveGrouped = groupRegistrations(reserveListSorted)
+  const reserveCount = reserveGrouped.pairs.length + reserveGrouped.singles.length
+
+  // Ищут пару - по алфавиту
+  const lookingListSorted = sortByAlphabet(participants.looking_for_partner)
+  const lookingCount = lookingListSorted.length
+
+  const hasMainList = mainCount > 0
+  const hasReserveList = reserveCount > 0
+  const hasLookingForPartner = lookingCount > 0
 
   return (
     <div className="space-y-6">
@@ -143,10 +222,11 @@ const TournamentParticipants = ({ tournamentId, currentPlayerId, currentPlayerSt
         <div>
           <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center">
             <span className="mr-2">🏆</span>
-            Основной состав ({participants.main_list.length})
+            Основной состав ({mainCount})
           </h3>
           <div className="space-y-2">
-            {participants.main_list.map((reg) => renderRegistration(reg))}
+            {mainGrouped.pairs.map((pair) => renderPair(pair))}
+            {mainGrouped.singles.map((reg) => renderSingle(reg))}
           </div>
         </div>
       )}
@@ -156,10 +236,11 @@ const TournamentParticipants = ({ tournamentId, currentPlayerId, currentPlayerSt
         <div>
           <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center">
             <span className="mr-2">📋</span>
-            Резервный список ({participants.reserve_list.length})
+            Резервный список ({reserveCount})
           </h3>
           <div className="space-y-2">
-            {participants.reserve_list.map((reg) => renderRegistration(reg))}
+            {reserveGrouped.pairs.map((pair) => renderPair(pair))}
+            {reserveGrouped.singles.map((reg) => renderSingle(reg))}
           </div>
         </div>
       )}
@@ -169,10 +250,10 @@ const TournamentParticipants = ({ tournamentId, currentPlayerId, currentPlayerSt
         <div>
           <h3 className="text-lg font-semibold text-gray-900 mb-3 flex items-center">
             <span className="mr-2">🔍</span>
-            Ищут пару ({participants.looking_for_partner.length})
+            Ищут пару ({lookingCount})
           </h3>
           <div className="space-y-2">
-            {participants.looking_for_partner.map((reg) => renderRegistration(reg, true))}
+            {lookingListSorted.map((reg) => renderSingle(reg, true))}
           </div>
         </div>
       )}
