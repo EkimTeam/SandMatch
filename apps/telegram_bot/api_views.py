@@ -251,11 +251,13 @@ class MiniAppTournamentViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=['post'])
     def register(self, request, pk=None):
         """
-        Регистрация на турнир
+        Регистрация на турнир через RegistrationService
         
         POST /api/mini-app/tournaments/{id}/register/
-        Body: { "partner_id": 123 }  # опционально
+        Body: { "partner_id": 123 }  # опционально, только для парных турниров
         """
+        from apps.tournaments.services import RegistrationService
+        
         tournament = self.get_object()
         
         if not request.auth or not request.auth.player_id:
@@ -263,63 +265,58 @@ class MiniAppTournamentViewSet(viewsets.ReadOnlyModelViewSet):
                 'error': 'Игрок не найден'
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        serializer = TournamentRegistrationSerializer(
-            data={'tournament_id': tournament.id, **request.data},
-            context={'request': request}
-        )
-        
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Создаём или находим команду
-        player = Player.objects.get(id=request.auth.player_id)
-        partner_id = serializer.validated_data.get('partner_id')
-        
-        if partner_id:
-            # Регистрация с партнёром
-            try:
-                partner = Player.objects.get(id=partner_id)
-            except Player.DoesNotExist:
-                return Response({
-                    'error': 'Партнёр не найден'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Ищем существующую команду или создаём новую
-            team = Team.objects.filter(
-                Q(player_1=player, player_2=partner) |
-                Q(player_1=partner, player_2=player)
-            ).first()
-            
-            if not team:
-                team = Team.objects.create(
-                    player_1=player,
-                    player_2=partner
-                )
-        else:
-            # Регистрация без партнёра (одиночная)
-            team = Team.objects.filter(
-                player_1=player,
-                player_2__isnull=True
-            ).first()
-            
-            if not team:
-                team = Team.objects.create(player_1=player)
-        
-        # Регистрируем команду на турнир
-        entry, created = TournamentEntry.objects.get_or_create(
-            tournament=tournament,
-            team=team
-        )
-        
-        if not created:
+        try:
+            player = Player.objects.get(id=request.auth.player_id)
+        except Player.DoesNotExist:
             return Response({
-                'error': 'Команда уже зарегистрирована'
+                'error': 'Игрок не найден'
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        return Response({
-            'message': 'Успешно зарегистрированы на турнир',
-            'tournament': TournamentDetailSerializer(tournament, context={'request': request}).data
-        }, status=status.HTTP_201_CREATED)
+        partner_id = request.data.get('partner_id')
+        
+        try:
+            # Индивидуальный турнир
+            if tournament.participant_mode == Tournament.ParticipantMode.SINGLES:
+                if partner_id:
+                    return Response({
+                        'error': 'Для индивидуального турнира нельзя указывать напарника'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                registration = RegistrationService.register_single(tournament, player)
+            
+            # Парный турнир
+            elif tournament.participant_mode == Tournament.ParticipantMode.DOUBLES:
+                if partner_id:
+                    # Регистрация с напарником
+                    try:
+                        partner = Player.objects.get(id=partner_id)
+                    except Player.DoesNotExist:
+                        return Response({
+                            'error': 'Напарник не найден'
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                    
+                    registration = RegistrationService.register_with_partner(
+                        tournament, player, partner, notify_partner=True
+                    )
+                else:
+                    # Регистрация в режиме "ищу пару"
+                    registration = RegistrationService.register_looking_for_partner(tournament, player)
+            
+            else:
+                return Response({
+                    'error': 'Неизвестный тип турнира'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            return Response({
+                'message': 'Успешно зарегистрированы на турнир',
+                'registration': TournamentRegistrationSerializer(registration).data,
+                'tournament': TournamentDetailSerializer(tournament, context={'request': request}).data
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(['GET'])
