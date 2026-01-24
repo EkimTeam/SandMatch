@@ -10,11 +10,12 @@ interface RegistrationModalProps {
   tournamentId: number
   tournamentName: string
   isIndividual: boolean
+  currentStatus?: string
   onClose: () => void
   onSuccess: () => void
 }
 
-const RegistrationModal = ({ tournamentId, tournamentName, isIndividual, onClose, onSuccess }: RegistrationModalProps) => {
+const RegistrationModal = ({ tournamentId, tournamentName, isIndividual, currentStatus, onClose, onSuccess }: RegistrationModalProps) => {
   const [mode, setMode] = useState<'select' | 'single' | 'looking' | 'with-partner'>('select')
   const [showPartnerSearch, setShowPartnerSearch] = useState(false)
   const [selectedPartner, setSelectedPartner] = useState<{ id: number; name: string } | null>(null)
@@ -157,20 +158,23 @@ const RegistrationModal = ({ tournamentId, tournamentName, isIndividual, onClose
             <div className="space-y-4">
               <p className="text-gray-700 mb-4">Выберите способ регистрации:</p>
               
-              <button
-                onClick={() => setMode('looking')}
-                className="w-full p-4 bg-blue-50 border-2 border-blue-200 rounded-xl hover:bg-blue-100 transition-colors text-left"
-              >
-                <div className="flex items-start">
-                  <span className="text-2xl mr-3">🔍</span>
-                  <div>
-                    <div className="font-semibold text-gray-900">Ищу пару</div>
-                    <div className="text-sm text-gray-600 mt-1">
-                      Другие участники смогут пригласить вас в пару
+              {/* Скрываем кнопку "Ищу пару" если пользователь уже в этом статусе */}
+              {currentStatus !== 'looking_for_partner' && (
+                <button
+                  onClick={() => setMode('looking')}
+                  className="w-full p-4 bg-blue-50 border-2 border-blue-200 rounded-xl hover:bg-blue-100 transition-colors text-left"
+                >
+                  <div className="flex items-start">
+                    <span className="text-2xl mr-3">🔍</span>
+                    <div>
+                      <div className="font-semibold text-gray-900">Ищу пару</div>
+                      <div className="text-sm text-gray-600 mt-1">
+                        Другие участники смогут пригласить вас в пару
+                      </div>
                     </div>
                   </div>
-                </div>
-              </button>
+                </button>
+              )}
 
               <button
                 onClick={() => setMode('with-partner')}

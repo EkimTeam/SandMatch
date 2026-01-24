@@ -424,6 +424,7 @@ const MiniAppTournamentDetail = () => {
           tournamentId={tournament.id}
           tournamentName={tournament.name}
           isIndividual={tournament.participant_mode === 'singles'}
+          currentStatus={myRegistration?.status}
           onClose={() => setShowRegistrationModal(false)}
           onSuccess={handleRegistrationSuccess}
         />
