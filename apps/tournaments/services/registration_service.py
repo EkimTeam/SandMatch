@@ -649,18 +649,16 @@ class RegistrationService:
         if not partner:
             raise ValidationError('Вы не состоите в паре')
         
-        # Удаляем TournamentEntry если есть команда
-        if team:
-            TournamentEntry.objects.filter(
-                tournament=tournament,
-                team=team
-            ).delete()
-        
         # Находим регистрацию напарника
         partner_reg = TournamentRegistration.objects.filter(
             tournament=tournament,
             player=partner
         ).first()
+        
+        # ВАЖНО: Сначала обнуляем team и меняем статус у ОБЕИХ регистраций,
+        # и только потом удаляем TournamentEntry.
+        # Иначе сигнал post_delete для TournamentEntry удалит регистрации,
+        # которые ещё имеют ссылку на team и статус MAIN_LIST/RESERVE_LIST.
         
         # Переводим обоих в "ищу пару"
         registration.partner = None
@@ -679,6 +677,14 @@ class RegistrationService:
             # Отправляем уведомление напарнику
             from apps.telegram_bot.tasks import send_partner_left_notification
             transaction.on_commit(lambda: send_partner_left_notification.delay(partner_reg.id))
+        
+        # Теперь безопасно удаляем TournamentEntry
+        # (регистрации уже не имеют ссылки на team, поэтому сигнал post_delete их не затронет)
+        if team:
+            TournamentEntry.objects.filter(
+                tournament=tournament,
+                team=team
+            ).delete()
         
         # Пересчёт статусов будет вызван автоматически через сигнал post_save
     
