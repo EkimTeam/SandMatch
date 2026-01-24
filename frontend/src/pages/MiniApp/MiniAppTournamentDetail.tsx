@@ -126,9 +126,10 @@ const MiniAppTournamentDetail = () => {
   }
 
   const handleRegistrationSuccess = async () => {
-    // Перезагружаем турнир после успешной регистрации
+    // Перезагружаем турнир и регистрацию после успешной регистрации
     if (tournament) {
       await loadTournament(tournament.id)
+      await loadMyRegistration(tournament.id)
     }
   }
 
