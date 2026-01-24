@@ -783,6 +783,7 @@ def leave_pair(request, tournament_id):
     """
     from apps.tournaments.registration_models import TournamentRegistration
     from apps.tournaments.services import RegistrationService
+    from django.db import transaction
     
     # Аутентификация
     auth = TelegramWebAppAuthentication()
@@ -795,17 +796,16 @@ def leave_pair(request, tournament_id):
         return Response({'error': 'Игрок не найден'}, status=status.HTTP_400_BAD_REQUEST)
     
     try:
-        tournament = Tournament.objects.get(id=tournament_id)
-        registration = TournamentRegistration.objects.get(
-            tournament=tournament,
-            player_id=telegram_user.player_id
-        )
+        with transaction.atomic():
+            tournament = Tournament.objects.get(id=tournament_id)
+            registration = TournamentRegistration.objects.select_for_update().get(
+                tournament=tournament,
+                player_id=telegram_user.player_id
+            )
+            RegistrationService.leave_pair(registration)
+        return Response({'message': 'Вы покинули пару'})
     except (Tournament.DoesNotExist, TournamentRegistration.DoesNotExist):
         return Response({'error': 'Регистрация не найдена'}, status=status.HTTP_404_NOT_FOUND)
-    
-    try:
-        RegistrationService.leave_pair(registration)
-        return Response({'message': 'Вы покинули пару'})
     except Exception as e:
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
