@@ -59,13 +59,22 @@ const MiniAppTournamentDetail = () => {
   useEffect(() => {
     // Показываем кнопку регистрации, если турнир открыт и не зарегистрированы
     if (tournament && tournament.status === 'created' && !tournament.is_registered) {
-      showMainButton('Зарегистрироваться', () => setShowRegistrationModal(true))
+      showMainButton('Зарегистрироваться', () => {
+        setShowCancelModal(false)
+        setShowRegistrationModal(true)
+      })
     } else if (tournament && tournament.status === 'created' && tournament.is_registered) {
       // Если пользователь в статусе "Ищу пару", показываем кнопку "Найти напарника"
       if (myRegistration?.status === 'looking_for_partner') {
-        showMainButton('Найти напарника', () => setShowRegistrationModal(true))
+        showMainButton('Найти напарника', () => {
+          setShowCancelModal(false)
+          setShowRegistrationModal(true)
+        })
       } else {
-        showMainButton('Отказаться от турнира', () => setShowCancelModal(true))
+        showMainButton('Отказаться от турнира', () => {
+          setShowRegistrationModal(false)
+          setShowCancelModal(true)
+        })
       }
     } else {
       hideMainButton()
@@ -106,30 +115,6 @@ const MiniAppTournamentDetail = () => {
     } catch (err) {
       console.error('Ошибка загрузки регистрации:', err)
       setMyRegistration(null)
-    }
-  }
-
-  const handleCancelRegistration = async () => {
-    if (!tournament) return
-
-    const confirmed = confirm('Вы уверены, что хотите отменить регистрацию?')
-    if (!confirmed) return
-
-    try {
-      hapticFeedback.medium()
-      
-      await miniAppAPI.cancelRegistration(tournament.id)
-      
-      hapticFeedback.success()
-      alert('Регистрация отменена')
-      
-      // Перезагружаем данные турнира
-      await loadTournament(tournament.id)
-    } catch (err: any) {
-      hapticFeedback.error()
-      const errorMessage = err.response?.data?.error || 'Ошибка отмены регистрации'
-      alert(`❌ ${errorMessage}`)
-      console.error(err)
     }
   }
 
@@ -255,7 +240,7 @@ const MiniAppTournamentDetail = () => {
               </div>
               {tournament.status !== 'completed' && (
                 <button
-                  onClick={handleCancelRegistration}
+                  onClick={() => setShowCancelModal(true)}
                   className="ml-2 px-3 py-1 bg-red-500 text-white text-sm rounded-lg hover:bg-red-600 transition-colors"
                 >
                   Отменить
