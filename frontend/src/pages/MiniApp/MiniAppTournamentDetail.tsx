@@ -61,11 +61,16 @@ const MiniAppTournamentDetail = () => {
     if (tournament && tournament.status === 'created' && !tournament.is_registered) {
       showMainButton('Зарегистрироваться', () => setShowRegistrationModal(true))
     } else if (tournament && tournament.status === 'created' && tournament.is_registered) {
-      showMainButton('Отказаться от турнира', () => setShowCancelModal(true))
+      // Если пользователь в статусе "Ищу пару", показываем кнопку "Найти напарника"
+      if (myRegistration?.status === 'looking_for_partner') {
+        showMainButton('Найти напарника', () => setShowRegistrationModal(true))
+      } else {
+        showMainButton('Отказаться от турнира', () => setShowCancelModal(true))
+      }
     } else {
       hideMainButton()
     }
-  }, [tournament])
+  }, [tournament, myRegistration])
 
   const loadTournament = async (tournamentId: number) => {
     try {
