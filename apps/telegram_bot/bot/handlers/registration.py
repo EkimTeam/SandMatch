@@ -594,17 +594,77 @@ async def callback_cmd_tournaments(callback: CallbackQuery):
     """
     Обработчик кнопки "Турниры"
     """
-    from .tournaments import cmd_tournaments
     await callback.answer()
     await callback.message.delete()
-    # Создаём Message объект с правильным from_user
-    message = Message(
-        message_id=callback.message.message_id,
-        date=callback.message.date,
-        chat=callback.message.chat,
-        from_user=callback.from_user
-    )
-    await cmd_tournaments(message)
+    
+    # Вызываем команду напрямую через callback
+    from .tournaments import get_telegram_user, get_live_tournaments, get_registration_tournaments, format_tournament_info, check_registration
+    
+    telegram_user = await get_telegram_user(callback.from_user.id)
+    
+    if not telegram_user:
+        await callback.message.answer(
+            "❌ Ошибка: твой Telegram аккаунт не найден в системе.\n"
+            "Отправь /start для регистрации."
+        )
+        return
+    
+    player_id = telegram_user.player_id if telegram_user.player else None
+    
+    live_tournaments = await get_live_tournaments()
+    registration_tournaments = await get_registration_tournaments()
+    
+    if not live_tournaments and not registration_tournaments:
+        await callback.message.answer("Нет доступных турниров")
+        return
+    
+    if live_tournaments:
+        await callback.message.answer(f"{hbold('🏆 Турниры Live')}")
+        for tournament in live_tournaments:
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📋 Подробнее",
+                        url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
+                    )
+                ]
+            ])
+            await callback.message.answer(
+                format_tournament_info(tournament),
+                reply_markup=keyboard
+            )
+    
+    if registration_tournaments:
+        await callback.message.answer(f"{hbold('📝 Турниры для регистрации')}")
+        for tournament in registration_tournaments:
+            is_registered = False
+            if player_id:
+                is_registered = await check_registration(tournament.id, player_id)
+            
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            keyboard_buttons = []
+            
+            if not is_registered:
+                keyboard_buttons.append([
+                    InlineKeyboardButton(
+                        text="✅ Зарегистрироваться",
+                        callback_data=f"register_{tournament.id}"
+                    )
+                ])
+            
+            keyboard_buttons.append([
+                InlineKeyboardButton(
+                    text="📋 Подробнее",
+                    url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
+                )
+            ])
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+            await callback.message.answer(
+                format_tournament_info(tournament, is_registered),
+                reply_markup=keyboard
+            )
 
 
 @router.callback_query(F.data == "cmd_mytournaments")
@@ -612,17 +672,52 @@ async def callback_cmd_mytournaments(callback: CallbackQuery):
     """
     Обработчик кнопки "Мои турниры"
     """
-    from .tournaments import cmd_my_tournaments
     await callback.answer()
     await callback.message.delete()
-    # Создаём Message объект с правильным from_user
-    message = Message(
-        message_id=callback.message.message_id,
-        date=callback.message.date,
-        chat=callback.message.chat,
-        from_user=callback.from_user
-    )
-    await cmd_my_tournaments(message)
+    
+    from .tournaments import get_telegram_user, get_user_tournaments, format_tournament_info
+    
+    telegram_user = await get_telegram_user(callback.from_user.id)
+    
+    if not telegram_user:
+        await callback.message.answer(
+            "❌ Ошибка: твой Telegram аккаунт не найден в системе.\n"
+            "Отправь /start для регистрации."
+        )
+        return
+    
+    if not telegram_user.player:
+        await callback.message.answer(
+            "⚠️ Профиль игрока не связан с аккаунтом.\n\n"
+            "Свяжи профиль на сайте: beachplay.ru/profile"
+        )
+        return
+    
+    tournaments = await get_user_tournaments(telegram_user.player_id)
+    
+    if not tournaments:
+        await callback.message.answer(
+            "📋 Ты пока не зарегистрирован ни на один турнир.\n\n"
+            "Используй /tournaments для просмотра доступных турниров"
+        )
+        return
+    
+    await callback.message.answer(f"{hbold('🏆 Мои турниры')}\n")
+    
+    for tournament in tournaments:
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📋 Подробнее",
+                    url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
+                )
+            ]
+        ])
+        await callback.message.answer(
+            format_tournament_info(tournament, is_registered=True),
+            reply_markup=keyboard
+        )
 
 
 @router.callback_query(F.data == "cmd_myregistration")
@@ -632,14 +727,97 @@ async def callback_cmd_myregistration(callback: CallbackQuery):
     """
     await callback.answer()
     await callback.message.delete()
-    # Создаём Message объект с правильным from_user
-    message = Message(
-        message_id=callback.message.message_id,
-        date=callback.message.date,
-        chat=callback.message.chat,
-        from_user=callback.from_user
-    )
-    await cmd_my_registration(message)
+    
+    from .tournaments import get_telegram_user, get_user_tournaments
+    
+    telegram_user = await get_telegram_user(callback.from_user.id)
+    
+    if not telegram_user:
+        await callback.message.answer(
+            "❌ Ошибка: твой Telegram аккаунт не найден в системе.\n"
+            "Отправь /start для регистрации."
+        )
+        return
+    
+    if not telegram_user.player:
+        await callback.message.answer(
+            "⚠️ Профиль игрока не связан с аккаунтом.\n\n"
+            "Свяжи профиль на сайте: beachplay.ru/profile"
+        )
+        return
+    
+    tournaments = await get_user_tournaments(telegram_user.player_id)
+    
+    if not tournaments:
+        await callback.message.answer(
+            "📋 Ты пока не зарегистрирован ни на один турнир.\n\n"
+            "Используй /tournaments для просмотра доступных турниров"
+        )
+        return
+    
+    created_tournaments = [t for t in tournaments if t.status == 'created']
+    
+    if not created_tournaments:
+        await callback.message.answer(
+            "📋 У тебя нет активных регистраций на турниры.\n\n"
+            "Используй /tournaments для просмотра доступных турниров"
+        )
+        return
+    
+    await callback.message.answer(f"{hbold('📝 Мои регистрации')}\n")
+    
+    for tournament in created_tournaments:
+        reg_status = await get_registration_status(tournament.id, telegram_user.player_id)
+        
+        if not reg_status:
+            continue
+        
+        status_text = ""
+        if reg_status['status'] == 'main_list':
+            status_text = "✅ Основной состав"
+        elif reg_status['status'] == 'reserve_list':
+            status_text = "📋 Резервный список"
+        elif reg_status['status'] == 'looking_for_partner':
+            status_text = "🔍 Ищу пару"
+        elif reg_status['status'] == 'invited':
+            status_text = "📨 Есть приглашение"
+        
+        partner_text = ""
+        if reg_status['partner']:
+            partner = reg_status['partner']
+            partner_name = f"{partner.last_name} {partner.first_name}"
+            if partner.patronymic:
+                partner_name += f" {partner.patronymic}"
+            partner_text = f"\n👥 Напарник: {partner_name}"
+        
+        text = (
+            f"{hbold(tournament.name)}\n"
+            f"📊 Статус: {status_text}{partner_text}\n"
+        )
+        
+        if tournament.date:
+            text += f"📅 Дата: {tournament.date.strftime('%d.%m.%Y')}\n"
+        
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        keyboard_buttons = [
+            [
+                InlineKeyboardButton(
+                    text="📋 Подробнее",
+                    url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
+                )
+            ]
+        ]
+        
+        keyboard_buttons.append([
+            InlineKeyboardButton(
+                text="❌ Отменить регистрацию",
+                callback_data=f"cancel_reg_{tournament.id}"
+            )
+        ])
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+        
+        await callback.message.answer(text, reply_markup=keyboard)
 
 
 @router.callback_query(F.data == "cmd_profile")
@@ -647,14 +825,60 @@ async def callback_cmd_profile(callback: CallbackQuery):
     """
     Обработчик кнопки "Мой профиль"
     """
-    from .profile import cmd_profile
     await callback.answer()
     await callback.message.delete()
-    # Создаём Message объект с правильным from_user
-    message = Message(
-        message_id=callback.message.message_id,
-        date=callback.message.date,
-        chat=callback.message.chat,
-        from_user=callback.from_user
-    )
-    await cmd_profile(message)
+    
+    from .tournaments import get_telegram_user
+    
+    telegram_user = await get_telegram_user(callback.from_user.id)
+    
+    if not telegram_user:
+        await callback.message.answer(
+            "❌ Ошибка: твой Telegram аккаунт не найден в системе.\n"
+            "Отправь /start для регистрации."
+        )
+        return
+    
+    if telegram_user.player:
+        player = telegram_user.player
+        text = (
+            f"{hbold('👤 Мой профиль')}\n\n"
+            f"👤 Имя: {player.first_name} {player.last_name}\n"
+        )
+        if player.patronymic:
+            text = (
+                f"{hbold('👤 Мой профиль')}\n\n"
+                f"👤 Имя: {player.first_name} {player.patronymic} {player.last_name}\n"
+            )
+        
+        if hasattr(player, 'current_rating') and player.current_rating:
+            text += f"🏆 Рейтинг: {int(player.current_rating)} BP\n"
+        
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📝 Редактировать профиль",
+                    url=f"{WEB_APP_URL}/profile"
+                )
+            ]
+        ])
+        
+        await callback.message.answer(text, reply_markup=keyboard)
+    else:
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔗 Связать профиль",
+                    url=f"{WEB_APP_URL}/profile"
+                )
+            ]
+        ])
+        
+        await callback.message.answer(
+            f"{hbold('⚠️ Профиль не связан')}\n\n"
+            "Твой Telegram аккаунт не связан с профилем игрока.\n\n"
+            "Используй команду /link для связывания.",
+            reply_markup=keyboard
+        )
