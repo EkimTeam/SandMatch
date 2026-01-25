@@ -53,6 +53,18 @@ def get_registration_tournaments():
 
 
 @sync_to_async
+def get_completed_tournaments(limit=5):
+    """Получение завершенных турниров"""
+    return list(
+        Tournament.objects.filter(
+            status='completed'
+        ).annotate(
+            participants_count=Count('entries')
+        ).order_by('-date', '-created_at')[:limit]
+    )
+
+
+@sync_to_async
 def get_user_tournaments(player_id):
     """Получение турниров пользователя через TournamentRegistration"""
     if not player_id:
