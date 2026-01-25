@@ -159,9 +159,10 @@ def get_tournament(tournament_id):
 
 
 @sync_to_async
-def search_players_by_name(query, exclude_player_id=None):
-    """Поиск игроков по ФИО"""
+def search_players_by_name(query, exclude_player_id=None, tournament_id=None):
+    """Поиск игроков по ФИО, исключая уже зарегистрированных на турнир"""
     from apps.players.models import Player
+    from apps.tournaments.registration_models import TournamentRegistration
     
     players = Player.objects.filter(
         Q(first_name__icontains=query) |
@@ -171,6 +172,18 @@ def search_players_by_name(query, exclude_player_id=None):
     
     if exclude_player_id:
         players = players.exclude(id=exclude_player_id)
+    
+    # Исключаем игроков, уже зарегистрированных на турнир (кроме looking_for_partner)
+    if tournament_id:
+        registered_player_ids = TournamentRegistration.objects.filter(
+            tournament_id=tournament_id,
+            status__in=[
+                TournamentRegistration.Status.MAIN_LIST,
+                TournamentRegistration.Status.RESERVE_LIST,
+            ]
+        ).values_list('player_id', flat=True)
+        
+        players = players.exclude(id__in=registered_player_ids)
     
     return list(players.order_by('last_name', 'first_name')[:10])
 
