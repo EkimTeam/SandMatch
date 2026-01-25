@@ -597,7 +597,14 @@ async def callback_cmd_tournaments(callback: CallbackQuery):
     from .tournaments import cmd_tournaments
     await callback.answer()
     await callback.message.delete()
-    await cmd_tournaments(callback.message)
+    # Создаём Message объект с правильным from_user
+    message = Message(
+        message_id=callback.message.message_id,
+        date=callback.message.date,
+        chat=callback.message.chat,
+        from_user=callback.from_user
+    )
+    await cmd_tournaments(message)
 
 
 @router.callback_query(F.data == "cmd_mytournaments")
@@ -608,7 +615,14 @@ async def callback_cmd_mytournaments(callback: CallbackQuery):
     from .tournaments import cmd_my_tournaments
     await callback.answer()
     await callback.message.delete()
-    await cmd_my_tournaments(callback.message)
+    # Создаём Message объект с правильным from_user
+    message = Message(
+        message_id=callback.message.message_id,
+        date=callback.message.date,
+        chat=callback.message.chat,
+        from_user=callback.from_user
+    )
+    await cmd_my_tournaments(message)
 
 
 @router.callback_query(F.data == "cmd_myregistration")
@@ -618,7 +632,14 @@ async def callback_cmd_myregistration(callback: CallbackQuery):
     """
     await callback.answer()
     await callback.message.delete()
-    await cmd_my_registration(callback.message)
+    # Создаём Message объект с правильным from_user
+    message = Message(
+        message_id=callback.message.message_id,
+        date=callback.message.date,
+        chat=callback.message.chat,
+        from_user=callback.from_user
+    )
+    await cmd_my_registration(message)
 
 
 @router.callback_query(F.data == "cmd_profile")
@@ -629,4 +650,11 @@ async def callback_cmd_profile(callback: CallbackQuery):
     from .profile import cmd_profile
     await callback.answer()
     await callback.message.delete()
-    await cmd_profile(callback.message)
+    # Создаём Message объект с правильным from_user
+    message = Message(
+        message_id=callback.message.message_id,
+        date=callback.message.date,
+        chat=callback.message.chat,
+        from_user=callback.from_user
+    )
+    await cmd_profile(message)
