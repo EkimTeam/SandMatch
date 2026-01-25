@@ -597,8 +597,8 @@ async def callback_cmd_tournaments(callback: CallbackQuery):
     await callback.answer()
     await callback.message.delete()
     
-    # Вызываем команду напрямую через callback
-    from .tournaments import get_telegram_user, get_live_tournaments, get_registration_tournaments, format_tournament_info, check_registration
+    from .tournaments import get_telegram_user, get_live_tournaments, get_registration_tournaments, get_completed_tournaments, format_tournament_info, check_registration
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
     
     telegram_user = await get_telegram_user(callback.from_user.id)
     
@@ -614,19 +614,31 @@ async def callback_cmd_tournaments(callback: CallbackQuery):
     live_tournaments = await get_live_tournaments()
     registration_tournaments = await get_registration_tournaments()
     
-    if not live_tournaments and not registration_tournaments:
+    # Логика: если активных + регистрация < 5, добавляем завершенные
+    total_count = len(live_tournaments) + len(registration_tournaments)
+    completed_tournaments = []
+    if total_count < 5:
+        completed_tournaments = await get_completed_tournaments(limit=5 - total_count)
+    
+    if not live_tournaments and not registration_tournaments and not completed_tournaments:
         await callback.message.answer("Нет доступных турниров")
         return
     
+    # Активные турниры
     if live_tournaments:
-        await callback.message.answer(f"{hbold('🏆 Турниры Live')}")
+        await callback.message.answer(f"{hbold('🏆 Активные турниры')}")
         for tournament in live_tournaments:
-            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="📋 Подробнее",
-                        url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
+                        text="📱 Открыть в мини-апп",
+                        web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="◀️ Назад",
+                        callback_data="main_menu"
                     )
                 ]
             ])
@@ -635,6 +647,7 @@ async def callback_cmd_tournaments(callback: CallbackQuery):
                 reply_markup=keyboard
             )
     
+    # Турниры для регистрации
     if registration_tournaments:
         await callback.message.answer(f"{hbold('📝 Турниры для регистрации')}")
         for tournament in registration_tournaments:
@@ -642,7 +655,6 @@ async def callback_cmd_tournaments(callback: CallbackQuery):
             if player_id:
                 is_registered = await check_registration(tournament.id, player_id)
             
-            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
             keyboard_buttons = []
             
             if not is_registered:
@@ -655,8 +667,14 @@ async def callback_cmd_tournaments(callback: CallbackQuery):
             
             keyboard_buttons.append([
                 InlineKeyboardButton(
-                    text="📋 Подробнее",
-                    url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
+                    text="📱 Открыть в мини-апп",
+                    web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                )
+            ])
+            keyboard_buttons.append([
+                InlineKeyboardButton(
+                    text="◀️ Назад",
+                    callback_data="main_menu"
                 )
             ])
             
@@ -665,6 +683,46 @@ async def callback_cmd_tournaments(callback: CallbackQuery):
                 format_tournament_info(tournament, is_registered),
                 reply_markup=keyboard
             )
+    
+    # Завершенные турниры (если есть)
+    if completed_tournaments:
+        await callback.message.answer(f"{hbold('✅ Завершенные турниры')}")
+        for tournament in completed_tournaments:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📱 Открыть в мини-апп",
+                        web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="◀️ Назад",
+                        callback_data="main_menu"
+                    )
+                ]
+            ])
+            await callback.message.answer(
+                format_tournament_info(tournament),
+                reply_markup=keyboard
+            )
+    
+    # Кнопка "Посмотреть все турниры"
+    final_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🌐 Посмотреть все турниры на BeachPlay.ru",
+                url=f"{WEB_APP_URL}/tournaments"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="◀️ Назад",
+                callback_data="main_menu"
+            )
+        ]
+    ])
+    await callback.message.answer("—" * 20, reply_markup=final_keyboard)
 
 
 @router.callback_query(F.data == "cmd_mytournaments")
@@ -676,6 +734,7 @@ async def callback_cmd_mytournaments(callback: CallbackQuery):
     await callback.message.delete()
     
     from .tournaments import get_telegram_user, get_user_tournaments, format_tournament_info
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
     
     telegram_user = await get_telegram_user(callback.from_user.id)
     
@@ -702,22 +761,55 @@ async def callback_cmd_mytournaments(callback: CallbackQuery):
         )
         return
     
-    await callback.message.answer(f"{hbold('🏆 Мои турниры')}\n")
+    # Разделяем на предстоящие и завершенные
+    upcoming_tournaments = [t for t in tournaments if t.status in ['created', 'active']]
+    completed_tournaments = [t for t in tournaments if t.status == 'completed']
     
-    for tournament in tournaments:
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="📋 Подробнее",
-                    url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
-                )
-            ]
-        ])
-        await callback.message.answer(
-            format_tournament_info(tournament, is_registered=True),
-            reply_markup=keyboard
-        )
+    # Предстоящие турниры
+    if upcoming_tournaments:
+        await callback.message.answer(f"{hbold('📅 Предстоящие турниры')}")
+        for tournament in upcoming_tournaments:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📱 Открыть в мини-апп",
+                        web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="◀️ Назад",
+                        callback_data="main_menu"
+                    )
+                ]
+            ])
+            await callback.message.answer(
+                format_tournament_info(tournament, is_registered=True),
+                reply_markup=keyboard
+            )
+    
+    # Завершенные турниры
+    if completed_tournaments:
+        await callback.message.answer(f"{hbold('✅ Завершенные турниры')}")
+        for tournament in completed_tournaments:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📱 Открыть в мини-апп",
+                        web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="◀️ Назад",
+                        callback_data="main_menu"
+                    )
+                ]
+            ])
+            await callback.message.answer(
+                format_tournament_info(tournament, is_registered=True),
+                reply_markup=keyboard
+            )
 
 
 @router.callback_query(F.data == "cmd_myregistration")
@@ -798,22 +890,27 @@ async def callback_cmd_myregistration(callback: CallbackQuery):
         if tournament.date:
             text += f"📅 Дата: {tournament.date.strftime('%d.%m.%Y')}\n"
         
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
         keyboard_buttons = [
             [
                 InlineKeyboardButton(
-                    text="📋 Подробнее",
-                    url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
+                    text="📱 Открыть в мини-апп",
+                    web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ Отменить регистрацию",
+                    callback_data=f"cancel_reg_{tournament.id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="◀️ Назад",
+                    callback_data="main_menu"
                 )
             ]
         ]
-        
-        keyboard_buttons.append([
-            InlineKeyboardButton(
-                text="❌ Отменить регистрацию",
-                callback_data=f"cancel_reg_{tournament.id}"
-            )
-        ])
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
         
@@ -854,24 +951,36 @@ async def callback_cmd_profile(callback: CallbackQuery):
         if hasattr(player, 'current_rating') and player.current_rating:
             text += f"🏆 Рейтинг: {int(player.current_rating)} BP\n"
         
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="📝 Редактировать профиль",
-                    url=f"{WEB_APP_URL}/profile"
+                    text="📱 Открыть в мини-апп",
+                    web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/profile")
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="◀️ Назад",
+                    callback_data="main_menu"
                 )
             ]
         ])
         
         await callback.message.answer(text, reply_markup=keyboard)
     else:
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="🔗 Связать профиль",
-                    url=f"{WEB_APP_URL}/profile"
+                    text="📱 Открыть в мини-апп",
+                    web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/profile")
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="◀️ Назад",
+                    callback_data="main_menu"
                 )
             ]
         ])
