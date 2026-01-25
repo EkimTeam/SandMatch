@@ -54,18 +54,15 @@ def get_registration_tournaments():
 
 @sync_to_async
 def get_user_tournaments(player_id):
-    """Получение турниров пользователя с приоритетом и лимитами"""
+    """Получение турниров пользователя через TournamentRegistration"""
     if not player_id:
         return []
     
-    # Находим команды игрока
-    team_ids = Team.objects.filter(
-        Q(player_1_id=player_id) | Q(player_2_id=player_id)
-    ).values_list('id', flat=True)
+    from apps.tournaments.registration_models import TournamentRegistration
     
-    # Находим турниры через участников
-    tournament_ids = TournamentEntry.objects.filter(
-        team_id__in=team_ids
+    # Находим турниры через регистрации
+    tournament_ids = TournamentRegistration.objects.filter(
+        player_id=player_id
     ).values_list('tournament_id', flat=True).distinct()
     
     # Получаем турниры по статусам
@@ -113,18 +110,137 @@ def get_user_tournaments(player_id):
 
 @sync_to_async
 def check_registration(tournament_id, player_id):
-    """Проверка регистрации игрока на турнир"""
+    """Проверка регистрации игрока на турнир через TournamentRegistration"""
     if not player_id:
         return False
     
-    team_ids = Team.objects.filter(
-        Q(player_1_id=player_id) | Q(player_2_id=player_id)
-    ).values_list('id', flat=True)
+    from apps.tournaments.registration_models import TournamentRegistration
     
-    return TournamentEntry.objects.filter(
+    return TournamentRegistration.objects.filter(
         tournament_id=tournament_id,
-        team_id__in=team_ids
+        player_id=player_id
     ).exists()
+
+
+@sync_to_async
+def get_registration_status(tournament_id, player_id):
+    """Получение детальной информации о регистрации игрока"""
+    if not player_id:
+        return None
+    
+    from apps.tournaments.registration_models import TournamentRegistration
+    
+    try:
+        reg = TournamentRegistration.objects.select_related('partner', 'team').get(
+            tournament_id=tournament_id,
+            player_id=player_id
+        )
+        return {
+            'id': reg.id,
+            'status': reg.status,
+            'partner': reg.partner,
+            'team': reg.team,
+            'registration_order': reg.registration_order,
+            'registered_at': reg.registered_at
+        }
+    except TournamentRegistration.DoesNotExist:
+        return None
+
+
+@sync_to_async
+def get_tournament(tournament_id):
+    """Получение турнира по ID"""
+    try:
+        return Tournament.objects.annotate(
+            participants_count=Count('entries')
+        ).get(id=tournament_id)
+    except Tournament.DoesNotExist:
+        return None
+
+
+@sync_to_async
+def search_players_by_name(query, exclude_player_id=None):
+    """Поиск игроков по ФИО"""
+    from apps.players.models import Player
+    
+    players = Player.objects.filter(
+        Q(first_name__icontains=query) |
+        Q(last_name__icontains=query) |
+        Q(patronymic__icontains=query)
+    )
+    
+    if exclude_player_id:
+        players = players.exclude(id=exclude_player_id)
+    
+    return list(players.order_by('last_name', 'first_name')[:10])
+
+
+@sync_to_async
+def register_single_tournament(tournament_id, player_id):
+    """Регистрация на индивидуальный турнир через RegistrationService"""
+    from apps.tournaments.services import RegistrationService
+    from apps.players.models import Player
+    
+    tournament = Tournament.objects.get(id=tournament_id)
+    player = Player.objects.get(id=player_id)
+    
+    registration = RegistrationService.register_single(tournament, player)
+    return registration
+
+
+@sync_to_async
+def register_looking_for_partner_tournament(tournament_id, player_id):
+    """Регистрация в режиме 'Ищу пару' через RegistrationService"""
+    from apps.tournaments.services import RegistrationService
+    from apps.players.models import Player
+    
+    tournament = Tournament.objects.get(id=tournament_id)
+    player = Player.objects.get(id=player_id)
+    
+    registration = RegistrationService.register_looking_for_partner(tournament, player)
+    return registration
+
+
+@sync_to_async
+def register_with_partner_tournament(tournament_id, player_id, partner_id):
+    """Регистрация с напарником через RegistrationService"""
+    from apps.tournaments.services import RegistrationService
+    from apps.players.models import Player
+    
+    tournament = Tournament.objects.get(id=tournament_id)
+    player = Player.objects.get(id=player_id)
+    partner = Player.objects.get(id=partner_id)
+    
+    registration = RegistrationService.register_with_partner(tournament, player, partner, notify_partner=True)
+    return registration
+
+
+@sync_to_async
+def leave_pair_tournament(tournament_id, player_id):
+    """Выход из пары через RegistrationService"""
+    from apps.tournaments.services import RegistrationService
+    from apps.tournaments.registration_models import TournamentRegistration
+    
+    registration = TournamentRegistration.objects.get(
+        tournament_id=tournament_id,
+        player_id=player_id
+    )
+    
+    RegistrationService.leave_pair(registration)
+
+
+@sync_to_async
+def cancel_registration_tournament(tournament_id, player_id):
+    """Полная отмена регистрации через RegistrationService"""
+    from apps.tournaments.services import RegistrationService
+    from apps.tournaments.registration_models import TournamentRegistration
+    
+    registration = TournamentRegistration.objects.get(
+        tournament_id=tournament_id,
+        player_id=player_id
+    )
+    
+    RegistrationService.cancel_registration(registration)
 
 
 def format_tournament_info(tournament, is_registered=False):
@@ -309,6 +425,7 @@ async def cmd_my_tournaments(message: Message):
 async def callback_register(callback: CallbackQuery):
     """
     Обработка callback для регистрации на турнир
+    Определяет тип турнира и показывает соответствующие опции
     """
     tournament_id = int(callback.data.split("_")[1])
     
@@ -328,20 +445,60 @@ async def callback_register(callback: CallbackQuery):
         await callback.answer("✅ Ты уже зарегистрирован на этот турнир", show_alert=True)
         return
     
-    # Отправляем на сайт для регистрации
-    await callback.answer(
-        "Перейди на сайт для завершения регистрации",
-        show_alert=False
-    )
+    # Получаем турнир
+    tournament = await get_tournament(tournament_id)
     
-    # Обновляем сообщение с кнопкой перехода на сайт
+    if not tournament:
+        await callback.answer("❌ Турнир не найден", show_alert=True)
+        return
+    
+    # Для индивидуальных турниров - сразу регистрируем
+    if tournament.participant_mode == 'singles':
+        try:
+            await register_single_tournament(tournament_id, telegram_user.player_id)
+            await callback.answer("✅ Ты успешно зарегистрирован на турнир!", show_alert=True)
+            
+            # Обновляем сообщение
+            text = format_tournament_info(tournament, is_registered=True)
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📋 Подробнее",
+                        url=f"{WEB_APP_URL}/tournaments/{tournament_id}"
+                    )
+                ]
+            ])
+            await callback.message.edit_text(text, reply_markup=keyboard)
+        except Exception as e:
+            await callback.answer(f"❌ Ошибка регистрации: {str(e)}", show_alert=True)
+        return
+    
+    # Для парных турниров - показываем выбор режима
+    await callback.answer()
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
-                text="📝 Зарегистрироваться на сайте",
-                url=f"{WEB_APP_URL}/tournaments/{tournament_id}"
+                text="🔍 Ищу пару",
+                callback_data=f"reg_looking_{tournament_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="👥 С напарником",
+                callback_data=f"reg_with_partner_{tournament_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data=f"reg_cancel_{tournament_id}"
             )
         ]
     ])
     
-    await callback.message.edit_reply_markup(reply_markup=keyboard)
+    await callback.message.answer(
+        f"{hbold('Выбери способ регистрации:')}\n\n"
+        "🔍 Ищу пару - ты будешь в списке поиска пары\n"
+        "👥 С напарником - зарегистрироваться с конкретным игроком",
+        reply_markup=keyboard
+    )
