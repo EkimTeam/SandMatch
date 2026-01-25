@@ -129,19 +129,19 @@ async def process_partner_search(message: Message, state: FSMContext):
         await message.answer("❌ Ошибка: профиль игрока не найден")
         return
     
-    # Поиск игроков
-    players = await search_players_by_name(query, exclude_player_id=telegram_user.player_id)
-    
-    if not players:
-        await message.answer(
-            f"❌ Игроки с ФИО '{query}' не найдены.\n\n"
-            "Попробуй другой запрос или отправь /cancel для отмены"
-        )
-        return
-    
     # Показываем результаты поиска
     data = await state.get_data()
     tournament_id = data.get('tournament_id')
+    
+    # Поиск игроков с фильтрацией зарегистрированных на турнир
+    players = await search_players_by_name(query, exclude_player_id=telegram_user.player_id, tournament_id=tournament_id)
+    
+    if not players:
+        await message.answer(
+            f"❌ Свободные игроки с ФИО '{query}' не найдены.\n\n"
+            "Попробуй другой запрос или отправь /cancel для отмены"
+        )
+        return
     
     keyboard_buttons = []
     for player in players:
@@ -173,7 +173,7 @@ async def process_partner_search(message: Message, state: FSMContext):
     
     await message.answer(
         f"{hbold('Результаты поиска:')}\n\n"
-        f"Найдено игроков: {len(players)}\n"
+        f"Найдено {hbold('свободных')} игроков: {len(players)}\n"
         "Выбери напарника из списка:",
         reply_markup=keyboard
     )
@@ -550,12 +550,83 @@ async def callback_main_menu(callback: CallbackQuery):
     Возврат в главное меню
     """
     await callback.answer()
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🎾 Открыть BeachPlay",
+                url=f"{WEB_APP_URL}/mini-app/"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🏆 Турниры",
+                callback_data="cmd_tournaments"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📋 Мои турниры",
+                callback_data="cmd_mytournaments"
+            ),
+            InlineKeyboardButton(
+                text="📝 Мои регистрации",
+                callback_data="cmd_myregistration"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="👤 Мой профиль",
+                callback_data="cmd_profile"
+            )
+        ]
+    ])
+    
     await callback.message.edit_text(
         f"{hbold('🏠 Главное меню')}\n\n"
-        "Доступные команды:\n\n"
-        "/tournaments - список турниров\n"
-        "/mytournaments - мои турниры\n"
-        "/myregistration - мои регистрации\n"
-        "/profile - мой профиль\n"
-        "/help - помощь"
+        "Используй кнопки ниже для быстрого доступа:",
+        reply_markup=keyboard
     )
+
+
+@router.callback_query(F.data == "cmd_tournaments")
+async def callback_cmd_tournaments(callback: CallbackQuery):
+    """
+    Обработчик кнопки "Турниры"
+    """
+    from .tournaments import cmd_tournaments
+    await callback.answer()
+    await callback.message.delete()
+    await cmd_tournaments(callback.message)
+
+
+@router.callback_query(F.data == "cmd_mytournaments")
+async def callback_cmd_mytournaments(callback: CallbackQuery):
+    """
+    Обработчик кнопки "Мои турниры"
+    """
+    from .tournaments import cmd_my_tournaments
+    await callback.answer()
+    await callback.message.delete()
+    await cmd_my_tournaments(callback.message)
+
+
+@router.callback_query(F.data == "cmd_myregistration")
+async def callback_cmd_myregistration(callback: CallbackQuery):
+    """
+    Обработчик кнопки "Мои регистрации"
+    """
+    await callback.answer()
+    await callback.message.delete()
+    await cmd_my_registration(callback.message)
+
+
+@router.callback_query(F.data == "cmd_profile")
+async def callback_cmd_profile(callback: CallbackQuery):
+    """
+    Обработчик кнопки "Мой профиль"
+    """
+    from .profile import cmd_profile
+    await callback.answer()
+    await callback.message.delete()
+    await cmd_profile(callback.message)

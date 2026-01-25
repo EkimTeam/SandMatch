@@ -80,12 +80,40 @@ async def cmd_start(message: Message):
             reply_markup=keyboard
         )
     else:
+        # Создаём клавиатуру с командами бота
+        bot_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🎾 Открыть BeachPlay",
+                    web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/")
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🏆 Турниры",
+                    callback_data="cmd_tournaments"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📋 Мои турниры",
+                    callback_data="cmd_mytournaments"
+                ),
+                InlineKeyboardButton(
+                    text="📝 Мои регистрации",
+                    callback_data="cmd_myregistration"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="👤 Мой профиль",
+                    callback_data="cmd_profile"
+                )
+            ]
+        ])
+        
         await message.answer(
             f"С возвращением, {hbold(message.from_user.first_name)}! 👋\n\n"
-            f"Используй кнопки ниже для быстрого доступа или команды:\n\n"
-            f"/tournaments - список турниров\n"
-            f"/mytournaments - мои турниры\n"
-            f"/profile - мой профиль\n"
-            f"/help - справка по командам",
-            reply_markup=keyboard
+            f"Используй кнопки ниже для быстрого доступа:",
+            reply_markup=bot_keyboard
         )
