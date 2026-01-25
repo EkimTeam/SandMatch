@@ -24,16 +24,16 @@ def setup_dispatcher(config: BotConfig) -> Dispatcher:
     dp = Dispatcher(storage=storage)
     
     # Регистрируем роутеры
-    from .handlers import start, link, profile, help, tournaments
+    from .handlers import start, link, profile, help, tournaments, registration
     dp.include_router(start.router)
     dp.include_router(link.router)
     dp.include_router(profile.router)
     dp.include_router(help.router)
     dp.include_router(tournaments.router)
+    dp.include_router(registration.router)
     
     # Будет добавлено позже:
-    # from .handlers import registration, pairs, rating
-    # dp.include_router(registration.router)
+    # from .handlers import pairs, rating
     # dp.include_router(pairs.router)
     # dp.include_router(rating.router)
     
