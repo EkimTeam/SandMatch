@@ -206,13 +206,18 @@ def register_with_partner_tournament(tournament_id, player_id, partner_id):
     """Регистрация с напарником через RegistrationService"""
     from apps.tournaments.services import RegistrationService
     from apps.players.models import Player
+    from apps.telegram_bot.models import TelegramUser
     
     tournament = Tournament.objects.get(id=tournament_id)
     player = Player.objects.get(id=player_id)
     partner = Player.objects.get(id=partner_id)
     
     registration = RegistrationService.register_with_partner(tournament, player, partner, notify_partner=True)
-    return registration
+    
+    # Проверяем, есть ли у напарника связь с Telegram
+    partner_has_telegram = TelegramUser.objects.filter(player_id=partner_id).exists()
+    
+    return registration, partner_has_telegram
 
 
 @sync_to_async

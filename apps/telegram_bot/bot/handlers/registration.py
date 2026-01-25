@@ -63,6 +63,12 @@ async def callback_register_looking(callback: CallbackQuery):
                         text="📋 Подробнее",
                         url=f"{WEB_APP_URL}/tournaments/{tournament_id}"
                     )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🏠 В главное меню",
+                        callback_data="main_menu"
+                    )
                 ]
             ])
         )
@@ -190,20 +196,41 @@ async def callback_select_partner(callback: CallbackQuery, state: FSMContext):
         return
     
     try:
-        await register_with_partner_tournament(tournament_id, telegram_user.player_id, partner_id)
+        registration, partner_has_telegram = await register_with_partner_tournament(tournament_id, telegram_user.player_id, partner_id)
         await callback.answer("✅ Регистрация успешна!", show_alert=True)
         await state.clear()
         
         tournament = await get_tournament(tournament_id)
+        
+        # Формируем сообщение в зависимости от наличия Telegram у напарника
+        if partner_has_telegram:
+            message_text = (
+                f"✅ {hbold('Регистрация успешна!')}\n\n"
+                f"Ты зарегистрирован на турнир {hbold(tournament.name)} с напарником.\n\n"
+                "Напарнику отправлено уведомление в Telegram."
+            )
+        else:
+            message_text = (
+                f"✅ {hbold('Регистрация успешна!')}\n\n"
+                f"Ты зарегистрирован на турнир {hbold(tournament.name)} с напарником.\n\n"
+                "⚠️ Обратите внимание: у вашего напарника не установлена связь между BeachPlay и Telegram-аккаунтом.\n\n"
+                "Напарник не получит автоматическое уведомление о регистрации. "
+                "Пожалуйста, сообщите ему о турнире другим способом."
+            )
+        
         await callback.message.edit_text(
-            f"✅ {hbold('Регистрация успешна!')}\n\n"
-            f"Ты зарегистрирован на турнир {hbold(tournament.name)} с напарником.\n\n"
-            "Напарнику отправлено уведомление.",
+            message_text,
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [
                     InlineKeyboardButton(
                         text="📋 Подробнее",
                         url=f"{WEB_APP_URL}/tournaments/{tournament_id}"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🏠 В главное меню",
+                        callback_data="main_menu"
                     )
                 ]
             ])
@@ -354,6 +381,12 @@ async def callback_leave_pair(callback: CallbackQuery):
                         text="📋 Подробнее",
                         url=f"{WEB_APP_URL}/tournaments/{tournament_id}"
                     )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🏠 В главное меню",
+                        callback_data="main_menu"
+                    )
                 ]
             ])
         )
@@ -387,6 +420,12 @@ async def callback_full_cancel(callback: CallbackQuery):
                     InlineKeyboardButton(
                         text="📋 Подробнее",
                         url=f"{WEB_APP_URL}/tournaments/{tournament_id}"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🏠 В главное меню",
+                        callback_data="main_menu"
                     )
                 ]
             ])
@@ -503,3 +542,20 @@ async def cmd_my_registration(message: Message):
         keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
         
         await message.answer(text, reply_markup=keyboard)
+
+
+@router.callback_query(F.data == "main_menu")
+async def callback_main_menu(callback: CallbackQuery):
+    """
+    Возврат в главное меню
+    """
+    await callback.answer()
+    await callback.message.edit_text(
+        f"{hbold('🏠 Главное меню')}\n\n"
+        "Доступные команды:\n\n"
+        "/tournaments - список турниров\n"
+        "/mytournaments - мои турниры\n"
+        "/myregistration - мои регистрации\n"
+        "/profile - мой профиль\n"
+        "/help - помощь"
+    )
