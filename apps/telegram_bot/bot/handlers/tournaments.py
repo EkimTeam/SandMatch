@@ -338,9 +338,7 @@ def get_tournament_winner(tournament_id: int) -> str | None:
     def _player_name(player):
         if not player:
             return ""
-        # display_name если есть, иначе "Фамилия Имя"
-        if getattr(player, "display_name", None):
-            return player.display_name
+        # Всегда отображаем как "Фамилия Имя"
         return f"{player.last_name} {player.first_name}"
 
     # Одиночный или парный формат
