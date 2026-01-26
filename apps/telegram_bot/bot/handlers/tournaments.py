@@ -10,7 +10,7 @@ from asgiref.sync import sync_to_async
 from django.db.models import Q, Count
 
 from apps.telegram_bot.models import TelegramUser
-from apps.tournaments.models import Tournament, TournamentEntry
+from apps.tournaments.models import Tournament, TournamentEntry, TournamentPlacement
 from apps.teams.models import Team
 
 router = Router()
@@ -276,7 +276,83 @@ def cancel_registration_tournament(tournament_id, player_id):
     RegistrationService.cancel_registration(registration)
 
 
-def format_tournament_info(tournament, is_registered=False):
+@sync_to_async
+def get_user_place(tournament_id: int, player_id: int) -> str | None:
+    """Получить место игрока в завершённом турнире.
+
+    Возвращает строку с местом (например, "1" или "1–3"), либо None,
+    если место не найдено.
+    """
+    if not player_id:
+        return None
+
+    # Находим все записи участника в турнире
+    entries = TournamentEntry.objects.filter(
+        tournament_id=tournament_id,
+        team__isnull=False,
+    ).filter(
+        Q(team__player_1_id=player_id) | Q(team__player_2_id=player_id)
+    )
+
+    if not entries.exists():
+        return None
+
+    placement = (
+        TournamentPlacement.objects
+        .filter(tournament_id=tournament_id, entry__in=entries)
+        .order_by('place_from')
+        .first()
+    )
+    if not placement:
+        return None
+
+    if placement.place_from == placement.place_to:
+        return str(placement.place_from)
+    return f"{placement.place_from}–{placement.place_to}"
+
+
+@sync_to_async
+def get_tournament_winner(tournament_id: int) -> str | None:
+    """Получить победителя турнира по TournamentPlacement.
+
+    Возвращает имя игрока или пары, либо None если данных нет.
+    """
+    placements = (
+        TournamentPlacement.objects
+        .filter(tournament_id=tournament_id, place_from=1)
+        .select_related("entry__team__player_1", "entry__team__player_2")
+        .order_by("place_from")
+    )
+    if not placements.exists():
+        return None
+
+    placement = placements.first()
+    entry = placement.entry
+    if not entry or not entry.team:
+        return None
+
+    team = entry.team
+    p1 = getattr(team, "player_1", None)
+    p2 = getattr(team, "player_2", None)
+
+    def _player_name(player):
+        if not player:
+            return ""
+        # display_name если есть, иначе "Фамилия Имя"
+        if getattr(player, "display_name", None):
+            return player.display_name
+        return f"{player.last_name} {player.first_name}"
+
+    # Одиночный или парный формат
+    if p1 and not p2:
+        return _player_name(p1)
+    if p1 and p2:
+        return f"{_player_name(p1)} / {_player_name(p2)}"
+
+    return None
+
+
+def format_tournament_info(tournament, is_registered: bool = False, place: str | None = None, winner: str | None = None):
     """Форматирование информации о турнире"""
     system_names = {
         'round_robin': '⟳ Круговая',
@@ -311,7 +387,16 @@ def format_tournament_info(tournament, is_registered=False):
         text += "\n"
     
     if is_registered:
-        text += f"\n✅ {hbold('Ты зарегистрирован')}\n"
+        # Для завершённых турниров показываем место игрока
+        if tournament.status == 'completed' and place:
+            # Без дополнительной пустой строки
+            text += f"🏆 {hbold(f'Твоё место {place}')}\n"
+        else:
+            text += f"\n✅ {hbold('Ты зарегистрирован')}\n"
+
+    # Для завершённых турниров, если передан победитель, добавляем строку в конце
+    if tournament.status == 'completed' and winner:
+        text += f"🥇 Победитель: {winner}\n"
     
     return text
 
@@ -370,8 +455,9 @@ async def cmd_tournaments(message: Message):
                     )
                 ]
             ])
+            winner = await get_tournament_winner(tournament.id)
             await message.answer(
-                format_tournament_info(tournament),
+                format_tournament_info(tournament, winner=winner),
                 reply_markup=keyboard
             )
     

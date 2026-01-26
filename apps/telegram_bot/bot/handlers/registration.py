@@ -840,7 +840,13 @@ async def callback_cmd_mytournaments(callback: CallbackQuery):
     await callback.answer()
     await callback.message.delete()
     
-    from .tournaments import get_telegram_user, get_user_tournaments, format_tournament_info
+    from .tournaments import (
+        get_telegram_user,
+        get_user_tournaments,
+        format_tournament_info,
+        get_user_place,
+        get_tournament_winner,
+    )
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
     
     telegram_user = await get_telegram_user(callback.from_user.id)
@@ -979,8 +985,13 @@ async def callback_cmd_mytournaments(callback: CallbackQuery):
                     )
                 ]
             ])
+
+            # Для завершённых турниров показываем и твое место, и победителя
+            user_place = await get_user_place(tournament.id, telegram_user.player_id)
+            winner = await get_tournament_winner(tournament.id)
+
             await callback.message.answer(
-                format_tournament_info(tournament, is_registered=True),
+                format_tournament_info(tournament, is_registered=True, place=user_place, winner=winner),
                 reply_markup=keyboard
             )
 
