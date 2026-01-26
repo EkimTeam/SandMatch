@@ -115,7 +115,7 @@ async def handle_register_button(message: Message):
     await callback_cmd_register(callback)
 
 
-@router.message(F.text == "📋 Мои заявки")
+@router.message(F.text == "📝 Мои заявки")
 async def handle_myregistration_button(message: Message):
     """Обработчик кнопки 'Мои заявки'"""
     from .registration import callback_cmd_myregistration
