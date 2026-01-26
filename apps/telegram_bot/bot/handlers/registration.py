@@ -111,6 +111,14 @@ async def process_partner_search(message: Message, state: FSMContext):
     """
     query = message.text.strip()
     
+    # Получаем telegram_user сразу, чтобы использовать в любом случае
+    telegram_user = await get_telegram_user(message.from_user.id)
+    
+    if not telegram_user or not telegram_user.player:
+        await state.clear()
+        await message.answer("❌ Ошибка: профиль игрока не найден")
+        return
+    
     # Проверка на команду отмены
     if query.lower() in ['/cancel', 'отмена']:
         data = await state.get_data()
@@ -159,13 +167,6 @@ async def process_partner_search(message: Message, state: FSMContext):
     # Минимальная длина запроса
     if len(query) < 2:
         await message.answer("⚠️ Введи минимум 2 символа для поиска")
-        return
-    
-    telegram_user = await get_telegram_user(message.from_user.id)
-    
-    if not telegram_user or not telegram_user.player:
-        await state.clear()
-        await message.answer("❌ Ошибка: профиль игрока не найден")
         return
     
     # Показываем результаты поиска
