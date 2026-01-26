@@ -510,9 +510,27 @@ async def cmd_my_registration(message: Message):
     tournaments = await get_user_tournaments(telegram_user.player_id)
     
     if not tournaments:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🏆 Турниры",
+                    callback_data="cmd_tournaments"
+                ),
+                InlineKeyboardButton(
+                    text="✍️ Заявиться на турнир",
+                    callback_data="cmd_register"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="◀️ Назад",
+                    callback_data="main_menu"
+                )
+            ]
+        ])
         await message.answer(
-            "📋 Ты пока не зарегистрирован ни на один турнир.\n\n"
-            "Используй /tournaments для просмотра доступных турниров"
+            "📋 Ты пока не зарегистрирован ни на один турнир.",
+            reply_markup=keyboard
         )
         return
     
@@ -520,9 +538,27 @@ async def cmd_my_registration(message: Message):
     created_tournaments = [t for t in tournaments if t.status == 'created']
     
     if not created_tournaments:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🏆 Турниры",
+                    callback_data="cmd_tournaments"
+                ),
+                InlineKeyboardButton(
+                    text="✍️ Заявиться на турнир",
+                    callback_data="cmd_register"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="◀️ Назад",
+                    callback_data="main_menu"
+                )
+            ]
+        ])
         await message.answer(
-            "📋 У тебя нет активных регистраций на турниры.\n\n"
-            "Используй /tournaments для просмотра доступных турниров"
+            "📋 У тебя нет активных регистраций на турниры.",
+            reply_markup=keyboard
         )
         return
     
