@@ -983,30 +983,11 @@ async def callback_cmd_myregistration(callback: CallbackQuery):
         )
         return
     
-    tournaments = await get_user_tournaments(telegram_user.player_id)
+    # Получаем все турниры пользователя
+    all_tournaments = await get_user_tournaments(telegram_user.player_id)
     
-    if not tournaments:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="✍️ Заявиться на турнир",
-                    callback_data="cmd_register"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="◀️ Назад",
-                    callback_data="main_menu"
-                )
-            ]
-        ])
-        await callback.message.answer(
-            "📋 Ты пока не зарегистрирован ни на один турнир.",
-            reply_markup=keyboard
-        )
-        return
-    
-    created_tournaments = [t for t in tournaments if t.status == 'created']
+    # Фильтруем только турниры со статусом 'created' (набор участников)
+    created_tournaments = [t for t in all_tournaments if t.status == 'created']
     
     if not created_tournaments:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
