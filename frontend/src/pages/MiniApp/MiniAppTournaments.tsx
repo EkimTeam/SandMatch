@@ -158,7 +158,6 @@ const MiniAppTournaments = () => {
                 </h3>
                 {getStatusBadge(tournament.status)}
               </div>
-              
               <div className="space-y-1 text-sm text-gray-600">
                 <div className="flex items-center">
                   <span className="mr-2">📅</span>
@@ -189,6 +188,12 @@ const MiniAppTournaments = () => {
                   <div className="flex items-center">
                     <span className="mr-2">🏆</span>
                     Призовой фонд: {tournament.prize_fund}
+                  </div>
+                )}
+                {tournament.status === 'completed' && tournament.winner && (
+                  <div className="flex items-center">
+                    <span className="mr-2">🥇</span>
+                    Победитель: {tournament.winner}
                   </div>
                 )}
               </div>

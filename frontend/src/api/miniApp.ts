@@ -24,6 +24,8 @@ export interface Tournament {
   description?: string
   entry_fee?: number
   prize_fund?: number
+  winner?: string | null
+  my_place?: string | null
 }
 
 export interface Player {
