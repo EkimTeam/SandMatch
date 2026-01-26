@@ -21,6 +21,7 @@ from .tournaments import (
     cancel_registration_tournament,
     get_user_tournaments
 )
+from ..keyboards import get_main_keyboard
 
 router = Router()
 
