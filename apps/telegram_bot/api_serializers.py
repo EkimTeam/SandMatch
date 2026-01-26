@@ -3,7 +3,7 @@
 """
 from django.db.models import Q
 from rest_framework import serializers
-from apps.tournaments.models import Tournament, TournamentEntry
+from apps.tournaments.models import Tournament, TournamentEntry, TournamentPlacement
 from apps.players.models import Player
 from apps.teams.models import Team
 from apps.matches.models import Match
@@ -14,6 +14,8 @@ class TournamentListSerializer(serializers.ModelSerializer):
     
     participants_count = serializers.IntegerField(read_only=True)
     is_registered = serializers.SerializerMethodField()
+    winner = serializers.SerializerMethodField()
+    my_place = serializers.SerializerMethodField()
     venue_name = serializers.CharField(source='venue.name', read_only=True)
     # В модели Tournament нет max_teams, используем planned_participants как вместимость
     max_teams = serializers.IntegerField(source='planned_participants', read_only=True)
@@ -37,6 +39,8 @@ class TournamentListSerializer(serializers.ModelSerializer):
             'system',
             'set_format_name',
             'is_registered',
+            'winner',
+            'my_place',
         ]
     
     def get_is_registered(self, obj):
@@ -104,6 +108,80 @@ class TournamentListSerializer(serializers.ModelSerializer):
             return sf.name
         except Exception:
             return None
+
+    def get_winner(self, obj):
+        """Победитель завершённого турнира.
+
+        Строка вида "Фамилия Имя" для одиночных или
+        "Фамилия1 Имя1 / Фамилия2 Имя2" для парных.
+        """
+
+        if obj.status != 'completed':
+            return None
+
+        placement = (
+            TournamentPlacement.objects
+            .filter(tournament=obj, place_from=1)
+            .select_related('entry__team__player_1', 'entry__team__player_2')
+            .first()
+        )
+        if not placement:
+            return None
+
+        team = placement.entry.team
+        p1 = getattr(team, 'player_1', None)
+        p2 = getattr(team, 'player_2', None)
+
+        def _name(p):
+            if not p:
+                return str(team)
+            last = (getattr(p, 'last_name', '') or '').strip()
+            first = (getattr(p, 'first_name', '') or '').strip()
+            base = f"{last} {first}".strip()
+            return base or (getattr(p, 'display_name', '') or str(team))
+
+        if p1 and p2:
+            return f"{_name(p1)} / {_name(p2)}"
+        if p1:
+            return _name(p1)
+        return str(team)
+
+    def get_my_place(self, obj):
+        """Место текущего игрока в завершённом турнире (для "Мои турниры")."""
+
+        if obj.status != 'completed':
+            return None
+
+        request = self.context.get('request')
+        if not request or not hasattr(request, 'auth'):
+            return None
+
+        telegram_user = request.auth
+        player_id = getattr(telegram_user, 'player_id', None)
+        if not player_id:
+            return None
+
+        # Находим все команды игрока
+        team_ids = Team.objects.filter(
+            Q(player_1_id=player_id) | Q(player_2_id=player_id)
+        ).values_list('id', flat=True)
+
+        if not team_ids:
+            return None
+
+        # Ищем первое место для любой команды игрока в этом турнире
+        placement = (
+            TournamentPlacement.objects
+            .filter(tournament=obj, entry__team_id__in=team_ids)
+            .order_by('place_from', 'place_to', 'id')
+            .first()
+        )
+        if not placement:
+            return None
+
+        if placement.place_from == placement.place_to:
+            return str(placement.place_from)
+        return f"{placement.place_from}–{placement.place_to}"
 
 
 class TournamentDetailSerializer(serializers.ModelSerializer):

@@ -273,6 +273,18 @@ const MiniAppMyTournaments = () => {
                     <span className="mr-2">📍</span>
                     {tournament.venue_name}
                   </div>
+                  {tournament.my_place && (
+                    <div className="flex items-center">
+                      <span className="mr-2">🏆</span>
+                      Моё место: {tournament.my_place}
+                    </div>
+                  )}
+                  {tournament.winner && (
+                    <div className="flex items-center">
+                      <span className="mr-2">🥇</span>
+                      Победитель: {tournament.winner}
+                    </div>
+                  )}
                 </div>
               </button>
             ))}
