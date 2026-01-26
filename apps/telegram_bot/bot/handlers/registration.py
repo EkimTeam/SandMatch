@@ -111,62 +111,22 @@ async def process_partner_search(message: Message, state: FSMContext):
     """
     query = message.text.strip()
     
-    # Получаем telegram_user сразу, чтобы использовать в любом случае
-    telegram_user = await get_telegram_user(message.from_user.id)
-    
-    if not telegram_user or not telegram_user.player:
-        await state.clear()
-        await message.answer("❌ Ошибка: профиль игрока не найден")
-        return
-    
     # Проверка на команду отмены
     if query.lower() in ['/cancel', 'отмена']:
-        data = await state.get_data()
-        tournament_id = data.get('tournament_id')
         await state.clear()
         await message.answer("❌ Поиск напарника отменён")
-        
-        # Показываем плитку турнира
-        if tournament_id:
-            from .tournaments import get_tournament, format_tournament_info, check_registration
-            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-            
-            tournament = await get_tournament(tournament_id)
-            if tournament:
-                is_registered = await check_registration(tournament_id, telegram_user.player_id)
-                
-                keyboard_buttons = []
-                if not is_registered:
-                    keyboard_buttons.append([
-                        InlineKeyboardButton(
-                            text="✅ Зарегистрироваться",
-                            callback_data=f"register_{tournament_id}"
-                        )
-                    ])
-                
-                keyboard_buttons.append([
-                    InlineKeyboardButton(
-                        text="📱 Открыть в мини-апп",
-                        web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament_id}")
-                    )
-                ])
-                keyboard_buttons.append([
-                    InlineKeyboardButton(
-                        text="◀️ Назад",
-                        callback_data="main_menu"
-                    )
-                ])
-                
-                keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
-                await message.answer(
-                    format_tournament_info(tournament, is_registered),
-                    reply_markup=keyboard
-                )
         return
     
     # Минимальная длина запроса
     if len(query) < 2:
         await message.answer("⚠️ Введи минимум 2 символа для поиска")
+        return
+    
+    telegram_user = await get_telegram_user(message.from_user.id)
+    
+    if not telegram_user or not telegram_user.player:
+        await state.clear()
+        await message.answer("❌ Ошибка: профиль игрока не найден")
         return
     
     # Показываем результаты поиска
