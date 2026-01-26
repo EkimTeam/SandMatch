@@ -3,7 +3,7 @@ from apps.players.models import Player
 from apps.teams.models import Team
 from apps.matches.models import Match, MatchSet
 from apps.accounts.permissions import IsTournamentCreatorOrAdminForDeletion
-from .models import Tournament, TournamentEntry, SetFormat, SchedulePattern, Ruleset
+from .models import Tournament, TournamentEntry, SetFormat, SchedulePattern, Ruleset, TournamentPlacement
 
 
 class PlayerSerializer(serializers.ModelSerializer):
@@ -225,6 +225,7 @@ class TournamentSerializer(serializers.ModelSerializer):
     has_zero_rating_players = serializers.SerializerMethodField()
     rating_coefficient = serializers.FloatField(read_only=True)
     prize_fund = serializers.CharField(read_only=True, allow_blank=True, allow_null=True)
+    winner = serializers.SerializerMethodField()
 
     class Meta:
         model = Tournament
@@ -257,6 +258,7 @@ class TournamentSerializer(serializers.ModelSerializer):
             "avg_rating_bp",
             "rating_coefficient",
             "prize_fund",
+            "winner",
             "has_zero_rating_players",
         ]
 
@@ -410,6 +412,43 @@ class TournamentSerializer(serializers.ModelSerializer):
             return False
 
         return Player.objects.filter(id__in=player_ids, current_rating=0).exists()
+
+    def get_winner(self, obj: Tournament):
+        """Победитель завершённого турнира для веб-списка турниров.
+
+        Форматирует имя так же, как в Telegram-боте/mini-app:
+        "Фамилия Имя" или "Фамилия1 Имя1 / Фамилия2 Имя2".
+        """
+
+        if obj.status != Tournament.Status.COMPLETED:
+            return None
+
+        placement = (
+            TournamentPlacement.objects
+            .filter(tournament=obj, place_from=1)
+            .select_related("entry__team__player_1", "entry__team__player_2")
+            .first()
+        )
+        if not placement:
+            return None
+
+        team = placement.entry.team
+        p1 = getattr(team, "player_1", None)
+        p2 = getattr(team, "player_2", None)
+
+        def _name(p):
+            if not p:
+                return str(team)
+            last = (getattr(p, "last_name", "") or "").strip()
+            first = (getattr(p, "first_name", "") or "").strip()
+            base = f"{last} {first}".strip()
+            return base or (getattr(p, "display_name", "") or str(team))
+
+        if p1 and p2:
+            return f"{_name(p1)} / {_name(p2)}"
+        if p1:
+            return _name(p1)
+        return str(team)
 
 
 class SchedulePatternSerializer(serializers.ModelSerializer):
