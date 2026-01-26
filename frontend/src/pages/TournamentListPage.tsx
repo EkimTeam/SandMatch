@@ -22,6 +22,7 @@ interface TournamentOverviewItem {
   groups_count?: number;
   rating_coefficient?: number | null;
   prize_fund?: string | null;
+  winner?: string | null;
 }
 
 interface SetFormat { id: number; name: string; }
@@ -402,6 +403,11 @@ export const TournamentListPage: React.FC = () => {
                     {t.organizer_name ? ` • Организатор: ${t.organizer_name}` : ''}
                   </div>
                   {renderCardMetaExtra(t)}
+                  {t.winner && (
+                    <div style={{ marginTop: 6, fontSize: 12, color: '#374151' }}>
+                      🥇 Победитель: {t.winner}
+                    </div>
+                  )}
                   <div style={{ marginTop: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                     <Link
                       to={
@@ -445,6 +451,11 @@ export const TournamentListPage: React.FC = () => {
                         {t.organizer_name ? ` • Организатор: ${t.organizer_name}` : ''}
                       </div>
                       {renderCardMetaExtra(t)}
+                      {t.winner && (
+                        <div style={{ marginTop: 6, fontSize: 12, color: '#374151' }}>
+                          🥇 Победитель: {t.winner}
+                        </div>
+                      )}
                     </div>
                     <Link to={t.system === 'round_robin' ? `/tournaments/${t.id}/round_robin` : `/tournaments/${t.id}/knockout`} className="btn">Открыть</Link>
                   </div>
