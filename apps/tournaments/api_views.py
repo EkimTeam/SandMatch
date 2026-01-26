@@ -23,7 +23,7 @@ from django.db import transaction
 from typing import Optional
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from .models import Tournament, TournamentEntry, SetFormat, Ruleset, KnockoutBracket, DrawPosition, SchedulePattern
+from .models import Tournament, TournamentEntry, SetFormat, Ruleset, KnockoutBracket, DrawPosition, SchedulePattern, TournamentPlacement
 from apps.players.services import rating_service
 from apps.players.services.initial_rating_service import get_initial_bp_rating
 from apps.players.services.btr_rating_mapper import suggest_initial_bp_rating
@@ -4160,6 +4160,35 @@ def tournament_list(request):
                 if cnt > 0:
                     avg_rating = round(total / cnt, 1)
 
+        # Победитель турнира (только для завершённых)
+        winner: str | None = None
+        if t.status == Tournament.Status.COMPLETED:
+            placement = (
+                TournamentPlacement.objects
+                .filter(tournament=t, place_from=1)
+                .select_related("entry__team__player_1", "entry__team__player_2")
+                .first()
+            )
+            if placement:
+                team = placement.entry.team
+                p1 = getattr(team, "player_1", None)
+                p2 = getattr(team, "player_2", None)
+
+                def _name(p):
+                    if not p:
+                        return str(team)
+                    last = (getattr(p, "last_name", "") or "").strip()
+                    first = (getattr(p, "first_name", "") or "").strip()
+                    base = f"{last} {first}".strip()
+                    return base or (getattr(p, "display_name", "") or str(team))
+
+                if p1 and p2:
+                    winner = f"{_name(p1)} / {_name(p2)}"
+                elif p1:
+                    winner = _name(p1)
+                else:
+                    winner = str(team)
+
         return {
             "id": t.id,
             "name": t.name,
@@ -4175,6 +4204,7 @@ def tournament_list(request):
             "groups_count": getattr(t, "groups_count", None),
             "rating_coefficient": t.rating_coefficient,
             "prize_fund": t.prize_fund,
+            "winner": winner,
         }
 
     return Response({
