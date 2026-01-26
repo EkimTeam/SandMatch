@@ -1,0 +1,34 @@
+"""
+Клавиатуры для Telegram-бота
+"""
+import os
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
+
+WEB_APP_URL = os.getenv('WEB_APP_URL', 'https://beachplay.ru')
+
+
+def get_main_keyboard() -> ReplyKeyboardMarkup:
+    """
+    Возвращает основную постоянную клавиатуру бота
+    """
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(
+                    text="🎾 Открыть BeachPlay",
+                    web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/")
+                )
+            ],
+            [
+                KeyboardButton(text="🏆 Турниры"),
+                KeyboardButton(text="👤 Мой профиль")
+            ],
+            [
+                KeyboardButton(text="✍️ Заявиться на турнир"),
+                KeyboardButton(text="📋 Мои заявки")
+            ]
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Выберите действие..."
+    )
+    return keyboard
