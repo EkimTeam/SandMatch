@@ -291,8 +291,12 @@ async def callback_cancel_search(callback: CallbackQuery, state: FSMContext):
         
         keyboard_buttons.append([
             InlineKeyboardButton(
-                text="📱 Открыть в мини-апп",
+                text="📱 В мини-апп",
                 web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament_id}")
+            ),
+            InlineKeyboardButton(
+                text="🌐 На BeachPlay.ru",
+                url=f"{WEB_APP_URL}/tournaments/{tournament_id}"
             )
         ])
         keyboard_buttons.append([
@@ -721,8 +725,12 @@ async def callback_cmd_tournaments(callback: CallbackQuery):
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="📱 Открыть в мини-апп",
+                        text="📱 В мини-апп",
                         web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                    ),
+                    InlineKeyboardButton(
+                        text="🌐 На BeachPlay.ru",
+                        url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
                     )
                 ],
                 [
@@ -757,8 +765,12 @@ async def callback_cmd_tournaments(callback: CallbackQuery):
             
             keyboard_buttons.append([
                 InlineKeyboardButton(
-                    text="📱 Открыть в мини-апп",
+                    text="📱 В мини-апп",
                     web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                ),
+                InlineKeyboardButton(
+                    text="🌐 На BeachPlay.ru",
+                    url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
                 )
             ])
             keyboard_buttons.append([
@@ -1047,8 +1059,12 @@ async def callback_cmd_myregistration(callback: CallbackQuery):
         keyboard_buttons = [
             [
                 InlineKeyboardButton(
-                    text="📱 Открыть в мини-апп",
+                    text="📱 В мини-апп",
                     web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                ),
+                InlineKeyboardButton(
+                    text="🌐 На BeachPlay.ru",
+                    url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
                 )
             ],
             [
@@ -1108,8 +1124,12 @@ async def callback_cmd_profile(callback: CallbackQuery):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="📱 Открыть в мини-апп",
+                    text="📱 В мини-апп",
                     web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/profile")
+                ),
+                InlineKeyboardButton(
+                    text="🌐 На BeachPlay.ru",
+                    url=f"{WEB_APP_URL}/profile"
                 )
             ],
             [

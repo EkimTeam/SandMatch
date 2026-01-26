@@ -355,8 +355,12 @@ async def cmd_tournaments(message: Message):
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="📱 Открыть в мини-апп",
+                        text="📱 В мини-апп",
                         web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                    ),
+                    InlineKeyboardButton(
+                        text="🌐 На BeachPlay.ru",
+                        url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
                     )
                 ],
                 [
@@ -391,8 +395,12 @@ async def cmd_tournaments(message: Message):
             
             keyboard_buttons.append([
                 InlineKeyboardButton(
-                    text="📱 Открыть в мини-апп",
+                    text="📱 В мини-апп",
                     web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                ),
+                InlineKeyboardButton(
+                    text="🌐 На BeachPlay.ru",
+                    url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
                 )
             ])
             keyboard_buttons.append([
@@ -415,8 +423,12 @@ async def cmd_tournaments(message: Message):
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="📱 Открыть в мини-апп",
+                        text="📱 В мини-апп",
                         web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                    ),
+                    InlineKeyboardButton(
+                        text="🌐 На BeachPlay.ru",
+                        url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
                     )
                 ],
                 [
@@ -531,8 +543,12 @@ async def cmd_my_tournaments(message: Message):
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="📱 Открыть в мини-апп",
+                        text="📱 В мини-апп",
                         web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                    ),
+                    InlineKeyboardButton(
+                        text="🌐 На BeachPlay.ru",
+                        url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
                     )
                 ],
                 [
@@ -554,8 +570,12 @@ async def cmd_my_tournaments(message: Message):
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="📱 Открыть в мини-апп",
+                        text="📱 В мини-апп",
                         web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                    ),
+                    InlineKeyboardButton(
+                        text="🌐 На BeachPlay.ru",
+                        url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
                     )
                 ],
                 [
@@ -577,8 +597,12 @@ async def cmd_my_tournaments(message: Message):
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="📱 Открыть в мини-апп",
+                        text="📱 В мини-апп",
                         web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                    ),
+                    InlineKeyboardButton(
+                        text="🌐 На BeachPlay.ru",
+                        url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
                     )
                 ],
                 [
