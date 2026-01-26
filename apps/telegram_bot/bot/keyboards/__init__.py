@@ -22,15 +22,15 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
             ],
             [
                 KeyboardButton(text="🏆 Турниры"),
-                KeyboardButton(text="� Мои турниры")
+                KeyboardButton(text="📋 Мои турниры")
             ],
             [
                 KeyboardButton(text="🔴 Live"),
-                KeyboardButton(text="�👤 Мой профиль")
+                KeyboardButton(text="✍️ Заявиться на турнир")
             ],
             [
-                KeyboardButton(text="✍️ Заявиться на турнир"),
-                KeyboardButton(text="� Мои заявки")
+                KeyboardButton(text="📝 Мои заявки"),
+                KeyboardButton(text="👤 Мой профиль")
             ]
         ],
         resize_keyboard=True,
