@@ -1044,7 +1044,6 @@ async def callback_cmd_myregistration(callback: CallbackQuery):
         if tournament.date:
             text += f"📅 Дата: {tournament.date.strftime('%d.%m.%Y')}\n"
         
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
         keyboard_buttons = [
             [
                 InlineKeyboardButton(
