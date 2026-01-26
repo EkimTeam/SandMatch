@@ -66,15 +66,18 @@ def get_completed_tournaments(limit=5):
 
 @sync_to_async
 def get_user_tournaments(player_id):
-    """Получение турниров пользователя через TournamentRegistration"""
+    """Получение турниров пользователя через Team и TournamentEntry (как в мини-аппе)"""
     if not player_id:
         return []
     
-    from apps.tournaments.registration_models import TournamentRegistration
+    # Находим команды игрока (как в мини-аппе)
+    team_ids = Team.objects.filter(
+        Q(player_1_id=player_id) | Q(player_2_id=player_id)
+    ).values_list('id', flat=True)
     
-    # Находим турниры через регистрации
-    tournament_ids = TournamentRegistration.objects.filter(
-        player_id=player_id
+    # Находим турниры через участников
+    tournament_ids = TournamentEntry.objects.filter(
+        team_id__in=team_ids
     ).values_list('tournament_id', flat=True).distinct()
     
     # Получаем турниры по статусам
