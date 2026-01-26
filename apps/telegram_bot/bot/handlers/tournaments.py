@@ -352,6 +352,12 @@ def get_tournament_winner(tournament_id: int) -> str | None:
     return None
 
 
+@sync_to_async
+def get_total_tournaments_count() -> int:
+    """Общее количество турниров в системе (для текста 'Всего в истории N турниров')."""
+    return Tournament.objects.count()
+
+
 def format_tournament_info(tournament, is_registered: bool = False, place: str | None = None, winner: str | None = None):
     """Форматирование информации о турнире"""
     system_names = {
@@ -387,10 +393,11 @@ def format_tournament_info(tournament, is_registered: bool = False, place: str |
         text += "\n"
     
     if is_registered:
-        # Для завершённых турниров показываем место игрока
-        if tournament.status == 'completed' and place:
-            # Без дополнительной пустой строки
-            text += f"🏆 {hbold(f'Твоё место {place}')}\n"
+        # Для завершённых турниров показываем место игрока, а если места ещё нет — вообще ничего не добавляем
+        if tournament.status == 'completed':
+            if place:
+                # Без дополнительной пустой строки
+                text += f"🏆 {hbold(f'Твоё место {place}')}\n"
         else:
             text += f"\n✅ {hbold('Ты зарегистрирован')}\n"
 
@@ -529,7 +536,7 @@ async def cmd_tournaments(message: Message):
                 reply_markup=keyboard
             )
     
-    # Кнопка "Посмотреть все турниры"
+    # Кнопка "Посмотреть все турниры" и итоговая статистика
     final_keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
@@ -544,7 +551,12 @@ async def cmd_tournaments(message: Message):
             )
         ]
     ])
-    await message.answer("—" * 20, reply_markup=final_keyboard)
+
+    total_count = await get_total_tournaments_count()
+    await message.answer(
+        f"Всего в истории турниров: {total_count}",
+        reply_markup=final_keyboard,
+    )
 
 
 @router.message(Command("mytournaments"))
