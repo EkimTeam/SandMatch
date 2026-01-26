@@ -113,8 +113,47 @@ async def process_partner_search(message: Message, state: FSMContext):
     
     # Проверка на команду отмены
     if query.lower() in ['/cancel', 'отмена']:
+        data = await state.get_data()
+        tournament_id = data.get('tournament_id')
         await state.clear()
         await message.answer("❌ Поиск напарника отменён")
+        
+        # Показываем плитку турнира
+        if tournament_id:
+            from .tournaments import get_tournament, format_tournament_info, check_registration
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+            
+            tournament = await get_tournament(tournament_id)
+            if tournament:
+                is_registered = await check_registration(tournament_id, telegram_user.player_id)
+                
+                keyboard_buttons = []
+                if not is_registered:
+                    keyboard_buttons.append([
+                        InlineKeyboardButton(
+                            text="✅ Зарегистрироваться",
+                            callback_data=f"register_{tournament_id}"
+                        )
+                    ])
+                
+                keyboard_buttons.append([
+                    InlineKeyboardButton(
+                        text="📱 Открыть в мини-апп",
+                        web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament_id}")
+                    )
+                ])
+                keyboard_buttons.append([
+                    InlineKeyboardButton(
+                        text="◀️ Назад",
+                        callback_data="main_menu"
+                    )
+                ])
+                
+                keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+                await message.answer(
+                    format_tournament_info(tournament, is_registered),
+                    reply_markup=keyboard
+                )
         return
     
     # Минимальная длина запроса
@@ -262,9 +301,51 @@ async def callback_cancel_search(callback: CallbackQuery, state: FSMContext):
     """
     Отмена поиска напарника
     """
+    tournament_id = int(callback.data.split("_")[2])
+    data = await state.get_data()
     await state.clear()
     await callback.answer("Поиск отменён")
     await callback.message.edit_text("❌ Поиск напарника отменён")
+    
+    # Показываем плитку турнира
+    from .tournaments import get_telegram_user, get_tournament, format_tournament_info, check_registration
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+    
+    telegram_user = await get_telegram_user(callback.from_user.id)
+    if not telegram_user or not telegram_user.player:
+        return
+    
+    tournament = await get_tournament(tournament_id)
+    if tournament:
+        is_registered = await check_registration(tournament_id, telegram_user.player_id)
+        
+        keyboard_buttons = []
+        if not is_registered:
+            keyboard_buttons.append([
+                InlineKeyboardButton(
+                    text="✅ Зарегистрироваться",
+                    callback_data=f"register_{tournament_id}"
+                )
+            ])
+        
+        keyboard_buttons.append([
+            InlineKeyboardButton(
+                text="📱 Открыть в мини-апп",
+                web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament_id}")
+            )
+        ])
+        keyboard_buttons.append([
+            InlineKeyboardButton(
+                text="◀️ Назад",
+                callback_data="main_menu"
+            )
+        ])
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+        await callback.message.answer(
+            format_tournament_info(tournament, is_registered),
+            reply_markup=keyboard
+        )
 
 
 @router.callback_query(F.data.startswith("reg_cancel_"))
@@ -761,11 +842,35 @@ async def callback_cmd_mytournaments(callback: CallbackQuery):
         )
         return
     
-    # Разделяем на предстоящие и завершенные
-    upcoming_tournaments = [t for t in tournaments if t.status in ['created', 'active']]
+    # Разделяем на активные, предстоящие и завершенные (как в мини-аппе)
+    active_tournaments = [t for t in tournaments if t.status == 'active']
+    upcoming_tournaments = [t for t in tournaments if t.status == 'created']
     completed_tournaments = [t for t in tournaments if t.status == 'completed']
     
-    # Предстоящие турниры
+    # Активные турниры (live)
+    if active_tournaments:
+        await callback.message.answer(f"{hbold('🔥 Активные турниры')}")
+        for tournament in active_tournaments:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📱 Открыть в мини-апп",
+                        web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="◀️ Назад",
+                        callback_data="main_menu"
+                    )
+                ]
+            ])
+            await callback.message.answer(
+                format_tournament_info(tournament, is_registered=True),
+                reply_markup=keyboard
+            )
+    
+    # Предстоящие турниры (created)
     if upcoming_tournaments:
         await callback.message.answer(f"{hbold('📅 Предстоящие турниры')}")
         for tournament in upcoming_tournaments:
@@ -788,7 +893,7 @@ async def callback_cmd_mytournaments(callback: CallbackQuery):
                 reply_markup=keyboard
             )
     
-    # Завершенные турниры
+    # Завершенные турниры (completed)
     if completed_tournaments:
         await callback.message.answer(f"{hbold('✅ Завершенные турниры')}")
         for tournament in completed_tournaments:
