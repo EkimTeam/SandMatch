@@ -685,13 +685,20 @@ async def callback_main_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "cmd_tournaments")
 async def callback_cmd_tournaments(callback: CallbackQuery):
-    """
-    Обработчик кнопки "Турниры"
-    """
+    """Обработчик кнопки "Турниры" (UI как в /tournaments)."""
     await callback.answer()
     await callback.message.delete()
     
-    from .tournaments import get_telegram_user, get_live_tournaments, get_registration_tournaments, get_completed_tournaments, format_tournament_info, check_registration
+    from .tournaments import (
+        get_telegram_user,
+        get_live_tournaments,
+        get_registration_tournaments,
+        get_completed_tournaments,
+        format_tournament_info,
+        check_registration,
+        get_tournament_winner,
+        get_total_tournaments_count,
+    )
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
     
     telegram_user = await get_telegram_user(callback.from_user.id)
@@ -740,8 +747,10 @@ async def callback_cmd_tournaments(callback: CallbackQuery):
                     )
                 ]
             ])
+
+            winner = await get_tournament_winner(tournament.id)
             await callback.message.answer(
-                format_tournament_info(tournament),
+                format_tournament_info(tournament, winner=winner),
                 reply_markup=keyboard
             )
     
@@ -808,12 +817,14 @@ async def callback_cmd_tournaments(callback: CallbackQuery):
                     )
                 ]
             ])
+
+            winner = await get_tournament_winner(tournament.id)
             await callback.message.answer(
-                format_tournament_info(tournament),
+                format_tournament_info(tournament, winner=winner),
                 reply_markup=keyboard
             )
     
-    # Кнопка "Посмотреть все турниры"
+    # Кнопка "Посмотреть все турниры" и итоговая статистика
     final_keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
@@ -828,7 +839,12 @@ async def callback_cmd_tournaments(callback: CallbackQuery):
             )
         ]
     ])
-    await callback.message.answer("—" * 20, reply_markup=final_keyboard)
+
+    total_count = await get_total_tournaments_count()
+    await callback.message.answer(
+        f"Всего в истории турниров: {total_count}",
+        reply_markup=final_keyboard,
+    )
 
 
 @router.callback_query(F.data == "cmd_mytournaments")
