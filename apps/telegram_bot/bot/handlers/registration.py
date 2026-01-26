@@ -596,27 +596,39 @@ async def callback_main_menu(callback: CallbackQuery):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
-                text="🎾 Открыть BeachPlay",
-                url=f"{WEB_APP_URL}/mini-app/"
+                text="📱 Мини-апп",
+                web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/")
+            ),
+            InlineKeyboardButton(
+                text="🌐 BeachPlay.ru",
+                url=f"{WEB_APP_URL}"
             )
         ],
         [
             InlineKeyboardButton(
                 text="🏆 Турниры",
                 callback_data="cmd_tournaments"
-            )
-        ],
-        [
+            ),
             InlineKeyboardButton(
                 text="📋 Мои турниры",
                 callback_data="cmd_mytournaments"
-            ),
-            InlineKeyboardButton(
-                text="📝 Мои регистрации",
-                callback_data="cmd_myregistration"
             )
         ],
         [
+            InlineKeyboardButton(
+                text="🔴 Live",
+                callback_data="cmd_live"
+            ),
+            InlineKeyboardButton(
+                text="✍️ Заявиться на турнир",
+                callback_data="cmd_register"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📝 Мои заявки",
+                callback_data="cmd_myregistration"
+            ),
             InlineKeyboardButton(
                 text="👤 Мой профиль",
                 callback_data="cmd_profile"
@@ -1055,5 +1067,140 @@ async def callback_cmd_profile(callback: CallbackQuery):
             f"{hbold('⚠️ Профиль не связан')}\n\n"
             "Твой Telegram аккаунт не связан с профилем игрока.\n\n"
             "Используй команду /link для связывания.",
+            reply_markup=keyboard
+        )
+
+
+@router.callback_query(F.data == "cmd_live")
+async def callback_cmd_live(callback: CallbackQuery):
+    """
+    Обработчик кнопки "Live" - показывает активные турниры
+    """
+    await callback.answer()
+    await callback.message.delete()
+    
+    from .tournaments import get_telegram_user, get_live_tournaments, format_tournament_info
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+    
+    telegram_user = await get_telegram_user(callback.from_user.id)
+    
+    if not telegram_user:
+        await callback.message.answer(
+            "❌ Ошибка: твой Telegram аккаунт не найден в системе.\n"
+            "Отправь /start для регистрации."
+        )
+        return
+    
+    live_tournaments = await get_live_tournaments()
+    
+    if not live_tournaments:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="◀️ Назад",
+                    callback_data="main_menu"
+                )
+            ]
+        ])
+        await callback.message.answer(
+            "🔴 В данный момент нет активных турниров",
+            reply_markup=keyboard
+        )
+        return
+    
+    await callback.message.answer(f"{hbold('🔴 Активные турниры (Live)')}")
+    
+    for tournament in live_tournaments:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📱 Открыть в мини-апп",
+                    web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="◀️ Назад",
+                    callback_data="main_menu"
+                )
+            ]
+        ])
+        await callback.message.answer(
+            format_tournament_info(tournament),
+            reply_markup=keyboard
+        )
+
+
+@router.callback_query(F.data == "cmd_register")
+async def callback_cmd_register(callback: CallbackQuery):
+    """
+    Обработчик кнопки "Заявиться на турнир" - показывает турниры для регистрации
+    """
+    await callback.answer()
+    await callback.message.delete()
+    
+    from .tournaments import get_telegram_user, get_registration_tournaments, format_tournament_info, check_registration
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+    
+    telegram_user = await get_telegram_user(callback.from_user.id)
+    
+    if not telegram_user:
+        await callback.message.answer(
+            "❌ Ошибка: твой Telegram аккаунт не найден в системе.\n"
+            "Отправь /start для регистрации."
+        )
+        return
+    
+    player_id = telegram_user.player_id if telegram_user.player else None
+    registration_tournaments = await get_registration_tournaments()
+    
+    if not registration_tournaments:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="◀️ Назад",
+                    callback_data="main_menu"
+                )
+            ]
+        ])
+        await callback.message.answer(
+            "✍️ Нет доступных турниров для регистрации",
+            reply_markup=keyboard
+        )
+        return
+    
+    await callback.message.answer(f"{hbold('✍️ Турниры для регистрации')}")
+    
+    for tournament in registration_tournaments:
+        is_registered = False
+        if player_id:
+            is_registered = await check_registration(tournament.id, player_id)
+        
+        keyboard_buttons = []
+        
+        if not is_registered:
+            keyboard_buttons.append([
+                InlineKeyboardButton(
+                    text="✅ Зарегистрироваться",
+                    callback_data=f"register_{tournament.id}"
+                )
+            ])
+        
+        keyboard_buttons.append([
+            InlineKeyboardButton(
+                text="📱 Открыть в мини-апп",
+                web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+            )
+        ])
+        keyboard_buttons.append([
+            InlineKeyboardButton(
+                text="◀️ Назад",
+                callback_data="main_menu"
+            )
+        ])
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+        await callback.message.answer(
+            format_tournament_info(tournament, is_registered),
             reply_markup=keyboard
         )

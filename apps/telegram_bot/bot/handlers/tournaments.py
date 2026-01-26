@@ -30,25 +30,25 @@ def get_telegram_user(telegram_id):
 
 @sync_to_async
 def get_live_tournaments():
-    """Получение турниров в процессе (live)"""
+    """Получение турниров в процессе (live), отсортированных по алфавиту"""
     return list(
         Tournament.objects.filter(
             status='active'
         ).annotate(
             participants_count=Count('entries')
-        ).order_by('-date', '-created_at')[:10]
+        ).order_by('name')[:10]
     )
 
 
 @sync_to_async
 def get_registration_tournaments():
-    """Получение турниров для регистрации"""
+    """Получение турниров для регистрации, отсортированных по дате и времени (ближайший первым)"""
     return list(
         Tournament.objects.filter(
             status='created'
         ).annotate(
             participants_count=Count('entries')
-        ).order_by('date', 'created_at')[:10]
+        ).order_by('date', 'start_time', 'created_at')[:10]
     )
 
 

@@ -84,27 +84,39 @@ async def cmd_start(message: Message):
         bot_keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="🎾 Открыть BeachPlay",
+                    text="📱 Мини-апп",
                     web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/")
+                ),
+                InlineKeyboardButton(
+                    text="🌐 BeachPlay.ru",
+                    url=f"{WEB_APP_URL}"
                 )
             ],
             [
                 InlineKeyboardButton(
                     text="🏆 Турниры",
                     callback_data="cmd_tournaments"
-                )
-            ],
-            [
+                ),
                 InlineKeyboardButton(
                     text="📋 Мои турниры",
                     callback_data="cmd_mytournaments"
-                ),
-                InlineKeyboardButton(
-                    text="📝 Мои регистрации",
-                    callback_data="cmd_myregistration"
                 )
             ],
             [
+                InlineKeyboardButton(
+                    text="🔴 Live",
+                    callback_data="cmd_live"
+                ),
+                InlineKeyboardButton(
+                    text="✍️ Заявиться на турнир",
+                    callback_data="cmd_register"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📝 Мои заявки",
+                    callback_data="cmd_myregistration"
+                ),
                 InlineKeyboardButton(
                     text="👤 Мой профиль",
                     callback_data="cmd_profile"
