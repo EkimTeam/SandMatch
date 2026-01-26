@@ -9,6 +9,7 @@ from aiogram.utils.markdown import hbold
 from asgiref.sync import sync_to_async
 
 from apps.telegram_bot.models import TelegramUser
+from ..keyboards import get_main_keyboard
 
 router = Router()
 
@@ -44,27 +45,8 @@ async def cmd_start(message: Message):
         language_code=message.from_user.language_code,
     )
     
-    # Создаём клавиатуру с Web App кнопкой
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text="🎾 Открыть BeachPlay",
-                web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/")
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="🏆 Турниры",
-                web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments")
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="👤 Мой профиль",
-                web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/profile")
-            )
-        ]
-    ])
+    # Получаем постоянную клавиатуру
+    main_keyboard = get_main_keyboard()
     
     if created:
         await message.answer(
@@ -77,55 +59,72 @@ async def cmd_start(message: Message):
             f"• Получать уведомления о турнирах\n\n"
             f"Для начала свяжи свой Telegram с аккаунтом на beachplay.ru\n"
             f"Используй команду /link",
-            reply_markup=keyboard
+            reply_markup=main_keyboard
         )
     else:
-        # Создаём клавиатуру с командами бота
-        bot_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="📱 Мини-апп",
-                    web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/")
-                ),
-                InlineKeyboardButton(
-                    text="🌐 BeachPlay.ru",
-                    url=f"{WEB_APP_URL}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🏆 Турниры",
-                    callback_data="cmd_tournaments"
-                ),
-                InlineKeyboardButton(
-                    text="📋 Мои турниры",
-                    callback_data="cmd_mytournaments"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🔴 Live",
-                    callback_data="cmd_live"
-                ),
-                InlineKeyboardButton(
-                    text="✍️ Заявиться на турнир",
-                    callback_data="cmd_register"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="📝 Мои заявки",
-                    callback_data="cmd_myregistration"
-                ),
-                InlineKeyboardButton(
-                    text="👤 Мой профиль",
-                    callback_data="cmd_profile"
-                )
-            ]
-        ])
-        
         await message.answer(
             f"С возвращением, {hbold(message.from_user.first_name)}! 👋\n\n"
             f"Используй кнопки ниже для быстрого доступа:",
-            reply_markup=bot_keyboard
+            reply_markup=main_keyboard
         )
+
+
+@router.message(F.text == "🏆 Турниры")
+async def handle_tournaments_button(message: Message):
+    """Обработчик кнопки 'Турниры'"""
+    from .registration import callback_cmd_tournaments
+    # Создаём фейковый callback для переиспользования логики
+    from aiogram.types import CallbackQuery
+    from unittest.mock import AsyncMock
+    
+    callback = AsyncMock(spec=CallbackQuery)
+    callback.from_user = message.from_user
+    callback.message = message
+    callback.answer = AsyncMock()
+    
+    await callback_cmd_tournaments(callback)
+
+
+@router.message(F.text == "👤 Мой профиль")
+async def handle_profile_button(message: Message):
+    """Обработчик кнопки 'Мой профиль'"""
+    from .registration import callback_cmd_profile
+    from aiogram.types import CallbackQuery
+    from unittest.mock import AsyncMock
+    
+    callback = AsyncMock(spec=CallbackQuery)
+    callback.from_user = message.from_user
+    callback.message = message
+    callback.answer = AsyncMock()
+    
+    await callback_cmd_profile(callback)
+
+
+@router.message(F.text == "✍️ Заявиться на турнир")
+async def handle_register_button(message: Message):
+    """Обработчик кнопки 'Заявиться на турнир'"""
+    from .registration import callback_cmd_register
+    from aiogram.types import CallbackQuery
+    from unittest.mock import AsyncMock
+    
+    callback = AsyncMock(spec=CallbackQuery)
+    callback.from_user = message.from_user
+    callback.message = message
+    callback.answer = AsyncMock()
+    
+    await callback_cmd_register(callback)
+
+
+@router.message(F.text == "📋 Мои заявки")
+async def handle_myregistration_button(message: Message):
+    """Обработчик кнопки 'Мои заявки'"""
+    from .registration import callback_cmd_myregistration
+    from aiogram.types import CallbackQuery
+    from unittest.mock import AsyncMock
+    
+    callback = AsyncMock(spec=CallbackQuery)
+    callback.from_user = message.from_user
+    callback.message = message
+    callback.answer = AsyncMock()
+    
+    await callback_cmd_myregistration(callback)
