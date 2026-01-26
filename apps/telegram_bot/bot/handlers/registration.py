@@ -1164,15 +1164,16 @@ async def callback_cmd_profile(callback: CallbackQuery):
             text += f"🏆 Рейтинг: {int(player.current_rating)} BP\n"
         
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+        player_id = player.id
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="📱 В мини-апп",
-                    web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/profile")
+                    web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/players/{player_id}")
                 ),
                 InlineKeyboardButton(
                     text="🌐 На BeachPlay.ru",
-                    url=f"{WEB_APP_URL}/profile"
+                    url=f"{WEB_APP_URL}/players/{player_id}"
                 )
             ],
             [
