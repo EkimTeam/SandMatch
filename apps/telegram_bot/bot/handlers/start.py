@@ -45,11 +45,6 @@ async def cmd_start(message: Message):
     )
     
     # Создаём клавиатуру с Web App кнопкой
-    # Если у пользователя есть связанный профиль игрока, ведём на страницу игрока
-    profile_url = f"{WEB_APP_URL}/mini-app/profile"
-    if telegram_user.player_id:
-        profile_url = f"{WEB_APP_URL}/mini-app/players/{telegram_user.player_id}"
-    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
@@ -66,7 +61,7 @@ async def cmd_start(message: Message):
         [
             InlineKeyboardButton(
                 text="👤 Мой профиль",
-                web_app=WebAppInfo(url=profile_url)
+                web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/profile")
             )
         ]
     ])

@@ -1169,7 +1169,7 @@ async def callback_cmd_profile(callback: CallbackQuery):
             [
                 InlineKeyboardButton(
                     text="📱 В мини-апп",
-                    web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/players/{player_id}")
+                    web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/profile")
                 ),
                 InlineKeyboardButton(
                     text="🌐 На BeachPlay.ru",

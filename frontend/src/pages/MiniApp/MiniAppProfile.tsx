@@ -44,7 +44,11 @@ const MiniAppProfile = () => {
 
   const handleOpenWebsite = () => {
     hapticFeedback.light()
-    openLink('https://beachplay.ru/profile')
+    if (profile?.player?.id) {
+      openLink(`https://beachplay.ru/players/${profile.player.id}`)
+    } else {
+      openLink('https://beachplay.ru/profile')
+    }
   }
 
   if (loading) {
