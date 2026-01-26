@@ -819,6 +819,7 @@ async def callback_cmd_tournaments(callback: CallbackQuery):
 async def callback_cmd_mytournaments(callback: CallbackQuery):
     """
     Обработчик кнопки "Мои турниры"
+    Показывает 5 последних турниров пользователя (как в мини-аппе)
     """
     await callback.answer()
     await callback.message.delete()
@@ -836,18 +837,35 @@ async def callback_cmd_mytournaments(callback: CallbackQuery):
         return
     
     if not telegram_user.player:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="◀️ Назад",
+                    callback_data="main_menu"
+                )
+            ]
+        ])
         await callback.message.answer(
             "⚠️ Профиль игрока не связан с аккаунтом.\n\n"
-            "Свяжи профиль на сайте: beachplay.ru/profile"
+            "Свяжи профиль на сайте: beachplay.ru/profile",
+            reply_markup=keyboard
         )
         return
     
     tournaments = await get_user_tournaments(telegram_user.player_id)
     
     if not tournaments:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="◀️ Назад",
+                    callback_data="main_menu"
+                )
+            ]
+        ])
         await callback.message.answer(
-            "📋 Ты пока не зарегистрирован ни на один турнир.\n\n"
-            "Используй /tournaments для просмотра доступных турниров"
+            "📋 Ты пока не участвуешь ни в одном турнире.",
+            reply_markup=keyboard
         )
         return
     
@@ -855,6 +873,19 @@ async def callback_cmd_mytournaments(callback: CallbackQuery):
     active_tournaments = [t for t in tournaments if t.status == 'active']
     upcoming_tournaments = [t for t in tournaments if t.status == 'created']
     completed_tournaments = [t for t in tournaments if t.status == 'completed']
+    
+    # Считаем сколько осталось места для completed (логика из мини-аппа)
+    active_count = len(active_tournaments)
+    created_count = len(upcoming_tournaments)
+    total_shown = active_count + created_count
+    
+    if total_shown < 5:
+        completed_limit = 5 - total_shown
+    else:
+        completed_limit = 1
+    
+    # Ограничиваем завершенные турниры
+    completed_tournaments = completed_tournaments[:completed_limit]
     
     # Активные турниры (live)
     if active_tournaments:
@@ -902,7 +933,7 @@ async def callback_cmd_mytournaments(callback: CallbackQuery):
                 reply_markup=keyboard
             )
     
-    # Завершенные турниры (completed)
+    # Завершенные турниры (completed) - только с лимитом
     if completed_tournaments:
         await callback.message.answer(f"{hbold('✅ Завершенные турниры')}")
         for tournament in completed_tournaments:
@@ -955,18 +986,46 @@ async def callback_cmd_myregistration(callback: CallbackQuery):
     tournaments = await get_user_tournaments(telegram_user.player_id)
     
     if not tournaments:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✍️ Заявиться на турнир",
+                    callback_data="cmd_register"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="◀️ Назад",
+                    callback_data="main_menu"
+                )
+            ]
+        ])
         await callback.message.answer(
-            "📋 Ты пока не зарегистрирован ни на один турнир.\n\n"
-            "Используй /tournaments для просмотра доступных турниров"
+            "📋 Ты пока не зарегистрирован ни на один турнир.",
+            reply_markup=keyboard
         )
         return
     
     created_tournaments = [t for t in tournaments if t.status == 'created']
     
     if not created_tournaments:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✍️ Заявиться на турнир",
+                    callback_data="cmd_register"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="◀️ Назад",
+                    callback_data="main_menu"
+                )
+            ]
+        ])
         await callback.message.answer(
-            "📋 У тебя нет активных регистраций на турниры.\n\n"
-            "Используй /tournaments для просмотра доступных турниров"
+            "📋 У тебя нет активных регистраций на турниры.",
+            reply_markup=keyboard
         )
         return
     
