@@ -3,7 +3,7 @@
 """
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.utils.markdown import hbold
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
