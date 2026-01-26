@@ -15,17 +15,22 @@ def get_main_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [
                 KeyboardButton(
-                    text="🎾 Открыть BeachPlay",
+                    text="📱 Мини-апп",
                     web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/")
-                )
+                ),
+                KeyboardButton(text="🌐 BeachPlay.ru")
             ],
             [
                 KeyboardButton(text="🏆 Турниры"),
-                KeyboardButton(text="👤 Мой профиль")
+                KeyboardButton(text="� Мои турниры")
+            ],
+            [
+                KeyboardButton(text="🔴 Live"),
+                KeyboardButton(text="�👤 Мой профиль")
             ],
             [
                 KeyboardButton(text="✍️ Заявиться на турнир"),
-                KeyboardButton(text="📋 Мои заявки")
+                KeyboardButton(text="� Мои заявки")
             ]
         ],
         resize_keyboard=True,

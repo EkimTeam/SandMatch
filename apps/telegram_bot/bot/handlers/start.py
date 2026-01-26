@@ -128,3 +128,58 @@ async def handle_myregistration_button(message: Message):
     callback.answer = AsyncMock()
     
     await callback_cmd_myregistration(callback)
+
+
+@router.message(F.text == "📋 Мои турниры")
+async def handle_mytournaments_button(message: Message):
+    """Обработчик кнопки 'Мои турниры'"""
+    from .registration import callback_cmd_mytournaments
+    from aiogram.types import CallbackQuery
+    from unittest.mock import AsyncMock
+    
+    callback = AsyncMock(spec=CallbackQuery)
+    callback.from_user = message.from_user
+    callback.message = message
+    callback.answer = AsyncMock()
+    
+    await callback_cmd_mytournaments(callback)
+
+
+@router.message(F.text == "🔴 Live")
+async def handle_live_button(message: Message):
+    """Обработчик кнопки 'Live'"""
+    from .registration import callback_cmd_live
+    from aiogram.types import CallbackQuery
+    from unittest.mock import AsyncMock
+    
+    callback = AsyncMock(spec=CallbackQuery)
+    callback.from_user = message.from_user
+    callback.message = message
+    callback.answer = AsyncMock()
+    
+    await callback_cmd_live(callback)
+
+
+@router.message(F.text == "🌐 BeachPlay.ru")
+async def handle_website_button(message: Message):
+    """Обработчик кнопки 'BeachPlay.ru'"""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🌐 Открыть BeachPlay.ru",
+                url=f"{WEB_APP_URL}"
+            )
+        ]
+    ])
+    
+    await message.answer(
+        f"{hbold('BeachPlay.ru')} — платформа для пляжного волейбола\n\n"
+        f"На сайте ты можешь:\n"
+        f"• Просматривать все турниры\n"
+        f"• Управлять своим профилем\n"
+        f"• Создавать турниры\n"
+        f"• Следить за рейтингом игроков",
+        reply_markup=keyboard
+    )
