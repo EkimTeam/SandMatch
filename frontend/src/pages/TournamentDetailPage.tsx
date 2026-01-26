@@ -121,6 +121,9 @@ export const TournamentDetailPage: React.FC = () => {
   const [showTextResultsModal, setShowTextResultsModal] = useState(false);
   const [textResults, setTextResults] = useState<string>('');
   const [loadingTextResults, setLoadingTextResults] = useState(false);
+  const [showAnnouncementModal, setShowAnnouncementModal] = useState(false);
+  const [announcementText, setAnnouncementText] = useState<string>('');
+  const [loadingAnnouncement, setLoadingAnnouncement] = useState(false);
   // Модалка действий по ячейке счёта
   const [scoreDialog, setScoreDialog] = useState<null | { group: number; a: number; b: number; matchId?: number; isLive: boolean; matchTeam1Id?: number | null; matchTeam2Id?: number | null }>(null);
   // Модалка ввода счёта (унифицированная с олимпийкой)
@@ -193,6 +196,21 @@ export const TournamentDetailPage: React.FC = () => {
     }
   };
 
+  const handleShowAnnouncementText = async () => {
+    if (!t) return;
+    try {
+      setLoadingAnnouncement(true);
+      const res = await tournamentApi.getAnnouncementText(t.id);
+      setAnnouncementText(res?.text || '');
+      setShowAnnouncementModal(true);
+    } catch (e) {
+      console.error('Failed to load announcement text', e);
+      alert('Не удалось загрузить текст анонса');
+    } finally {
+      setLoadingAnnouncement(false);
+    }
+  };
+
   const handleCopyTextResults = async () => {
     try {
       if (!textResults) return;
@@ -214,6 +232,113 @@ export const TournamentDetailPage: React.FC = () => {
       console.error('Copy failed', e);
       alert('Не удалось скопировать текст результатов');
     }
+  };
+
+  const handleCopyAnnouncementText = async () => {
+    try {
+      if (!announcementText) return;
+      // Преобразуем markdown-ссылки [текст](url) в обычные URL для Telegram
+      const plainText = announcementText.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$2');
+      
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(plainText);
+        alert('Текст анонса скопирован в буфер обмена');
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = plainText;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-1000px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        alert('Текст анонса скопирован в буфер обмена');
+      }
+    } catch (e) {
+      console.error('Copy failed', e);
+      alert('Не удалось скопировать текст анонса');
+    }
+  };
+
+  // Функция для преобразования текста со ссылками в JSX с кликабельными ссылками
+  // Поддерживает markdown-формат [текст](url) и обычные URL
+  const renderAnnouncementWithLinks = (text: string) => {
+    if (!text) return null;
+    const lines = text.split('\n');
+    return (
+      <>
+        {lines.map((line, idx) => {
+          // Обрабатываем markdown-ссылки [текст](url)
+          const markdownLinkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+          const parts: Array<{ type: 'text' | 'link'; content: string; url?: string }> = [];
+          let lastIndex = 0;
+          let match;
+
+          while ((match = markdownLinkRegex.exec(line)) !== null) {
+            // Добавляем текст до ссылки
+            if (match.index > lastIndex) {
+              parts.push({ type: 'text', content: line.substring(lastIndex, match.index) });
+            }
+            // Добавляем ссылку
+            parts.push({ type: 'link', content: match[1], url: match[2] });
+            lastIndex = match.index + match[0].length;
+          }
+
+          // Добавляем оставшийся текст
+          if (lastIndex < line.length) {
+            parts.push({ type: 'text', content: line.substring(lastIndex) });
+          }
+
+          // Если не было markdown-ссылок, обрабатываем обычные URL
+          if (parts.length === 0) {
+            const urlRegex = /(https?:\/\/[^\s]+)/g;
+            const urlParts = line.split(urlRegex);
+            return (
+              <div key={idx}>
+                {urlParts.map((part, i) => {
+                  if (part.match(urlRegex)) {
+                    return (
+                      <a
+                        key={i}
+                        href={part}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: '#007bff', textDecoration: 'underline' }}
+                      >
+                        {part}
+                      </a>
+                    );
+                  }
+                  return <span key={i}>{part}</span>;
+                })}
+              </div>
+            );
+          }
+
+          // Рендерим части с markdown-ссылками
+          return (
+            <div key={idx}>
+              {parts.map((part, i) => {
+                if (part.type === 'link') {
+                  return (
+                    <a
+                      key={i}
+                      href={part.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: '#007bff', textDecoration: 'underline' }}
+                    >
+                      {part.content}
+                    </a>
+                  );
+                }
+                return <span key={i}>{part.content}</span>;
+              })}
+            </div>
+          );
+        })}
+      </>
+    );
   };
 
   // Универсальный поиск матча по паре ID команд в группе: учитывает разные формы сериализации
@@ -1826,6 +1951,61 @@ export const TournamentDetailPage: React.FC = () => {
         </div>
       )}
 
+      {showAnnouncementModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => setShowAnnouncementModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: '#fff',
+              padding: 20,
+              maxWidth: 600,
+              width: '100%',
+              maxHeight: '80vh',
+              overflow: 'auto',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                width: '100%',
+                minHeight: 260,
+                padding: 10,
+                marginTop: 8,
+                whiteSpace: 'pre-wrap',
+                border: '1px solid #ccc',
+                borderRadius: 4,
+                backgroundColor: '#f9f9f9',
+                fontFamily: 'monospace',
+                fontSize: 14,
+                lineHeight: 1.5,
+                overflowY: 'auto',
+                maxHeight: '60vh',
+              }}
+            >
+              {renderAnnouncementWithLinks(announcementText)}
+            </div>
+            <div style={{ marginTop: 10, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn" type="button" onClick={() => setShowAnnouncementModal(false)}>
+                Закрыть
+              </button>
+              <button className="btn" type="button" onClick={handleCopyAnnouncementText} disabled={!announcementText}>
+                Копировать
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Условный рендеринг в зависимости от статуса турнира */}
       {t.status === 'created' ? (
         /* Drag-and-Drop интерфейс для статуса created */
@@ -2602,6 +2782,16 @@ export const TournamentDetailPage: React.FC = () => {
         {role !== 'REFEREE' && (
           <>
             <button className="btn" onClick={handleShare}>Поделиться</button>
+            {canManageTournament && (
+              <button
+                className="btn"
+                type="button"
+                disabled={loadingAnnouncement}
+                onClick={handleShowAnnouncementText}
+              >
+                Текст анонса
+              </button>
+            )}
             {t && t.status === 'completed' && (
               <button
                 className="btn"

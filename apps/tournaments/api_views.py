@@ -2871,6 +2871,103 @@ class TournamentViewSet(viewsets.ModelViewSet):
         text = "\n".join(lines)
         return Response({"ok": True, "text": text})
 
+    @action(detail=True, methods=["get"], url_path="announcement_text", permission_classes=[AllowAny])
+    def announcement_text(self, request, pk=None):
+        """Вернуть текстовый анонс турнира для копирования организатором."""
+        from django.conf import settings
+
+        tournament: Tournament = self.get_object()
+        self._ensure_can_view_tournament(request, tournament)
+
+        lines: list[str] = []
+
+        # Название турнира
+        if tournament.name:
+            lines.append(str(tournament.name))
+        else:
+            lines.append("Турнир по пляжному теннису")
+
+        # Дата и время
+        weekday = ""
+        date_part = ""
+        if tournament.date:
+            try:
+                weekdays = ["ПОНЕДЕЛЬНИК", "ВТОРНИК", "СРЕДА", "ЧЕТВЕРГ", "ПЯТНИЦА", "СУББОТА", "ВОСКРЕСЕНЬЕ"]
+                wd_idx = tournament.date.weekday()
+                if 0 <= wd_idx < len(weekdays):
+                    weekday = weekdays[wd_idx]
+                date_part = tournament.date.strftime("%d.%m")
+            except Exception:
+                date_part = str(tournament.date)
+
+        time_part = "14:00-18:00"
+        if weekday and date_part:
+            lines.append(f"🥎 {weekday}, {date_part} {time_part} 🏆")
+        elif date_part:
+            lines.append(f"🥎 {date_part} {time_part} 🏆")
+        else:
+            lines.append(f"🥎 {time_part} 🏆")
+
+        # Взнос
+        lines.append("💰 4000₽, на месте")
+
+        # Локация
+        location = None
+        for attr in ("location_name", "venue_name", "location", "place"):
+            if hasattr(tournament, attr):
+                value = getattr(tournament, attr) or None
+                if value:
+                    location = str(value)
+                    break
+        if not location:
+            location = "Лето, Полежаевская"
+        lines.append(f"📍 {location}")
+
+        # Лимит участников
+        max_participants = getattr(tournament, "planned_participants", None) or 16
+        try:
+            max_participants = int(max_participants)
+        except Exception:
+            max_participants = 16
+        lines.append(f"👤 4-{max_participants}, Все")
+
+        # Регламент
+        lines.append("")
+        lines.append("✍️Регламент:")
+        lines.append("Заявка только парой☝️")
+        lines.append("Пару можно искать через сервис в тг-боте")
+        lines.append("До турнира допускаются пары ММ,ЖЖ,МЖ уровень Hard и команды ProAm ( профессионал -любитель) ")
+        lines.append("Подача -сверху/снизу для всех")
+        lines.append("Сетка 180")
+        lines.append("Уровень игроков определяется организатором❗️")
+        lines.append("")
+
+        # Регистрация
+        base_url = getattr(settings, "FRONTEND_BASE_URL", "https://beachplay.ru").rstrip("/")
+        web_url = f"{base_url}/tournaments/{tournament.id}"
+
+        bot_link = "https://t.me/beachplay_bot"
+        lines.append(f"📱Регистрация через тг-бот: [тут]({bot_link}) (нажмите '✍️Заявиться на турнир' и выберите нужный турнир)")
+        lines.append(f"🌐Регистрация через веб-сайт: [тут]({web_url})")
+        lines.append("")
+
+        # Организатор
+        organizer_name = None
+        if tournament.created_by:
+            # Пробуем получить полное имя, если нет - username
+            full_name = tournament.created_by.get_full_name()
+            if full_name and full_name.strip():
+                organizer_name = full_name.strip()
+            elif tournament.created_by.username:
+                organizer_name = tournament.created_by.username
+        
+        if organizer_name:
+            lines.append(f"👑 {organizer_name}")
+        else:
+            lines.append("👑 Артём Парамонычев")
+
+        return Response({"ok": True, "text": "\n".join(lines)})
+
     @method_decorator(csrf_exempt)
     @action(
         detail=False,
