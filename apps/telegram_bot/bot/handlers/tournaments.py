@@ -317,8 +317,10 @@ def format_tournament_info(tournament, is_registered=False):
 async def cmd_tournaments(message: Message):
     """
     Обработка команды /tournaments
-    Показывает турниры Live и турниры для регистрации
+    Показывает активные турниры, турниры для регистрации и завершенные
     """
+    from aiogram.types import WebAppInfo
+    
     telegram_user = await get_telegram_user(message.from_user.id)
     
     if not telegram_user:
@@ -330,65 +332,118 @@ async def cmd_tournaments(message: Message):
     
     player_id = telegram_user.player_id if telegram_user.player else None
     
-    # Получаем турниры Live
     live_tournaments = await get_live_tournaments()
-    
-    # Получаем турниры для регистрации
     registration_tournaments = await get_registration_tournaments()
     
-    if not live_tournaments and not registration_tournaments:
-        await message.answer(
-            "📋 Активных турниров пока нет.\n\n"
-            "Следи за обновлениями на сайте beachplay.ru"
-        )
+    # Логика: если активных + регистрация < 5, добавляем завершенные
+    total_count = len(live_tournaments) + len(registration_tournaments)
+    completed_tournaments = []
+    if total_count < 5:
+        completed_tournaments = await get_completed_tournaments(limit=5 - total_count)
+    
+    if not live_tournaments and not registration_tournaments and not completed_tournaments:
+        await message.answer("Нет доступных турниров")
         return
     
-    # Показываем турниры Live
+    # Активные турниры
     if live_tournaments:
-        await message.answer(f"{hbold('🔴 Турниры Live')}\n")
-        
+        await message.answer(f"{hbold('🏆 Активные турниры')}")
         for tournament in live_tournaments:
-            is_registered = await check_registration(tournament.id, player_id)
-            text = format_tournament_info(tournament, is_registered)
-            
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="📋 Подробнее",
-                        url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
+                        text="📱 Открыть в мини-апп",
+                        web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="◀️ Назад",
+                        callback_data="main_menu"
                     )
                 ]
             ])
-            
-            await message.answer(text, reply_markup=keyboard)
+            await message.answer(
+                format_tournament_info(tournament),
+                reply_markup=keyboard
+            )
     
-    # Показываем турниры для регистрации
+    # Турниры для регистрации
     if registration_tournaments:
-        await message.answer(f"\n{hbold('📝 Турниры для регистрации')}\n")
-        
+        await message.answer(f"{hbold('📝 Турниры для регистрации')}")
         for tournament in registration_tournaments:
-            is_registered = await check_registration(tournament.id, player_id)
-            text = format_tournament_info(tournament, is_registered)
+            is_registered = False
+            if player_id:
+                is_registered = await check_registration(tournament.id, player_id)
             
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="📋 Подробнее",
-                        url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
-                    )
-                ]
-            ])
+            keyboard_buttons = []
             
-            # Добавляем кнопку регистрации, если игрок не зарегистрирован
-            if player_id and not is_registered:
-                keyboard.inline_keyboard.insert(0, [
+            if not is_registered:
+                keyboard_buttons.append([
                     InlineKeyboardButton(
                         text="✅ Зарегистрироваться",
                         callback_data=f"register_{tournament.id}"
                     )
                 ])
             
-            await message.answer(text, reply_markup=keyboard)
+            keyboard_buttons.append([
+                InlineKeyboardButton(
+                    text="📱 Открыть в мини-апп",
+                    web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                )
+            ])
+            keyboard_buttons.append([
+                InlineKeyboardButton(
+                    text="◀️ Назад",
+                    callback_data="main_menu"
+                )
+            ])
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+            await message.answer(
+                format_tournament_info(tournament, is_registered),
+                reply_markup=keyboard
+            )
+    
+    # Завершенные турниры (если есть)
+    if completed_tournaments:
+        await message.answer(f"{hbold('✅ Завершенные турниры')}")
+        for tournament in completed_tournaments:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📱 Открыть в мини-апп",
+                        web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="◀️ Назад",
+                        callback_data="main_menu"
+                    )
+                ]
+            ])
+            await message.answer(
+                format_tournament_info(tournament),
+                reply_markup=keyboard
+            )
+    
+    # Кнопка "Посмотреть все турниры"
+    final_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🌐 Посмотреть все турниры на BeachPlay.ru",
+                url=f"{WEB_APP_URL}/tournaments"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="◀️ Назад",
+                callback_data="main_menu"
+            )
+        ]
+    ])
+    await message.answer("—" * 20, reply_markup=final_keyboard)
 
 
 @router.message(Command("mytournaments"))
@@ -397,6 +452,8 @@ async def cmd_my_tournaments(message: Message):
     Обработка команды /mytournaments
     Показывает турниры пользователя
     """
+    from aiogram.types import WebAppInfo
+    
     telegram_user = await get_telegram_user(message.from_user.id)
     
     if not telegram_user:
@@ -406,49 +463,132 @@ async def cmd_my_tournaments(message: Message):
         )
         return
     
-    if not telegram_user.user:
-        await message.answer(
-            "⚠️ Твой Telegram не связан с аккаунтом на сайте.\n\n"
-            "Для связывания используй /link"
-        )
-        return
-    
     if not telegram_user.player:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🏆 Турниры",
+                    callback_data="cmd_tournaments"
+                ),
+                InlineKeyboardButton(
+                    text="✍️ Заявиться на турнир",
+                    callback_data="cmd_register"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="◀️ Назад",
+                    callback_data="main_menu"
+                )
+            ]
+        ])
         await message.answer(
             "⚠️ Профиль игрока не связан с аккаунтом.\n\n"
-            "Свяжи профиль на сайте: beachplay.ru/profile"
+            "Свяжи профиль на сайте: beachplay.ru/profile",
+            reply_markup=keyboard
         )
         return
     
     tournaments = await get_user_tournaments(telegram_user.player_id)
     
     if not tournaments:
-        await message.answer(
-            "📋 Ты пока не участвуешь ни в одном турнире.\n\n"
-            "Используй /tournaments для просмотра активных турниров"
-        )
-        return
-    
-    await message.answer(f"{hbold('🏆 Мои турниры')}\n")
-    
-    for tournament in tournaments:
-        text = format_tournament_info(tournament, is_registered=True)
-        
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="📋 Подробнее",
-                    url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
+                    text="🏆 Турниры",
+                    callback_data="cmd_tournaments"
+                ),
+                InlineKeyboardButton(
+                    text="✍️ Заявиться на турнир",
+                    callback_data="cmd_register"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="◀️ Назад",
+                    callback_data="main_menu"
                 )
             ]
         ])
-        
-        await message.answer(text, reply_markup=keyboard)
+        await message.answer(
+            "📋 Ты пока не участвуешь ни в одном турнире.",
+            reply_markup=keyboard
+        )
+        return
     
-    # Добавляем сообщение о полном списке
-    await message.answer(
-        f"\n📋 Все турниры вы можете посмотреть на {hbold('BeachPlay.ru')}"
-    )
+    # Разделяем на активные, предстоящие и завершенные
+    active_tournaments = [t for t in tournaments if t.status == 'active']
+    upcoming_tournaments = [t for t in tournaments if t.status == 'created']
+    completed_tournaments = [t for t in tournaments if t.status == 'completed']
+    
+    # Активные турниры (live)
+    if active_tournaments:
+        await message.answer(f"{hbold('🔥 Активные турниры')}")
+        for tournament in active_tournaments:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📱 Открыть в мини-апп",
+                        web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="◀️ Назад",
+                        callback_data="main_menu"
+                    )
+                ]
+            ])
+            await message.answer(
+                format_tournament_info(tournament, is_registered=True),
+                reply_markup=keyboard
+            )
+    
+    # Предстоящие турниры (created)
+    if upcoming_tournaments:
+        await message.answer(f"{hbold('📅 Предстоящие турниры')}")
+        for tournament in upcoming_tournaments:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📱 Открыть в мини-апп",
+                        web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="◀️ Назад",
+                        callback_data="main_menu"
+                    )
+                ]
+            ])
+            await message.answer(
+                format_tournament_info(tournament, is_registered=True),
+                reply_markup=keyboard
+            )
+    
+    # Завершенные турниры (completed)
+    if completed_tournaments:
+        await message.answer(f"{hbold('✅ Завершенные турниры')}")
+        for tournament in completed_tournaments:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📱 Открыть в мини-апп",
+                        web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="◀️ Назад",
+                        callback_data="main_menu"
+                    )
+                ]
+            ])
+            await message.answer(
+                format_tournament_info(tournament, is_registered=True),
+                reply_markup=keyboard
+            )
 
 
 @router.callback_query(F.data.startswith("register_"))
