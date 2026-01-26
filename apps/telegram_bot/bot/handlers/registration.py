@@ -964,8 +964,12 @@ async def callback_cmd_mytournaments(callback: CallbackQuery):
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="📱 Открыть в мини-апп",
+                        text="📱 В мини-апп",
                         web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/tournaments/{tournament.id}")
+                    ),
+                    InlineKeyboardButton(
+                        text="🌐 На BeachPlay.ru",
+                        url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
                     )
                 ],
                 [
