@@ -23,10 +23,17 @@ const ProfilePage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const hasNameMismatchForCurrentPlayer =
-    !!profile?.player &&
-    ((profile.first_name || '').trim() !== (profile.player.first_name || '').trim() ||
-      (profile.last_name || '').trim() !== (profile.player.last_name || '').trim());
+  const hasNameMismatchForCurrentPlayer = (() => {
+    if (!profile || !profile.player) return false;
+    const userFirst = (profile.first_name || '').trim();
+    const userLast = (profile.last_name || '').trim();
+    // Кнопка доступна только если у пользователя заполнены имя и фамилия
+    if (!userFirst || !userLast) return false;
+
+    const playerFirst = (profile.player.first_name || '').trim();
+    const playerLast = (profile.player.last_name || '').trim();
+    return userFirst !== playerFirst || userLast !== playerLast;
+  })();
 
   // Форма редактирования
   const [formData, setFormData] = useState<UpdateProfileData>({});
@@ -193,6 +200,9 @@ const ProfilePage: React.FC = () => {
       setExporting(true);
       setError(null);
       setSuccess(null);
+      if (!profile) {
+        return;
+      }
       const data = await profileApi.exportData();
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
