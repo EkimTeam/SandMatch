@@ -86,11 +86,9 @@ class UpdateProfileSerializer(serializers.Serializer):
             player.city = validated_data.get('city', player.city)
             player.level = validated_data.get('level', player.level)
 
-            # Синхронизируем имя/фамилию с User
-            if user.first_name:
-                player.first_name = user.first_name
-            if user.last_name:
-                player.last_name = user.last_name
+            # ВАЖНО: ФИО игрока больше не синхронизируем автоматически с User.
+            # Изменение first_name/last_name игрока выполняется только через
+            # отдельный endpoint sync_player_name по явному действию пользователя.
 
             player.save()
         except Exception:
