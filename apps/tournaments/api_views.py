@@ -2951,6 +2951,86 @@ class TournamentViewSet(viewsets.ModelViewSet):
         lines.append(f"🌐Регистрация через веб-сайт: [тут]({web_url})")
         lines.append("")
 
+        # Списки зарегистрированных участников (если используется новая система регистрации)
+        try:
+            from .registration_models import TournamentRegistration
+
+            registrations_qs = TournamentRegistration.objects.filter(tournament=tournament).select_related(
+                "player",
+                "partner",
+                "team",
+            )
+
+            # Основной состав (уникальные команды / игроки)
+            main_pairs: list[str] = []
+            seen_teams: set[int] = set()
+            for reg in registrations_qs.filter(status=TournamentRegistration.Status.MAIN_LIST):
+                team = reg.team
+                if team and team.id in seen_teams:
+                    continue
+                if team:
+                    seen_teams.add(team.id)
+                    p1 = getattr(team, "player_1", None) or reg.player
+                    p2 = getattr(team, "player_2", None) or reg.partner
+                else:
+                    # На всякий случай поддерживаем одиночные турниры без команды
+                    p1 = reg.player
+                    p2 = reg.partner
+
+                if p2:
+                    main_pairs.append(f"{p1} / {p2}")
+                else:
+                    main_pairs.append(str(p1))
+
+            # Резервный состав
+            reserve_pairs: list[str] = []
+            seen_teams_reserve: set[int] = set()
+            for reg in registrations_qs.filter(status=TournamentRegistration.Status.RESERVE_LIST):
+                team = reg.team
+                if team and team.id in seen_teams_reserve:
+                    continue
+                if team:
+                    seen_teams_reserve.add(team.id)
+                    p1 = getattr(team, "player_1", None) or reg.player
+                    p2 = getattr(team, "player_2", None) or reg.partner
+                else:
+                    p1 = reg.player
+                    p2 = reg.partner
+
+                if p2:
+                    reserve_pairs.append(f"{p1} / {p2}")
+                else:
+                    reserve_pairs.append(str(p1))
+
+            # Игроки, которые ищут пару
+            looking_players: list[str] = []
+            for reg in registrations_qs.filter(status=TournamentRegistration.Status.LOOKING_FOR_PARTNER):
+                looking_players.append(str(reg.player))
+
+            # Добавляем в текст только непустые списки
+            if main_pairs or reserve_pairs or looking_players:
+                if main_pairs:
+                    lines.append("🏅 Основной состав:")
+                    for name in main_pairs:
+                        lines.append(f"- {name}")
+                    lines.append("")
+
+                if reserve_pairs:
+                    lines.append("🧩 Резервный состав:")
+                    for name in reserve_pairs:
+                        lines.append(f"- {name}")
+                    lines.append("")
+
+                if looking_players:
+                    lines.append("🤝 Ищут пару:")
+                    for name in looking_players:
+                        lines.append(f"- {name}")
+                    lines.append("")
+        except Exception:
+            # Если система регистрации не используется или что-то пошло не так,
+            # не ломаем генерацию анонса.
+            pass
+
         # Организатор
         organizer_name = None
         if tournament.created_by:
