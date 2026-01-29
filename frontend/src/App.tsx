@@ -19,6 +19,7 @@ import { PasswordResetRequestPage } from './pages/PasswordResetRequestPage';
 import { PasswordResetConfirmPage } from './pages/PasswordResetConfirmPage';
 import { ForbiddenPage } from './pages/ForbiddenPage';
 import { UserRolesPage } from './pages/UserRolesPage';
+import { AdminUserLinksPage } from './pages/AdminUserLinksPage';
 import ProfilePage from './pages/ProfilePage';
 import PrivacyPolicyPage from './pages/PrivacyPolicyPage';
 import { getAccessToken } from './services/auth';
@@ -104,6 +105,7 @@ function App() {
                 <Route path="/players/:id" element={<RequireAuth><PlayerCardPage /></RequireAuth>} />
                 <Route path="/players/h2h/:id1/:id2" element={<RequireAuth><PlayersH2HPage /></RequireAuth>} />
                 <Route path="/admin/roles" element={<RequireAuth><UserRolesPage /></RequireAuth>} />
+                <Route path="/admin/user-links" element={<RequireAdmin><AdminUserLinksPage /></RequireAdmin>} />
                 <Route path="/forbidden" element={<ForbiddenPage />} />
                 
                 <Route path="*" element={<Navigate to="/" replace />} />

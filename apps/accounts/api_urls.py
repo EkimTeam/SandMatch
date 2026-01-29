@@ -18,6 +18,7 @@ from .api_views import (
     set_user_role,
     delete_user,
     unlink_user_telegram,
+    admin_user_links,
 )
 
 urlpatterns = [
@@ -41,4 +42,5 @@ urlpatterns = [
     path("users/<int:user_id>/set_role/", set_user_role, name="auth_set_user_role"),
     path("users/<int:user_id>/delete/", delete_user, name="auth_delete_user"),
     path("users/<int:user_id>/unlink_telegram/", unlink_user_telegram, name="auth_unlink_user_telegram"),
+    path("users/<int:user_id>/links/", admin_user_links, name="auth_admin_user_links"),
 ]

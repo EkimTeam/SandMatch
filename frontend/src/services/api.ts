@@ -178,6 +178,114 @@ export interface AdminUserItem {
   has_telegram_profile: boolean;
 }
 
+export interface AdminUserLinksUserBlock {
+  id: number;
+  username: string;
+  email: string | null;
+  first_name: string;
+  last_name: string;
+  is_active: boolean;
+}
+
+export interface AdminUserLinksProfileBlock {
+  role: AdminUserItem['role'];
+  player_id: number | null;
+}
+
+export interface AdminUserLinksPlayerBlock {
+  id: number;
+  first_name: string;
+  last_name: string;
+  patronymic: string | null;
+  birth_date: string | null;
+  gender: 'male' | 'female' | null;
+  phone: string | null;
+  display_name: string;
+  city: string;
+  is_profi: boolean;
+  btr_player_id: number | null;
+}
+
+export interface AdminUserLinksTelegramBlock {
+  id: number;
+  telegram_id: number | null;
+  username: string | null;
+  first_name: string;
+  last_name: string | null;
+  language_code: string;
+  is_blocked: boolean;
+  notifications_enabled: boolean;
+  notify_tournament_open: boolean;
+  notify_tournament_start: boolean;
+  notify_match_start: boolean;
+  notify_match_result: boolean;
+  notify_rating_change: boolean;
+  notify_pair_request: boolean;
+  user_id: number | null;
+  player_id: number | null;
+}
+
+export interface AdminUserLinks {
+  user: AdminUserLinksUserBlock;
+  profile: AdminUserLinksProfileBlock | null;
+  player: AdminUserLinksPlayerBlock | null;
+  telegram_user: AdminUserLinksTelegramBlock | null;
+}
+
+export interface AdminUserLinksUserBlock {
+  id: number;
+  username: string;
+  email: string | null;
+  first_name: string;
+  last_name: string;
+  is_active: boolean;
+}
+
+export interface AdminUserLinksProfileBlock {
+  role: AdminUserItem['role'];
+  player_id: number | null;
+}
+
+export interface AdminUserLinksPlayerBlock {
+  id: number;
+  first_name: string;
+  last_name: string;
+  patronymic: string | null;
+  birth_date: string | null;
+  gender: 'male' | 'female' | null;
+  phone: string | null;
+  display_name: string;
+  city: string;
+  is_profi: boolean;
+  btr_player_id: number | null;
+}
+
+export interface AdminUserLinksTelegramBlock {
+  id: number;
+  telegram_id: number | null;
+  username: string | null;
+  first_name: string;
+  last_name: string | null;
+  language_code: string;
+  is_blocked: boolean;
+  notifications_enabled: boolean;
+  notify_tournament_open: boolean;
+  notify_tournament_start: boolean;
+  notify_match_start: boolean;
+  notify_match_result: boolean;
+  notify_rating_change: boolean;
+  notify_pair_request: boolean;
+  user_id: number | null;
+  player_id: number | null;
+}
+
+export interface AdminUserLinks {
+  user: AdminUserLinksUserBlock;
+  profile: AdminUserLinksProfileBlock | null;
+  player: AdminUserLinksPlayerBlock | null;
+  telegram_user: AdminUserLinksTelegramBlock | null;
+}
+
 export const authApi = {
   register: async (payload: {
     username: string;
@@ -244,6 +352,22 @@ export const adminApi = {
   },
   unlinkTelegram: async (userId: number): Promise<{ ok: boolean }> => {
     const { data } = await api.post(`/auth/users/${userId}/unlink_telegram/`);
+    return data;
+  },
+  getUserLinks: async (userId: number): Promise<AdminUserLinks> => {
+    const { data } = await api.get<AdminUserLinks>(`/auth/users/${userId}/links/`);
+    return data;
+  },
+  updateUserLinks: async (
+    userId: number,
+    payload: Partial<{
+      user: Partial<AdminUserLinksUserBlock>;
+      profile: Partial<AdminUserLinksProfileBlock> | null;
+      player: Partial<AdminUserLinksPlayerBlock> | null;
+      telegram_user: Partial<AdminUserLinksTelegramBlock> | null;
+    }>,
+  ): Promise<AdminUserLinks> => {
+    const { data } = await api.post<AdminUserLinks>(`/auth/users/${userId}/links/`, payload);
     return data;
   },
 };
