@@ -428,6 +428,470 @@ def unlink_user_telegram(request, user_id: int):
     return Response({"ok": True})
 
 
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated, IsAdmin])
+def admin_user_links(request, user_id: int):
+    """Инструмент администратора для просмотра и правки связей User ↔ Player ↔ TelegramUser.
+
+    GET: вернуть агрегированные данные по пользователю, его профилю, игроку и TelegramUser.
+
+    POST: принять изменения по безопасным полям и обновить связанные записи.
+    Пароль, is_superuser и прочие чувствительные поля не трогаем.
+    """
+
+    from django.db import transaction
+    from apps.players.models import Player
+    from apps.telegram_bot.models import TelegramUser
+
+    try:
+        user = User.objects.select_related("profile", "telegram_profile").get(pk=user_id)
+    except User.DoesNotExist:
+        return Response({"detail": "Пользователь не найден"}, status=status.HTTP_404_NOT_FOUND)
+
+    profile = getattr(user, "profile", None)
+    telegram_user = getattr(user, "telegram_profile", None)
+
+    def serialize_player(player):
+        if not player:
+            return None
+        return {
+            "id": player.id,
+            "first_name": player.first_name,
+            "last_name": player.last_name,
+            "patronymic": player.patronymic,
+            "birth_date": player.birth_date,
+            "gender": player.gender,
+            "phone": player.phone,
+            "display_name": player.display_name,
+            "city": player.city,
+            "is_profi": player.is_profi,
+            "btr_player_id": player.btr_player_id,
+        }
+
+    def serialize_telegram(tu):
+        if not tu:
+            return None
+        return {
+            "id": tu.id,
+            "telegram_id": tu.telegram_id,
+            "username": tu.username,
+            "first_name": tu.first_name,
+            "last_name": tu.last_name,
+            "language_code": tu.language_code,
+            "is_blocked": tu.is_blocked,
+            "notifications_enabled": tu.notifications_enabled,
+            "notify_tournament_open": tu.notify_tournament_open,
+            "notify_tournament_start": tu.notify_tournament_start,
+            "notify_match_start": tu.notify_match_start,
+            "notify_match_result": tu.notify_match_result,
+            "notify_rating_change": tu.notify_rating_change,
+            "notify_pair_request": tu.notify_pair_request,
+            "user_id": tu.user_id,
+            "player_id": tu.player_id,
+        }
+
+    # Игрок по умолчанию: приоритет TelegramUser.player, затем UserProfile.player
+    linked_player = None
+    if telegram_user and telegram_user.player:
+        linked_player = telegram_user.player
+    elif profile and getattr(profile, "player", None):
+        linked_player = profile.player
+
+    if request.method == "GET":
+        data = {
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "is_active": user.is_active,
+            },
+            "profile": {
+                "role": getattr(profile, "role", None),
+                "player_id": getattr(profile, "player_id", None),
+            }
+            if profile
+            else None,
+            "player": serialize_player(linked_player),
+            "telegram_user": serialize_telegram(telegram_user),
+        }
+        return Response(data)
+
+    # POST – применяем изменения
+    payload = request.data or {}
+
+    with transaction.atomic():
+        user_block = payload.get("user") or {}
+        # Разрешённые для редактирования поля User
+        for field in ["username", "email", "first_name", "last_name"]:
+            if field in user_block:
+                setattr(user, field, user_block.get(field) or "")
+        if "is_active" in user_block:
+            user.is_active = bool(user_block.get("is_active"))
+        user.save(update_fields=["username", "email", "first_name", "last_name", "is_active"])
+
+        # Профиль пользователя (роль + прямая ссылка на Player, если нужна)
+        profile_block = payload.get("profile") or None
+        if profile_block is not None:
+            if profile is None:
+                profile = UserProfile.objects.create(user=user)
+            role = profile_block.get("role")
+            if role:
+                profile.role = role
+            if "player_id" in profile_block:
+                player_id = profile_block.get("player_id")
+                if player_id:
+                    try:
+                        profile.player = Player.objects.get(pk=player_id)
+                    except Player.DoesNotExist:
+                        return Response(
+                            {"detail": f"Игрок с ID {player_id} не найден"},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                else:
+                    profile.player = None
+            profile.save()
+
+        # Игрок (редактирование полей связанного игрока, без создания нового)
+        player_block = payload.get("player") or None
+        if player_block is not None:
+            current_player = linked_player
+            if player_block.get("id") and (not current_player or current_player.id != player_block.get("id")):
+                try:
+                    current_player = Player.objects.get(pk=player_block["id"])
+                except Player.DoesNotExist:
+                    return Response(
+                        {"detail": f"Игрок с ID {player_block['id']} не найден"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+            if current_player is not None:
+                for field in [
+                    "first_name",
+                    "last_name",
+                    "patronymic",
+                    "birth_date",
+                    "gender",
+                    "phone",
+                    "display_name",
+                    "city",
+                    "is_profi",
+                ]:
+                    if field in player_block:
+                        setattr(current_player, field, player_block.get(field))
+                current_player.save()
+                linked_player = current_player
+
+        # TelegramUser (редактирование существующей записи, без создания новой)
+        telegram_block = payload.get("telegram_user") or None
+        if telegram_block is not None and telegram_user is not None:
+            # Проверяем смену player_id с учётом OneToOne
+            if "player_id" in telegram_block:
+                new_player_id = telegram_block.get("player_id")
+                if new_player_id:
+                    try:
+                        new_player = Player.objects.get(pk=new_player_id)
+                    except Player.DoesNotExist:
+                        return Response(
+                            {"detail": f"Игрок с ID {new_player_id} не найден"},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    occupied = TelegramUser.objects.filter(player=new_player).exclude(pk=telegram_user.pk).first()
+                    if occupied:
+                        return Response(
+                            {"detail": "Этот игрок уже привязан к другому Telegram-профилю"},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    telegram_user.player = new_player
+                else:
+                    telegram_user.player = None
+
+            for field in [
+                "telegram_id",
+                "username",
+                "first_name",
+                "last_name",
+                "language_code",
+                "is_blocked",
+                "notifications_enabled",
+                "notify_tournament_open",
+                "notify_tournament_start",
+                "notify_match_start",
+                "notify_match_result",
+                "notify_rating_change",
+                "notify_pair_request",
+            ]:
+                if field in telegram_block:
+                    setattr(telegram_user, field, telegram_block.get(field))
+            telegram_user.save()
+
+    # Возвращаем обновлённые данные в том же формате, что и GET
+    profile = getattr(user, "profile", None)
+    telegram_user = getattr(user, "telegram_profile", None)
+    if telegram_user and telegram_user.player:
+        linked_player = telegram_user.player
+    elif profile and getattr(profile, "player", None):
+        linked_player = profile.player
+
+    data = {
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "is_active": user.is_active,
+        },
+        "profile": {
+            "role": getattr(profile, "role", None),
+            "player_id": getattr(profile, "player_id", None),
+        }
+        if profile
+        else None,
+        "player": serialize_player(linked_player),
+        "telegram_user": serialize_telegram(telegram_user),
+    }
+    return Response(data)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated, IsAdmin])
+def admin_user_links(request, user_id: int):
+    """Инструмент администратора для просмотра и правки связей User ↔ Player ↔ TelegramUser.
+
+    GET: вернуть агрегированные данные по пользователю, его профилю, игроку и TelegramUser.
+
+    POST: принять изменения по безопасным полям и обновить связанные записи.
+    Пароль, is_superuser и прочие чувствительные поля не трогаем.
+    """
+
+    from django.db import transaction
+    from apps.players.models import Player
+    from apps.telegram_bot.models import TelegramUser
+
+    try:
+        user = User.objects.select_related("profile", "telegram_profile").get(pk=user_id)
+    except User.DoesNotExist:
+        return Response({"detail": "Пользователь не найден"}, status=status.HTTP_404_NOT_FOUND)
+
+    profile = getattr(user, "profile", None)
+    telegram_user = getattr(user, "telegram_profile", None)
+
+    def serialize_player(player: Player | None):
+        if not player:
+            return None
+        return {
+            "id": player.id,
+            "first_name": player.first_name,
+            "last_name": player.last_name,
+            "patronymic": player.patronymic,
+            "birth_date": player.birth_date,
+            "gender": player.gender,
+            "phone": player.phone,
+            "display_name": player.display_name,
+            "city": player.city,
+            "is_profi": player.is_profi,
+            "btr_player_id": player.btr_player_id,
+        }
+
+    def serialize_telegram(tu: TelegramUser | None):
+        if not tu:
+            return None
+        return {
+            "id": tu.id,
+            "telegram_id": tu.telegram_id,
+            "username": tu.username,
+            "first_name": tu.first_name,
+            "last_name": tu.last_name,
+            "language_code": tu.language_code,
+            "is_blocked": tu.is_blocked,
+            "notifications_enabled": tu.notifications_enabled,
+            "notify_tournament_open": tu.notify_tournament_open,
+            "notify_tournament_start": tu.notify_tournament_start,
+            "notify_match_start": tu.notify_match_start,
+            "notify_match_result": tu.notify_match_result,
+            "notify_rating_change": tu.notify_rating_change,
+            "notify_pair_request": tu.notify_pair_request,
+            "user_id": user.id if tu.user_id else None,
+            "player_id": tu.player_id,
+        }
+
+    # Игрок по умолчанию: приоритет TelegramUser.player, затем UserProfile.player
+    linked_player: Player | None = None
+    if telegram_user and telegram_user.player:
+        linked_player = telegram_user.player
+    elif profile and getattr(profile, "player", None):
+        linked_player = profile.player  # type: ignore[assignment]
+
+    if request.method == "GET":
+        data = {
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "is_active": user.is_active,
+            },
+            "profile": {
+                "role": getattr(profile, "role", None),
+                "player_id": getattr(profile, "player_id", None),
+            }
+            if profile
+            else None,
+            "player": serialize_player(linked_player),
+            "telegram_user": serialize_telegram(telegram_user),
+        }
+        return Response(data)
+
+    # POST – применяем изменения
+    payload = request.data or {}
+
+    with transaction.atomic():
+        user_block = payload.get("user") or {}
+        # Разрешённые для редактирования поля User
+        for field in ["username", "email", "first_name", "last_name"]:
+            if field in user_block:
+                setattr(user, field, user_block.get(field) or "")
+        if "is_active" in user_block:
+            user.is_active = bool(user_block.get("is_active"))
+        user.save(update_fields=[
+            "username",
+            "email",
+            "first_name",
+            "last_name",
+            "is_active",
+        ])
+
+        # Профиль пользователя (роль + прямая ссылка на Player, если нужна)
+        profile_block = payload.get("profile") or None
+        if profile_block is not None:
+            if profile is None:
+                profile = UserProfile.objects.create(user=user)
+            role = profile_block.get("role")
+            if role:
+                profile.role = role
+            if "player_id" in profile_block:
+                player_id = profile_block.get("player_id")
+                if player_id:
+                    try:
+                        profile.player = Player.objects.get(pk=player_id)
+                    except Player.DoesNotExist:
+                        return Response(
+                            {"detail": f"Игрок с ID {player_id} не найден"},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                else:
+                    profile.player = None
+            profile.save()
+
+        # Игрок (редактирование полей связанного игрока, без создания нового)
+        player_block = payload.get("player") or None
+        if player_block is not None:
+            current_player = linked_player
+            if player_block.get("id") and (
+                not current_player or current_player.id != player_block.get("id")
+            ):
+                try:
+                    current_player = Player.objects.get(pk=player_block["id"])
+                except Player.DoesNotExist:
+                    return Response(
+                        {"detail": f"Игрок с ID {player_block['id']} не найден"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+            if current_player is not None:
+                for field in [
+                    "first_name",
+                    "last_name",
+                    "patronymic",
+                    "birth_date",
+                    "gender",
+                    "phone",
+                    "display_name",
+                    "city",
+                    "is_profi",
+                ]:
+                    if field in player_block:
+                        setattr(current_player, field, player_block.get(field))
+                current_player.save()
+                linked_player = current_player
+
+        # TelegramUser (редактирование существующей записи, без создания новой)
+        telegram_block = payload.get("telegram_user") or None
+        if telegram_block is not None and telegram_user is not None:
+            # Проверяем смену player_id с учётом OneToOne
+            if "player_id" in telegram_block:
+                new_player_id = telegram_block.get("player_id")
+                if new_player_id:
+                    try:
+                        new_player = Player.objects.get(pk=new_player_id)
+                    except Player.DoesNotExist:
+                        return Response(
+                            {"detail": f"Игрок с ID {new_player_id} не найден"},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    occupied = TelegramUser.objects.filter(player=new_player).exclude(
+                        pk=telegram_user.pk
+                    ).first()
+                    if occupied:
+                        return Response(
+                            {"detail": "Этот игрок уже привязан к другому Telegram-профилю"},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    telegram_user.player = new_player
+                else:
+                    telegram_user.player = None
+
+            for field in [
+                "telegram_id",
+                "username",
+                "first_name",
+                "last_name",
+                "language_code",
+                "is_blocked",
+                "notifications_enabled",
+                "notify_tournament_open",
+                "notify_tournament_start",
+                "notify_match_start",
+                "notify_match_result",
+                "notify_rating_change",
+                "notify_pair_request",
+            ]:
+                if field in telegram_block:
+                    setattr(telegram_user, field, telegram_block.get(field))
+            telegram_user.save()
+
+    # Возвращаем обновлённые данные в том же формате, что и GET
+    profile = getattr(user, "profile", None)
+    telegram_user = getattr(user, "telegram_profile", None)
+    if telegram_user and telegram_user.player:
+        linked_player = telegram_user.player
+    elif profile and getattr(profile, "player", None):
+        linked_player = profile.player  # type: ignore[assignment]
+
+    data = {
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "is_active": user.is_active,
+        },
+        "profile": {
+            "role": getattr(profile, "role", None),
+            "player_id": getattr(profile, "player_id", None),
+        }
+        if profile
+        else None,
+        "player": serialize_player(linked_player),
+        "telegram_user": serialize_telegram(telegram_user),
+    }
+    return Response(data)
+
+
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated, IsAdmin])
 def delete_user(request, user_id: int):

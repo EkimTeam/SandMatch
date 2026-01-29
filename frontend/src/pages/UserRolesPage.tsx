@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { adminApi, AdminUserItem } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { ForbiddenPage } from './ForbiddenPage';
@@ -375,6 +376,15 @@ const UserRolesPageInner: React.FC = () => {
             <span className="font-mono font-semibold text-gray-300 mr-1">TG</span>
             – нет данных о профиле в Telegram-боте.
           </div>
+        </div>
+
+        <div className="px-4 py-3 border-t border-gray-200">
+          <Link
+            to="/admin/user-links"
+            className="inline-block px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+          >
+            🔗 Инструмент связей User / Player / Telegram
+          </Link>
         </div>
       </div>
 
