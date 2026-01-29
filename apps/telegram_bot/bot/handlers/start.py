@@ -223,3 +223,13 @@ async def handle_website_button(message: Message):
         f"• Следить за рейтингом игроков",
         reply_markup=keyboard
     )
+
+
+@router.message(F.text)
+async def fallback_text_handler(message: Message):
+    """Обработчик произвольного текста: подсказываем, как начать работу с ботом"""
+    # Не перебиваем стандартные команды, которые начинаются с "/"
+    if message.text and message.text.startswith("/"):
+        return
+
+    await message.answer("Чтобы начать, отправь /start.")
