@@ -59,10 +59,7 @@ class Player(models.Model):
         verbose_name_plural = "Игроки"
 
     def __str__(self) -> str:
-        fio = f"{self.last_name} {self.first_name}"
-        if self.patronymic:
-            fio += f" {self.patronymic}"
-        return fio
+        return f"{self.last_name} {self.first_name}"
 
     def save(self, *args, **kwargs):
         # Если отображаемое имя не задано, используем имя игрока (first_name)
