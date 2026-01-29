@@ -910,6 +910,23 @@ export const btrApi = {
 // ===========================
 // Profile API
 // ===========================
+export interface UserProfileNameMismatch {
+  user: {
+    first_name: string;
+    last_name: string;
+  };
+  player: {
+    id: number;
+    first_name: string;
+    last_name: string;
+    top_partners: Array<{
+      id: number;
+      full_name: string;
+    }>;
+    stats_url: string;
+  };
+}
+
 export interface UserProfile {
   id: number;
   username: string;
@@ -931,6 +948,8 @@ export interface UserProfile {
     is_profi: boolean;
     created_at: string;
   };
+  // Дополнительный блок, возвращаемый link_player при расхождении ФИО
+  name_mismatch?: UserProfileNameMismatch;
 }
 
 export interface UpdateProfileData {
@@ -1027,6 +1046,11 @@ export const profileApi = {
   // Связывание с игроком
   linkPlayer: async (playerId: number): Promise<UserProfile> => {
     const { data } = await api.post('/auth/profile/link-player/', { player_id: playerId });
+    return data;
+  },
+  // Явная синхронизация ФИО игрока с профилем пользователя
+  syncPlayerName: async (): Promise<UserProfile> => {
+    const { data } = await api.post('/auth/profile/sync-player-name/');
     return data;
   },
   // Отвязка игрока
