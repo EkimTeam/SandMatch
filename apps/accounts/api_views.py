@@ -1100,11 +1100,136 @@ def link_player(request):
     except Exception:
         pass
 
-    # Синхронизируем данные User и Player
-    if user.first_name:
-        player.first_name = user.first_name
-    if user.last_name:
-        player.last_name = user.last_name
-    player.save()
-    
+    # Формируем базовый ответ с профилем пользователя
+    response_data = UserProfileSerializer(user).data
+
+    # Проверяем расхождение ФИО User и Player.
+    # Если фамилия+имя не полностью совпадают, не меняем Player, а возвращаем подробности для диалога на фронте.
+    user_first = (user.first_name or "").strip()
+    user_last = (user.last_name or "").strip()
+    player_first = (player.first_name or "").strip()
+    player_last = (player.last_name or "").strip()
+
+    name_mismatch = bool(
+        user_first
+        and user_last
+        and (user_first != player_first or user_last != player_last)
+    )
+
+    if name_mismatch:
+        # Ищем до 3-х наиболее частых напарников игрока по модели Team
+        from collections import Counter
+        from django.db.models import Q
+        from apps.teams.models import Team
+
+        counter: Counter[int] = Counter()
+
+        teams_with_partner = Team.objects.filter(
+            Q(player_1=player, player_2__isnull=False)
+            | Q(player_2=player, player_1__isnull=False)
+        )
+
+        for team in teams_with_partner:
+            if team.player_1_id == player.id and team.player_2_id:
+                partner_id = team.player_2_id
+            elif team.player_2_id == player.id and team.player_1_id:
+                partner_id = team.player_1_id
+            else:
+                continue
+
+            counter[partner_id] += 1
+
+        top_partners_payload = []
+        if counter:
+            top_ids = [pid for pid, _ in counter.most_common(3)]
+            from apps.players.models import Player as PlayerModel
+
+            partners_by_id = {
+                p.id: p for p in PlayerModel.objects.filter(id__in=top_ids)
+            }
+            for pid in top_ids:
+                p_obj = partners_by_id.get(pid)
+                if not p_obj:
+                    continue
+                top_partners_payload.append(
+                    {
+                        "id": p_obj.id,
+                        "full_name": str(p_obj),
+                    }
+                )
+
+        response_data["name_mismatch"] = {
+            "user": {
+                "first_name": user_first,
+                "last_name": user_last,
+            },
+            "player": {
+                "id": player.id,
+                "first_name": player_first,
+                "last_name": player_last,
+                "top_partners": top_partners_payload,
+                "stats_url": f"https://beachplay.ru/players/{player.id}",
+            },
+        }
+
+    return Response(response_data)
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def sync_player_name(request):
+    """Явная синхронизация ФИО игрока с профилем пользователя.
+
+    POST /api/auth/profile/sync-player-name/
+    """
+
+    user = request.user
+
+    from apps.telegram_bot.models import TelegramUser
+    from .serializers import UserProfileSerializer
+
+    try:
+        telegram_user = TelegramUser.objects.select_related("player").get(user=user)
+    except TelegramUser.DoesNotExist:
+        return Response(
+            {"detail": "Telegram-профиль не найден. Сначала свяжи аккаунт с Telegram."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    player = getattr(telegram_user, "player", None)
+    if player is None:
+        return Response(
+            {"detail": "Профиль не связан с игроком. Сначала выбери игрока."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    user_first = (user.first_name or "").strip()
+    user_last = (user.last_name or "").strip()
+    if not user_first or not user_last:
+        return Response(
+            {"detail": "Укажи имя и фамилию в профиле пользователя перед синхронизацией."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Обновляем только ФИО игрока
+    player.first_name = user_first
+    player.last_name = user_last
+    player.save(update_fields=["first_name", "last_name"])
+
+    # Аудит действия синхронизации
+    try:
+        PDNActionLog.objects.create(
+            user=user,
+            action=PDNActionLog.ACTION_LINK_PLAYER,
+            meta={
+                "source": "api",
+                "endpoint": "sync_player_name",
+                "player_id": player.id,
+                "player_name": str(player),
+                "ip": request.META.get("REMOTE_ADDR"),
+                "user_agent": request.META.get("HTTP_USER_AGENT"),
+            },
+        )
+    except Exception:
+        pass
+
     return Response(UserProfileSerializer(user).data)

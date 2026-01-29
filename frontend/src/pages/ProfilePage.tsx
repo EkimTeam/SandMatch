@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { profileApi, telegramApi, UserProfile, UpdateProfileData, ChangePasswordData, TelegramStatus, PlayerSearchResult, PlayerCandidate, CreatePlayerAndLinkPayload } from '../services/api';
+import { profileApi, telegramApi, UserProfile, UserProfileNameMismatch, UpdateProfileData, ChangePasswordData, TelegramStatus, PlayerSearchResult, PlayerCandidate, CreatePlayerAndLinkPayload } from '../services/api';
 
 // Уровни игры от слабого к сильному
 const GAME_LEVELS = [
@@ -22,10 +22,15 @@ const ProfilePage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  
+
+  const hasNameMismatchForCurrentPlayer =
+    !!profile?.player &&
+    ((profile.first_name || '').trim() !== (profile.player.first_name || '').trim() ||
+      (profile.last_name || '').trim() !== (profile.player.last_name || '').trim());
+
   // Форма редактирования
   const [formData, setFormData] = useState<UpdateProfileData>({});
-  
+
   // Форма смены пароля
   const [passwordData, setPasswordData] = useState<ChangePasswordData>({
     old_password: '',
@@ -33,11 +38,11 @@ const ProfilePage: React.FC = () => {
     new_password_confirm: '',
   });
   const [showPasswordForm, setShowPasswordForm] = useState(false);
-  
+
   // Telegram
   const [generatingCode, setGeneratingCode] = useState(false);
   const [linkCode, setLinkCode] = useState<string | null>(null);
-  
+
   // Player search
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<PlayerSearchResult[]>([]);
@@ -67,6 +72,9 @@ const ProfilePage: React.FC = () => {
   const [createPlayerForceAllowed, setCreatePlayerForceAllowed] = useState(false);
   const [exporting, setExporting] = useState(false);
 
+  // Диалог о расхождении ФИО User и Player при связывании
+  const [nameMismatch, setNameMismatch] = useState<UserProfileNameMismatch | null>(null);
+
   useEffect(() => {
     loadProfile();
     loadTelegramStatus();
@@ -91,7 +99,7 @@ const ProfilePage: React.FC = () => {
       setLoading(true);
       const data = await profileApi.getProfile();
       setProfile(data);
-      
+
       // Инициализируем форму
       setFormData({
         email: data.email,
@@ -128,7 +136,7 @@ const ProfilePage: React.FC = () => {
     try {
       const status = await telegramApi.getStatus();
       setTelegramStatus(status);
-      
+
       // Если есть pending код, показываем его
       if (status.pending_code) {
         setLinkCode(status.pending_code.code);
@@ -161,7 +169,7 @@ const ProfilePage: React.FC = () => {
       const updated = await profileApi.updateProfile(payload);
       setProfile(updated);
       setSuccess('Профиль успешно обновлён');
-      
+
       // Перезагружаем кандидатов и статус Telegram после обновления профиля
       await loadPlayerCandidates();
       await loadTelegramStatus();
@@ -389,11 +397,19 @@ const ProfilePage: React.FC = () => {
   const handleLinkPlayer = async (playerId: number) => {
     setSaving(true);
     setError(null);
+    setSuccess(null);
+    setNameMismatch(null);
 
     try {
       const updated = await profileApi.linkPlayer(playerId);
       setProfile(updated);
-      setSuccess('Профиль успешно связан с игроком');
+
+      if (updated.name_mismatch) {
+        // Показываем диалог о расхождении ФИО вместо стандартного success
+        setNameMismatch(updated.name_mismatch);
+      } else {
+        setSuccess('Профиль успешно связан с игроком');
+      }
       // Обновляем AuthContext, чтобы user.player_id стал актуальным (важно для TournamentRegistrationPage)
       await refreshMe();
       // Пробрасываем player-поля в форму
@@ -450,6 +466,22 @@ const ProfilePage: React.FC = () => {
     }
   };
 
+  const handleSyncPlayerName = async () => {
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const updated = await profileApi.syncPlayerName();
+      setProfile(updated);
+      setNameMismatch(null);
+      setSuccess('ФИО игрока синхронизированы с профилем пользователя');
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Ошибка синхронизации ФИО');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center min-h-screen">
@@ -479,6 +511,49 @@ const ProfilePage: React.FC = () => {
       {success && (
         <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-4">
           {success}
+        </div>
+      )}
+
+      {/* Диалог о расхождении ФИО User и Player при связывании */}
+      {nameMismatch && (
+        <div className="bg-yellow-50 border border-yellow-300 text-yellow-800 px-4 py-3 rounded mb-4">
+          <p className="font-semibold mb-2">Проверка соответствия профиля игроку</p>
+          <p className="mb-1">
+            <span className="font-medium">Твой профиль:</span>{' '}
+            {nameMismatch.user.last_name} {nameMismatch.user.first_name}
+          </p>
+          <p className="mb-2">
+            <span className="font-medium">Выбранный игрок:</span>{' '}
+            {nameMismatch.player.last_name} {nameMismatch.player.first_name}
+          </p>
+
+          {nameMismatch.player.top_partners.length > 0 && (
+            <p className="mb-2">
+              <span className="font-medium">
+                Наиболее частые напарники для игрока {nameMismatch.player.last_name}{' '}
+                {nameMismatch.player.first_name}:
+              </span>{' '}
+              {nameMismatch.player.top_partners.map((p) => p.full_name).join(', ')}
+            </p>
+          )}
+
+          <p className="mb-2">
+            Полную статистику игрока {nameMismatch.player.last_name} {nameMismatch.player.first_name} можно
+            посмотреть по{' '}
+            <a
+              href={nameMismatch.player.stats_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:text-blue-800 underline"
+            >
+              {nameMismatch.player.stats_url}
+            </a>
+            .
+          </p>
+
+          <p className="text-sm text-gray-700">
+            Если это не твой профиль, нажми «Отвязать игрока» и выбери другого игрока или создай нового.
+          </p>
         </div>
       )}
 
@@ -699,17 +774,29 @@ const ProfilePage: React.FC = () => {
                 )}
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-col md:flex-row md:items-center gap-3">
               <p className="text-sm text-gray-600 flex-1">
-                Все изменения в профиле автоматически синхронизируются с профилем игрока.
+                Профиль пользователя и профиль игрока могут иметь разные ФИО. При необходимости можно
+                вручную синхронизировать ФИО игрока с твоим профилем.
               </p>
-              <button
-                onClick={handleUnlinkPlayer}
-                disabled={saving}
-                className="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 disabled:bg-gray-400"
-              >
-                Отвязать профиль игрока
-              </button>
+              <div className="flex flex-wrap gap-2">
+                {hasNameMismatchForCurrentPlayer && (
+                  <button
+                    onClick={handleSyncPlayerName}
+                    disabled={saving}
+                    className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:bg-gray-400"
+                  >
+                    Синхронизировать ФИО игрока с моим профилем
+                  </button>
+                )}
+                <button
+                  onClick={handleUnlinkPlayer}
+                  disabled={saving}
+                  className="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 disabled:bg-gray-400"
+                >
+                  Отвязать профиль игрока
+                </button>
+              </div>
             </div>
           </div>
         ) : (
