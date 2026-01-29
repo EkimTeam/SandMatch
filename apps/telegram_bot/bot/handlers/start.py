@@ -1,6 +1,4 @@
-"""
-Обработчик команды /start
-"""
+"""Обработчик команды /start"""
 import os
 from aiogram import Router, F
 from aiogram.filters import CommandStart
@@ -9,7 +7,6 @@ from aiogram.utils.markdown import hbold
 from asgiref.sync import sync_to_async
 
 from apps.telegram_bot.models import TelegramUser
-from ..keyboards import get_main_keyboard
 
 router = Router()
 
@@ -45,10 +42,52 @@ async def cmd_start(message: Message):
         language_code=message.from_user.language_code,
     )
     
-    # Получаем постоянную клавиатуру
-    main_keyboard = get_main_keyboard()
-    
+    # Создаём inline-клавиатуру с командами бота (4 ряда по 2 кнопки)
+    bot_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="📱 Мини-апп",
+                web_app=WebAppInfo(url=f"{WEB_APP_URL}/mini-app/")
+            ),
+            InlineKeyboardButton(
+                text="🌐 BeachPlay.ru",
+                url=f"{WEB_APP_URL}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🏆 Турниры",
+                callback_data="cmd_tournaments"
+            ),
+            InlineKeyboardButton(
+                text="📋 Мои турниры",
+                callback_data="cmd_mytournaments"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🔴 Live",
+                callback_data="cmd_live"
+            ),
+            InlineKeyboardButton(
+                text="✍️ Заявиться на турнир",
+                callback_data="cmd_register"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📝 Мои заявки",
+                callback_data="cmd_myregistration"
+            ),
+            InlineKeyboardButton(
+                text="👤 Мой профиль",
+                callback_data="cmd_profile"
+            )
+        ]
+    ])
+
     if created:
+        # Первый заход в бота — показываем приветствие и сразу 8 кнопок
         await message.answer(
             f"Привет, {hbold(message.from_user.first_name)}! 👋\n\n"
             f"Добро пожаловать в бот {hbold('BeachPlay')}!\n\n"
@@ -59,13 +98,14 @@ async def cmd_start(message: Message):
             f"• Получать уведомления о турнирах\n\n"
             f"Для начала свяжи свой Telegram с аккаунтом на beachplay.ru\n"
             f"Используй команду /link",
-            reply_markup=main_keyboard
+            reply_markup=bot_keyboard
         )
     else:
+        # Повторный заход — то же меню
         await message.answer(
             f"С возвращением, {hbold(message.from_user.first_name)}! 👋\n\n"
             f"Используй кнопки ниже для быстрого доступа:",
-            reply_markup=main_keyboard
+            reply_markup=bot_keyboard
         )
 
 
