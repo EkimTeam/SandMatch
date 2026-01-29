@@ -1,14 +1,13 @@
 """Обработчик команды /start"""
 import os
 from aiogram import Router, F
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, StateFilter
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.utils.markdown import hbold
 from asgiref.sync import sync_to_async
 from aiogram.fsm.context import FSMContext
 
 from apps.telegram_bot.models import TelegramUser
-from .registration import PartnerSearchStates
 
 router = Router()
 
@@ -227,17 +226,11 @@ async def handle_website_button(message: Message):
     )
 
 
-@router.message(F.text)
+@router.message(F.text, StateFilter(None))
 async def fallback_text_handler(message: Message, state: FSMContext):
     """Обработчик произвольного текста: подсказываем, как начать работу с ботом"""
     # Не перебиваем стандартные команды, которые начинаются с "/"
     if message.text and message.text.startswith("/"):
-        return
-
-    # Если бот ждёт ввода ФИО напарника, не показываем fallback,
-    # чтобы текст обрабатывался в process_partner_search
-    current_state = await state.get_state()
-    if current_state == PartnerSearchStates.waiting_for_partner_name:
         return
 
     await message.answer("Чтобы начать, отправь /start.")
