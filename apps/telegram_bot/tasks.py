@@ -353,7 +353,6 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
     from apps.tournaments.models import Tournament, TournamentAnnouncementSettings
     from apps.tournaments.api_views import generate_announcement_text
     from django.utils import timezone
-    import asyncio
     
     logger.info(f"[ANNOUNCEMENT] Начало отправки анонса для турнира {tournament_id}, триггер: {trigger_type}")
     
@@ -411,14 +410,19 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
         # Отправляем в Telegram
         from apps.telegram_bot.bot.bot_instance import get_bot
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        from django.conf import settings as django_settings
+        from asgiref.sync import async_to_sync
         bot = get_bot()
 
-        # Кнопка "Заявиться на турнир" — поведение как в боте (callback_data="cmd_register")
+        # Кнопка "Заявиться на турнир" — открывает личный чат с ботом
+        bot_username = getattr(django_settings, 'TELEGRAM_BOT_USERNAME', 'beachplay_bot')
+        bot_url = f"https://t.me/{bot_username}?start=register"
+        
         reply_markup = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="✍️ Заявиться на турнир",
-                    callback_data="cmd_register",
+                    url=bot_url,
                 )
             ]
         ])
@@ -433,7 +437,8 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
                         chat_id=settings.telegram_chat_id,
                         message_id=settings.last_announcement_message_id,
                         text=announcement_text,
-                        parse_mode="Markdown"
+                        parse_mode="Markdown",
+                        reply_markup=reply_markup
                     )
                     return settings.last_announcement_message_id
                 except Exception as e:
@@ -457,7 +462,7 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
                     )
                     return msg.message_id
             
-            message_id = asyncio.run(edit_message())
+            message_id = async_to_sync(edit_message)()
         else:
             # Режим новых сообщений или первая отправка в режиме редактирования
             async def send_message():
@@ -469,7 +474,7 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
                 )
                 return msg.message_id
             
-            message_id = asyncio.run(send_message())
+            message_id = async_to_sync(send_message)()
         
         logger.info(f"[ANNOUNCEMENT] Сообщение отправлено успешно, message_id: {message_id}")
         
