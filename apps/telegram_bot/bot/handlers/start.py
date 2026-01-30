@@ -84,6 +84,9 @@ async def cmd_start(message: Message):
 
     В группах не показываем большое меню, а просим написать в личку.
     Полноценное меню доступно только в приватном чате.
+    
+    Поддерживает Deep Link параметры:
+    - /start register — показать турниры для регистрации
     """
     # В группе/супергруппе подсказка одной строкой
     if message.chat.type in {"group", "supergroup"}:
@@ -101,6 +104,9 @@ async def cmd_start(message: Message):
         last_name=message.from_user.last_name,
         language_code=message.from_user.language_code,
     )
+    
+    # Проверяем Deep Link параметр
+    deep_link_param = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else None
     
     # Создаём inline-клавиатуру с командами бота (4 ряда по 2 кнопки)
     bot_keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -167,6 +173,20 @@ async def cmd_start(message: Message):
             f"Используй кнопки ниже для быстрого доступа:",
             reply_markup=bot_keyboard
         )
+    
+    # Если пришли по Deep Link с параметром register — автоматически показываем турниры для регистрации
+    if deep_link_param == "register":
+        from .registration import callback_cmd_register
+        from aiogram.types import CallbackQuery
+        from unittest.mock import AsyncMock
+        
+        # Создаём фейковый callback для переиспользования логики
+        callback = AsyncMock(spec=CallbackQuery)
+        callback.from_user = message.from_user
+        callback.message = message
+        callback.answer = AsyncMock()
+        
+        await callback_cmd_register(callback)
 
 
 @router.message(F.text == "🏆 Турниры")
