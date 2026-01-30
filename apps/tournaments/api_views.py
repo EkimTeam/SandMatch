@@ -71,6 +71,13 @@ def generate_announcement_text(tournament) -> str:
     """
     from django.conf import settings
     
+    # Импортируем TournamentRegistration в начале, чтобы избежать UnboundLocalError
+    try:
+        from .registration_models import TournamentRegistration
+        has_registration_model = True
+    except ImportError:
+        has_registration_model = False
+    
     lines: list[str] = []
 
     # Название турнира
@@ -144,9 +151,7 @@ def generate_announcement_text(tournament) -> str:
     lines.append("")
 
     # Списки зарегистрированных участников (если используется новая система регистрации)
-    try:
-        from .registration_models import TournamentRegistration
-
+    if has_registration_model:
         registrations_qs = TournamentRegistration.objects.filter(tournament=tournament).select_related(
             "player",
             "partner",
@@ -218,10 +223,6 @@ def generate_announcement_text(tournament) -> str:
                 for name in looking_players:
                     lines.append(f"- {name}")
                 lines.append("")
-    except Exception:
-        # Если система регистрации не используется или что-то пошло не так,
-        # не ломаем генерацию анонса.
-        pass
 
     # Организатор
     organizer_name = None
@@ -3487,9 +3488,6 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if tournament.status == Tournament.Status.COMPLETED:
             return Response({"error": "Турнир завершён, изменения запрещены"}, status=400)
         
-        # Проверка максимального количества участников (только предупреждение, не блокировка)
-        # Организатор может добавлять участников сверх лимита при необходимости
-        
         name = request.data.get('name')
         player_id = request.data.get('player_id')
         player1_id = request.data.get('player1_id')
@@ -3500,14 +3498,12 @@ class TournamentViewSet(viewsets.ModelViewSet):
         
         try:
             with transaction.atomic():
-                # Проверка, не участвует ли уже игрок в турнире
                 existing_entries = tournament.entries.select_related('team').all()
                 
                 if player_id:
                     # Одиночный игрок
                     player = Player.objects.get(id=player_id)
                     
-                    # Проверка дубликата
                     for entry in existing_entries:
                         if entry.team.player_1_id == player.id and not entry.team.player_2_id:
                             return Response({
@@ -3515,7 +3511,6 @@ class TournamentViewSet(viewsets.ModelViewSet):
                                 'error': f'{player.display_name} уже участвует в турнире'
                             }, status=400)
                     
-                    # Найти или создать команду для этого игрока
                     team = Team.objects.filter(player_1=player, player_2__isnull=True).first()
                     if not team:
                         team = Team.objects.create(player_1=player)
@@ -3525,7 +3520,6 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     player1 = Player.objects.get(id=player1_id)
                     player2 = Player.objects.get(id=player2_id)
                     
-                    # Проверка дубликата
                     for entry in existing_entries:
                         team_players = {entry.team.player_1_id, entry.team.player_2_id}
                         if team_players == {player1.id, player2.id}:
@@ -3534,7 +3528,6 @@ class TournamentViewSet(viewsets.ModelViewSet):
                                 'error': f'Пара {player1.display_name}/{player2.display_name} уже участвует'
                             }, status=400)
                     
-                    # Найти или создать команду для этой пары
                     team = Team.objects.filter(
                         player_1=player1, player_2=player2
                     ).first() or Team.objects.filter(
@@ -3555,7 +3548,6 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     team = Team.objects.create(player_1=player)
                 
                 # Для круговой системы, King и Knockout в статусе created участники добавляются БЕЗ позиции
-                # (они попадут в левый список для drag-and-drop)
                 if tournament.system in [Tournament.System.ROUND_ROBIN, Tournament.System.KING, Tournament.System.KNOCKOUT] and tournament.status == Tournament.Status.CREATED:
                     entry = TournamentEntry.objects.create(
                         tournament=tournament,
@@ -3566,15 +3558,11 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     )
                 else:
                     # Для других систем или статусов - найти первый свободный row_index
-                    existing_entries = tournament.entries.all()
-                    used_positions = set(existing_entries.values_list('row_index', flat=True))
-                    
-                    # Найти первую свободную позицию
+                    used_positions = set(tournament.entries.values_list('row_index', flat=True))
                     row_index = 1
                     while row_index in used_positions:
                         row_index += 1
                     
-                    # Создать запись участника
                     entry = TournamentEntry.objects.create(
                         tournament=tournament,
                         team=team,
