@@ -167,17 +167,46 @@ def recalculate_on_registration_deleted(sender, instance, **kwargs):
         lambda: RegistrationService._recalculate_registration_statuses(tournament)
     )
     
-    # Отправляем анонс об изменении состава
+    # Отправляем анонс об изменении состава (с учётом хеша состава)
     try:
         from apps.tournaments.models import TournamentAnnouncementSettings
         settings = tournament.announcement_settings
-        
-        if settings.send_on_roster_change:
-            logger.info(f"[ROSTER_CHANGE] Регистрация удалена, отправляем анонс")
-            from apps.telegram_bot.tasks import send_tournament_announcement_to_chat
-            transaction.on_commit(
-                lambda: send_tournament_announcement_to_chat.delay(tournament.id, 'roster_change')
-            )
+
+        if not settings.send_on_roster_change:
+            logger.info("[ROSTER_CHANGE] Триггер roster_change отключен (post_delete)")
+            return
+
+        # Вычисляем новый хеш общего состава (все регистрации турнира)
+        import hashlib
+        all_regs = TournamentRegistration.objects.filter(
+            tournament=tournament
+        ).select_related('player', 'partner', 'team').order_by('id')
+
+        roster_items = []
+        for reg in all_regs:
+            status_code = reg.status
+            if reg.team:
+                roster_items.append(f"team_{reg.team_id}_{status_code}")
+            elif reg.player:
+                roster_items.append(f"player_{reg.player_id}_{status_code}")
+
+        roster_string = "|".join(roster_items)
+        new_hash = hashlib.md5(roster_string.encode()).hexdigest()
+
+        logger.info(f"[ROSTER_CHANGE] (post_delete) Старый хеш: {settings.roster_hash}, новый хеш: {new_hash}")
+
+        if settings.roster_hash == new_hash:
+            logger.info("[ROSTER_CHANGE] (post_delete) Хеш не изменился, анонс не отправляем")
+            return
+
+        settings.roster_hash = new_hash
+        settings.save(update_fields=['roster_hash', 'updated_at'])
+
+        logger.info("[ROSTER_CHANGE] (post_delete) Хеш изменился, отправляем анонс")
+        from apps.telegram_bot.tasks import send_tournament_announcement_to_chat
+        transaction.on_commit(
+            lambda: send_tournament_announcement_to_chat.delay(tournament.id, 'roster_change')
+        )
     except Exception as e:
         logger.error(f"[ROSTER_CHANGE] Ошибка при отправке анонса после удаления: {e}", exc_info=True)
 
@@ -207,10 +236,36 @@ def check_roster_change_for_announcement(sender, instance, created, **kwargs):
         if not settings.send_on_roster_change:
             logger.info(f"[ROSTER_CHANGE] Триггер roster_change отключен")
             return
-        
-        logger.info(f"[ROSTER_CHANGE] Отправляем анонс об изменении состава")
-        
-        # Отправляем анонс асинхронно при любом изменении регистрации
+
+        # Вычисляем новый хеш общего состава (все регистрации турнира)
+        import hashlib
+        all_regs = TournamentRegistration.objects.filter(
+            tournament=instance.tournament
+        ).select_related('player', 'partner', 'team').order_by('id')
+
+        roster_items = []
+        for reg in all_regs:
+            status_code = reg.status
+            if reg.team:
+                roster_items.append(f"team_{reg.team_id}_{status_code}")
+            elif reg.player:
+                roster_items.append(f"player_{reg.player_id}_{status_code}")
+
+        roster_string = "|".join(roster_items)
+        new_hash = hashlib.md5(roster_string.encode()).hexdigest()
+
+        logger.info(f"[ROSTER_CHANGE] (post_save) Старый хеш: {settings.roster_hash}, новый хеш: {new_hash}")
+
+        # Если хеш не изменился, не шлём повторный анонс
+        if settings.roster_hash == new_hash:
+            logger.info(f"[ROSTER_CHANGE] (post_save) Хеш не изменился, анонс не отправляем")
+            return
+
+        settings.roster_hash = new_hash
+        settings.save(update_fields=['roster_hash', 'updated_at'])
+
+        logger.info(f"[ROSTER_CHANGE] (post_save) Хеш изменился, отправляем анонс")
+        # Отправляем анонс асинхронно
         from apps.telegram_bot.tasks import send_tournament_announcement_to_chat
         transaction.on_commit(
             lambda: send_tournament_announcement_to_chat.delay(instance.tournament.id, 'roster_change')
