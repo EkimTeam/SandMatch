@@ -405,10 +405,18 @@ class NotificationService:
             'main_list': 'основной состав',
             'reserve_list': 'резервный список',
         }.get(registration.status, registration.get_status_display())
+
+        # Формируем отображаемое имя игрока
+        player = registration.player
+        player_name = (
+            getattr(player, 'display_name', None)
+            or f"{getattr(player, 'first_name', '')} {getattr(player, 'last_name', '')}".strip()
+            or "Игрок"
+        )
         
         message = (
             f"🎾 {hbold('Регистрация на турнир')}\n\n"
-            f"{hbold(registration.player.get_full_name())} зарегистрировал вас в паре\n"
+            f"{hbold(player_name)} зарегистрировал вас в паре\n"
             f"на турнир {hbold(registration.tournament.name)}\n"
             f"📅 {registration.tournament.date.strftime('%d.%m.%Y')}\n"
             f"\n📋 Статус: {hbold(status_text)}\n"

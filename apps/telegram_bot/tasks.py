@@ -353,6 +353,7 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
     from apps.tournaments.models import Tournament, TournamentAnnouncementSettings
     from apps.tournaments.api_views import generate_announcement_text
     from django.utils import timezone
+    from datetime import timedelta
     
     logger.info(f"[ANNOUNCEMENT] Начало отправки анонса для турнира {tournament_id}, триггер: {trigger_type}")
     
@@ -397,10 +398,23 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
         logger.info(f"[ANNOUNCEMENT] Триггер {trigger_type} включен, проверяем отправку...")
         
         # Проверяем, не отправляли ли уже
-        if timestamp_field and trigger_type != "roster_change":
-            if getattr(settings, timestamp_field):
-                logger.info(f"[ANNOUNCEMENT] Анонс {trigger_type} уже был отправлен для турнира {tournament_id}")
-                return f"Анонс {trigger_type} уже отправлен"
+        if timestamp_field:
+            last_sent = getattr(settings, timestamp_field)
+            if last_sent:
+                if trigger_type == "roster_change":
+                    # Для roster_change разрешаем повторную отправку, но не чаще,
+                    # чем раз в несколько секунд, чтобы склеить цепочку
+                    # внутренних сохранений в одно уведомление.
+                    if timezone.now() - last_sent < timedelta(seconds=3):
+                        logger.info(
+                            f"[ANNOUNCEMENT] roster_change уже был отправлен недавно для турнира {tournament_id}, подавляем дубликат"
+                        )
+                        return "Анонс roster_change уже отправлен недавно"
+                else:
+                    logger.info(
+                        f"[ANNOUNCEMENT] Анонс {trigger_type} уже был отправлен для турнира {tournament_id}"
+                    )
+                    return f"Анонс {trigger_type} уже отправлен"
         
         logger.info(f"[ANNOUNCEMENT] Генерируем текст анонса...")
         # Генерируем текст анонса
