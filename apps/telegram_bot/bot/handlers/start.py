@@ -64,15 +64,36 @@ async def cmd_chat_id(message: Message):
                 text="\n".join(info_lines),
                 parse_mode="Markdown"
             )
-            await message.answer(
-                "Я отправил подробную информацию о чате тебе в личные сообщения. "
-                "Если сообщения нет — сначала открой личный диалог со мной и отправь /start."
-            )
+            # Подсказка в группе: не используем /start, чтобы не путать пользователя
+            if BOT_USERNAME:
+                start_link = f"https://t.me/{BOT_USERNAME}?start=start"
+                hint_text = (
+                    "Я отправил подробную информацию о чате тебе в личные сообщения. "
+                    "Если сообщения нет — открой личный диалог со мной по ссылке ниже.\n"
+                    f"{start_link}"
+                )
+            else:
+                hint_text = (
+                    "Я отправил подробную информацию о чате тебе в личные сообщения. "
+                    "Если сообщения нет — открой личный диалог со мной и отправь команду /start."
+                )
+
+            await message.answer(hint_text)
         except Exception as e:
-            await message.answer(
-                f"Не удалось отправить ID в личные сообщения: {e}\n"
-                "Открой личный диалог со мной и отправь /start, а затем повтори /chat_id."
-            )
+            if BOT_USERNAME:
+                start_link = f"https://t.me/{BOT_USERNAME}?start=start"
+                error_hint = (
+                    f"Не удалось отправить ID в личные сообщения: {e}\n"
+                    "Открой личный диалог со мной по ссылке ниже, а затем повтори /chat_id.\n"
+                    f"{start_link}"
+                )
+            else:
+                error_hint = (
+                    f"Не удалось отправить ID в личные сообщения: {e}\n"
+                    "Открой личный диалог со мной и отправь /start, а затем повтори /chat_id."
+                )
+
+            await message.answer(error_hint)
         return
 
     # В личном чате просто выводим ID этого диалога
