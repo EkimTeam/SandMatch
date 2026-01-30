@@ -89,23 +89,31 @@ async def cmd_start(message: Message):
     Поддерживает Deep Link параметры:
     - /start register — показать турниры для регистрации
     """
-    # В группе/супергруппе подсказка одной строкой
+    # В группе/супергруппе показываем краткую подсказку и кнопку-ссылку на бота
     if message.chat.type in {"group", "supergroup"}:
-        # Строим ссылку на бота, чтобы пользователь открыл ЛС, а не вызывал /start в группе
         if BOT_USERNAME:
             start_link = f"https://t.me/{BOT_USERNAME}?start=start"
             text = (
                 "Я BeachPlay-бот и показываю меню только в личных сообщениях. "
-                "Чтобы начать, открой диалог со мной по ссылке ниже и отправь команду:\n"
-                f"{start_link}"
+                "Чтобы начать, открой диалог со мной по кнопке ниже."
             )
+
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Открыть бота",
+                        url=start_link,
+                    )
+                ]
+            ])
+
+            await message.answer(text, reply_markup=keyboard)
         else:
             # Фоллбек, если имя бота не задано в окружении
-            text = (
+            await message.answer(
                 "Я BeachPlay-бот и показываю меню только в личных сообщениях. "
-                "Чтобы начать, открой диалог со мной и отправь /start."
+                "Чтобы начать, открой диалог со мной и отправь команду /start."
             )
-        await message.answer(text)
         return
 
     # Личный чат: показываем полноценное меню и регистрируем пользователя
