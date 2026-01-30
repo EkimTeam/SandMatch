@@ -1,7 +1,7 @@
 """Обработчик команды /start"""
 import os
 from aiogram import Router, F
-from aiogram.filters import CommandStart, StateFilter
+from aiogram.filters import CommandStart, StateFilter, Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.utils.markdown import hbold
 from asgiref.sync import sync_to_async
@@ -27,6 +27,13 @@ def get_or_create_telegram_user(telegram_id, username, first_name, last_name, la
             'language_code': language_code or 'ru',
         }
     )
+
+
+@router.message(Command("chat_id"))
+async def cmd_chat_id(message: Message):
+    """Отправляет ID текущего чата (группы, канала или личного диалога)."""
+    chat = message.chat
+    await message.answer(f"ID этого чата: {chat.id}")
 
 
 @router.message(CommandStart())

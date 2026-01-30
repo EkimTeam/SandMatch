@@ -479,3 +479,132 @@ class DrawPosition(models.Model):
 
     def __str__(self) -> str:
         return f"{self.bracket} pos {self.position} ({self.source})"
+
+
+class TournamentAnnouncementSettings(models.Model):
+    """Настройки автоматических анонсов турнира в Telegram чат"""
+
+    tournament = models.OneToOneField(
+        "Tournament",
+        on_delete=models.CASCADE,
+        related_name="announcement_settings",
+        verbose_name="Турнир"
+    )
+    
+    telegram_chat_id = models.CharField(
+        max_length=100,
+        verbose_name="ID чата Telegram",
+        help_text="ID чата или канала для публикации анонсов (например: -1001234567890)"
+    )
+    
+    class AnnouncementMode(models.TextChoices):
+        NEW_MESSAGES = 'new_messages', 'Публиковать новые сообщения'
+        EDIT_SINGLE = 'edit_single', 'Редактировать одно сообщение'
+    
+    announcement_mode = models.CharField(
+        max_length=20,
+        choices=AnnouncementMode.choices,
+        default=AnnouncementMode.EDIT_SINGLE,
+        verbose_name="Режим публикации",
+        help_text="Публиковать новые сообщения при каждом обновлении или редактировать одно и то же сообщение"
+    )
+    
+    last_announcement_message_id = models.BigIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="ID последнего сообщения",
+        help_text="ID сообщения в Telegram для режима редактирования"
+    )
+    
+    # Триггеры отправки
+    send_on_creation = models.BooleanField(
+        default=False,
+        verbose_name="Отправить при создании",
+        help_text="Отправить анонс сразу после создания турнира"
+    )
+    
+    send_72h_before = models.BooleanField(
+        default=False,
+        verbose_name="Отправить за 72 часа",
+        help_text="Отправить анонс за 72 часа до начала турнира"
+    )
+    
+    send_48h_before = models.BooleanField(
+        default=False,
+        verbose_name="Отправить за 48 часов",
+        help_text="Отправить анонс за 48 часов до начала турнира"
+    )
+    
+    send_24h_before = models.BooleanField(
+        default=True,
+        verbose_name="Отправить за 24 часа",
+        help_text="Отправить анонс за 24 часа до начала турнира"
+    )
+    
+    send_2h_before = models.BooleanField(
+        default=False,
+        verbose_name="Отправить за 2 часа",
+        help_text="Отправить анонс за 2 часа до начала турнира"
+    )
+    
+    send_on_roster_change = models.BooleanField(
+        default=False,
+        verbose_name="Отправить при изменении состава",
+        help_text="Отправить анонс при изменении основного состава участников"
+    )
+    
+    # История отправленных анонсов
+    sent_on_creation = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Отправлено при создании"
+    )
+    
+    sent_72h_before = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Отправлено за 72 часа"
+    )
+    
+    sent_48h_before = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Отправлено за 48 часов"
+    )
+    
+    sent_24h_before = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Отправлено за 24 часа"
+    )
+    
+    sent_2h_before = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Отправлено за 2 часа"
+    )
+    
+    last_roster_change_sent = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Последний анонс изменения состава"
+    )
+    
+    # Хеш состава для отслеживания изменений
+    roster_hash = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        verbose_name="Хеш состава",
+        help_text="MD5 хеш списка участников основного состава"
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Создано")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Обновлено")
+    
+    class Meta:
+        verbose_name = "Настройки анонсов турнира"
+        verbose_name_plural = "Настройки анонсов турниров"
+    
+    def __str__(self) -> str:
+        return f"Анонсы для {self.tournament}"

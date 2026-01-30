@@ -76,6 +76,17 @@ export interface Tournament {
   has_zero_rating_players?: boolean;
 }
 
+export interface TournamentAnnouncementSettingsDTO {
+  telegram_chat_id: string;
+  announcement_mode: 'new_messages' | 'edit_single';
+  send_on_creation: boolean;
+  send_72h_before: boolean;
+  send_48h_before: boolean;
+  send_24h_before: boolean;
+  send_2h_before: boolean;
+  send_on_roster_change: boolean;
+}
+
 export interface Ruleset {
   id: number;
   name: string;
@@ -411,6 +422,15 @@ export const tournamentApi = {
     const list = response.data?.rulesets || [];
     // Отсортировать по алфавиту
     return [...list].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  },
+  // Настройки авто-анонсов турнира
+  getAnnouncementSettings: async (id: number): Promise<TournamentAnnouncementSettingsDTO> => {
+    const response = await api.get<TournamentAnnouncementSettingsDTO>(`/tournaments/${id}/announcement_settings/`);
+    return response.data;
+  },
+  updateAnnouncementSettings: async (id: number, payload: TournamentAnnouncementSettingsDTO): Promise<TournamentAnnouncementSettingsDTO> => {
+    const response = await api.post<TournamentAnnouncementSettingsDTO>(`/tournaments/${id}/announcement_settings/`, payload);
+    return response.data;
   },
   // Установить регламент турнира
   setRuleset: async (id: number, rulesetId: number): Promise<{ ok: boolean }> => {

@@ -23,7 +23,7 @@ from django.db import transaction
 from typing import Optional
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from .models import Tournament, TournamentEntry, SetFormat, Ruleset, KnockoutBracket, DrawPosition, SchedulePattern, TournamentPlacement
+from .models import Tournament, TournamentEntry, SetFormat, Ruleset, KnockoutBracket, DrawPosition, SchedulePattern, TournamentPlacement, TournamentAnnouncementSettings
 from apps.players.services import rating_service
 from apps.players.services.initial_rating_service import get_initial_bp_rating
 from apps.players.services.btr_rating_mapper import suggest_initial_bp_rating
@@ -60,6 +60,187 @@ from apps.tournaments.services.round_robin import (
 )
 
 
+def generate_announcement_text(tournament) -> str:
+    """Генерация текста анонса турнира для публикации.
+    
+    Args:
+        tournament: объект Tournament
+        
+    Returns:
+        str: текст анонса в формате Markdown
+    """
+    from django.conf import settings
+    
+    lines: list[str] = []
+
+    # Название турнира
+    if tournament.name:
+        lines.append(str(tournament.name))
+    else:
+        lines.append("Турнир по пляжному теннису")
+
+    # Дата и время
+    weekday = ""
+    date_part = ""
+    if tournament.date:
+        try:
+            weekdays = ["ПОНЕДЕЛЬНИК", "ВТОРНИК", "СРЕДА", "ЧЕТВЕРГ", "ПЯТНИЦА", "СУББОТА", "ВОСКРЕСЕНЬЕ"]
+            wd_idx = tournament.date.weekday()
+            if 0 <= wd_idx < len(weekdays):
+                weekday = weekdays[wd_idx]
+            date_part = tournament.date.strftime("%d.%m")
+        except Exception:
+            date_part = str(tournament.date)
+
+    time_part = "14:00-18:00"
+    if weekday and date_part:
+        lines.append(f"🥎 {weekday}, {date_part} {time_part} 🏆")
+    elif date_part:
+        lines.append(f"🥎 {date_part} {time_part} 🏆")
+    else:
+        lines.append(f"🥎 {time_part} 🏆")
+
+    # Взнос
+    lines.append("💰 4000₽, на месте")
+
+    # Локация
+    location = None
+    for attr in ("location_name", "venue_name", "location", "place"):
+        if hasattr(tournament, attr):
+            value = getattr(tournament, attr) or None
+            if value:
+                location = str(value)
+                break
+    if not location:
+        location = "Лето, Полежаевская"
+    lines.append(f"📍 {location}")
+
+    # Лимит участников
+    max_participants = getattr(tournament, "planned_participants", None) or 16
+    try:
+        max_participants = int(max_participants)
+    except Exception:
+        max_participants = 16
+    lines.append(f"👤 4-{max_participants}, Все")
+
+    # Регламент
+    lines.append("")
+    lines.append("✍️Регламент:")
+    lines.append("Заявка только парой☝️")
+    lines.append("Пару можно искать через сервис в тг-боте")
+    lines.append("До турнира допускаются пары ММ,ЖЖ,МЖ уровень Hard и команды ProAm ( профессионал -любитель) ")
+    lines.append("Подача -сверху/снизу для всех")
+    lines.append("Сетка 180")
+    lines.append("Уровень игроков определяется организатором❗️")
+    lines.append("")
+
+    # Регистрация
+    base_url = getattr(settings, "FRONTEND_BASE_URL", "https://beachplay.ru").rstrip("/")
+    web_url = f"{base_url}/tournaments/{tournament.id}"
+
+    bot_link = "https://t.me/beachplay_bot"
+    lines.append(f"📱Регистрация через тг-бот: [тут]({bot_link}) (нажмите '✍️Заявиться на турнир' и выберите нужный турнир)")
+    lines.append(f"🌐Регистрация через веб-сайт: [тут]({web_url})")
+    lines.append("")
+
+    # Списки зарегистрированных участников (если используется новая система регистрации)
+    try:
+        from .registration_models import TournamentRegistration
+
+        registrations_qs = TournamentRegistration.objects.filter(tournament=tournament).select_related(
+            "player",
+            "partner",
+            "team",
+        )
+
+        # Основной состав (уникальные команды / игроки)
+        main_pairs: list[str] = []
+        seen_teams: set[int] = set()
+        for reg in registrations_qs.filter(status=TournamentRegistration.Status.MAIN_LIST):
+            team = reg.team
+            if team and team.id in seen_teams:
+                continue
+            if team:
+                seen_teams.add(team.id)
+                p1 = getattr(team, "player_1", None) or reg.player
+                p2 = getattr(team, "player_2", None) or reg.partner
+            else:
+                # На всякий случай поддерживаем одиночные турниры без команды
+                p1 = reg.player
+                p2 = reg.partner
+
+            if p2:
+                main_pairs.append(f"{p1} / {p2}")
+            else:
+                main_pairs.append(str(p1))
+
+        # Резервный состав
+        reserve_pairs: list[str] = []
+        seen_teams_reserve: set[int] = set()
+        for reg in registrations_qs.filter(status=TournamentRegistration.Status.RESERVE_LIST):
+            team = reg.team
+            if team and team.id in seen_teams_reserve:
+                continue
+            if team:
+                seen_teams_reserve.add(team.id)
+                p1 = getattr(team, "player_1", None) or reg.player
+                p2 = getattr(team, "player_2", None) or reg.partner
+            else:
+                p1 = reg.player
+                p2 = reg.partner
+
+            if p2:
+                reserve_pairs.append(f"{p1} / {p2}")
+            else:
+                reserve_pairs.append(str(p1))
+
+        # Игроки, которые ищут пару
+        looking_players: list[str] = []
+        for reg in registrations_qs.filter(status=TournamentRegistration.Status.LOOKING_FOR_PARTNER):
+            looking_players.append(str(reg.player))
+
+        # Добавляем в текст только непустые списки
+        if main_pairs or reserve_pairs or looking_players:
+            if main_pairs:
+                lines.append("🏅 Основной состав:")
+                for name in main_pairs:
+                    lines.append(f"- {name}")
+                lines.append("")
+
+            if reserve_pairs:
+                lines.append("🧩 Резервный состав:")
+                for name in reserve_pairs:
+                    lines.append(f"- {name}")
+                lines.append("")
+
+            if looking_players:
+                lines.append("🤝 Ищут пару:")
+                for name in looking_players:
+                    lines.append(f"- {name}")
+                lines.append("")
+    except Exception:
+        # Если система регистрации не используется или что-то пошло не так,
+        # не ломаем генерацию анонса.
+        pass
+
+    # Организатор
+    organizer_name = None
+    if tournament.created_by:
+        # Пробуем получить полное имя, если нет - username
+        full_name = tournament.created_by.get_full_name()
+        if full_name and full_name.strip():
+            organizer_name = full_name.strip()
+        elif tournament.created_by.username:
+            organizer_name = tournament.created_by.username
+    
+    if organizer_name:
+        lines.append(f"👑 {organizer_name}")
+    else:
+        lines.append("👑 Артём Парамонычев")
+
+    return "\n".join(lines)
+
+
 @method_decorator(csrf_exempt, name='dispatch')
 class TournamentViewSet(viewsets.ModelViewSet):
     queryset = Tournament.objects.all().order_by("-created_at")
@@ -83,6 +264,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
             "lock_participants",
             "unlock_participants",
             "complete",
+            "announcement_settings",
         }:
             return [IsTournamentCreatorOrAdmin()]
 
@@ -160,52 +342,15 @@ class TournamentViewSet(viewsets.ModelViewSet):
         raise PermissionDenied("You do not have permission to manage matches for this tournament")
 
     def destroy(self, request, *args, **kwargs):
-        """Переопределяем стандартное удаление для корректной обработки олимпийских турниров."""
+        """Удаление турнира.
+
+        Раньше здесь была усложнённая логика специального порядка удаления
+        связанных объектов для олимпийских турниров. В текущей версии достаточно
+        корректного каскадного удаления самого Tournament.
+        """
+
         tournament = self.get_object()
-        
-        # Правильный порядок удаления для олимпийских турниров:
-        # 1. tournaments_drawposition
-        # 2. tournaments_tournamententry
-        # 3. matches_matchset
-        # 4. players_playerratinghistory
-        # 5. matches_matchspecialoutcome
-        # 6. matches_match
-        # 7. tournaments_knockoutbracket
-        # 8. tournaments_tournament
-        if tournament.system == Tournament.System.KNOCKOUT:
-            from apps.tournaments.models import DrawPosition
-            from apps.players.models import PlayerRatingHistory
-            from apps.matches.models import MatchSpecialOutcome
-            from django.db import transaction
-            
-            with transaction.atomic():
-                # 1. Удаляем позиции в сетках
-                DrawPosition.objects.filter(bracket__tournament=tournament).delete()
-                
-                # 2. Удаляем участников турнира
-                TournamentEntry.objects.filter(tournament=tournament).delete()
-                
-                # 3. Удаляем сеты матчей
-                MatchSet.objects.filter(match__tournament=tournament).delete()
-                
-                # 4. Удаляем историю рейтингов игроков
-                PlayerRatingHistory.objects.filter(match__tournament=tournament).delete()
-                
-                # 5. Удаляем специальные исходы матчей
-                MatchSpecialOutcome.objects.filter(match__tournament=tournament).delete()
-                
-                # 6. Удаляем матчи
-                Match.objects.filter(tournament=tournament).delete()
-                
-                # 7. Удаляем сетки
-                tournament.knockout_brackets.all().delete()
-                
-                # 8. Удаляем турнир
-                tournament.delete()
-        else:
-            # Для круговых турниров стандартное каскадное удаление работает
-            tournament.delete()
-        
+        tournament.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @method_decorator(csrf_exempt)
@@ -2871,182 +3016,92 @@ class TournamentViewSet(viewsets.ModelViewSet):
         text = "\n".join(lines)
         return Response({"ok": True, "text": text})
 
+    @action(detail=True, methods=["get", "post"], url_path="announcement_settings")
+    def announcement_settings(self, request, pk=None):
+        """Просмотр и настройка авто-анонсов турнира (для организатора/админа).
+
+        GET  -> вернуть текущие настройки или значения по умолчанию, если записи ещё нет.
+        POST -> создать/обновить TournamentAnnouncementSettings для турнира.
+        """
+
+        tournament: Tournament = self.get_object()
+
+        # Ограничиваем доступ создателем/админом турнира
+        perm = IsTournamentCreatorOrAdmin()
+        if not perm.has_object_permission(request, self, tournament):
+            raise PermissionDenied("You do not have permission to manage announcement settings for this tournament")
+
+        def serialize(settings: TournamentAnnouncementSettings | None):
+            if not settings:
+                return {
+                    "telegram_chat_id": "",
+                    "announcement_mode": "edit_single",
+                    "send_on_creation": False,
+                    "send_72h_before": False,
+                    "send_48h_before": False,
+                    "send_24h_before": True,
+                    "send_2h_before": False,
+                    "send_on_roster_change": False,
+                }
+            return {
+                "telegram_chat_id": settings.telegram_chat_id,
+                "announcement_mode": settings.announcement_mode,
+                "send_on_creation": settings.send_on_creation,
+                "send_72h_before": settings.send_72h_before,
+                "send_48h_before": settings.send_48h_before,
+                "send_24h_before": settings.send_24h_before,
+                "send_2h_before": settings.send_2h_before,
+                "send_on_roster_change": settings.send_on_roster_change,
+            }
+
+        if request.method == "GET":
+            try:
+                settings_obj = tournament.announcement_settings
+            except TournamentAnnouncementSettings.DoesNotExist:
+                settings_obj = None
+            return Response(serialize(settings_obj))
+
+        # POST — сохранить настройки
+        data = request.data or {}
+        telegram_chat_id = (data.get("telegram_chat_id") or "").strip()
+        if not telegram_chat_id:
+            return Response({"detail": "Укажите ID чата Telegram"}, status=status.HTTP_400_BAD_REQUEST)
+
+        settings_obj, _created = TournamentAnnouncementSettings.objects.get_or_create(
+            tournament=tournament,
+            defaults={"telegram_chat_id": telegram_chat_id},
+        )
+
+        settings_obj.telegram_chat_id = telegram_chat_id
+        
+        # Обновляем режим публикации
+        if "announcement_mode" in data:
+            mode = data.get("announcement_mode")
+            if mode in ["new_messages", "edit_single"]:
+                settings_obj.announcement_mode = mode
+        
+        for field in [
+            "send_on_creation",
+            "send_72h_before",
+            "send_48h_before",
+            "send_24h_before",
+            "send_2h_before",
+            "send_on_roster_change",
+        ]:
+            if field in data:
+                setattr(settings_obj, field, bool(data.get(field)))
+
+        settings_obj.save()
+        return Response(serialize(settings_obj))
+
     @action(detail=True, methods=["get"], url_path="announcement_text", permission_classes=[AllowAny])
     def announcement_text(self, request, pk=None):
         """Вернуть текстовый анонс турнира для копирования организатором."""
-        from django.conf import settings
-
         tournament: Tournament = self.get_object()
         self._ensure_can_view_tournament(request, tournament)
-
-        lines: list[str] = []
-
-        # Название турнира
-        if tournament.name:
-            lines.append(str(tournament.name))
-        else:
-            lines.append("Турнир по пляжному теннису")
-
-        # Дата и время
-        weekday = ""
-        date_part = ""
-        if tournament.date:
-            try:
-                weekdays = ["ПОНЕДЕЛЬНИК", "ВТОРНИК", "СРЕДА", "ЧЕТВЕРГ", "ПЯТНИЦА", "СУББОТА", "ВОСКРЕСЕНЬЕ"]
-                wd_idx = tournament.date.weekday()
-                if 0 <= wd_idx < len(weekdays):
-                    weekday = weekdays[wd_idx]
-                date_part = tournament.date.strftime("%d.%m")
-            except Exception:
-                date_part = str(tournament.date)
-
-        time_part = "14:00-18:00"
-        if weekday and date_part:
-            lines.append(f"🥎 {weekday}, {date_part} {time_part} 🏆")
-        elif date_part:
-            lines.append(f"🥎 {date_part} {time_part} 🏆")
-        else:
-            lines.append(f"🥎 {time_part} 🏆")
-
-        # Взнос
-        lines.append("💰 4000₽, на месте")
-
-        # Локация
-        location = None
-        for attr in ("location_name", "venue_name", "location", "place"):
-            if hasattr(tournament, attr):
-                value = getattr(tournament, attr) or None
-                if value:
-                    location = str(value)
-                    break
-        if not location:
-            location = "Лето, Полежаевская"
-        lines.append(f"📍 {location}")
-
-        # Лимит участников
-        max_participants = getattr(tournament, "planned_participants", None) or 16
-        try:
-            max_participants = int(max_participants)
-        except Exception:
-            max_participants = 16
-        lines.append(f"👤 4-{max_participants}, Все")
-
-        # Регламент
-        lines.append("")
-        lines.append("✍️Регламент:")
-        lines.append("Заявка только парой☝️")
-        lines.append("Пару можно искать через сервис в тг-боте")
-        lines.append("До турнира допускаются пары ММ,ЖЖ,МЖ уровень Hard и команды ProAm ( профессионал -любитель) ")
-        lines.append("Подача -сверху/снизу для всех")
-        lines.append("Сетка 180")
-        lines.append("Уровень игроков определяется организатором❗️")
-        lines.append("")
-
-        # Регистрация
-        base_url = getattr(settings, "FRONTEND_BASE_URL", "https://beachplay.ru").rstrip("/")
-        web_url = f"{base_url}/tournaments/{tournament.id}"
-
-        bot_link = "https://t.me/beachplay_bot"
-        lines.append(f"📱Регистрация через тг-бот: [тут]({bot_link}) (нажмите '✍️Заявиться на турнир' и выберите нужный турнир)")
-        lines.append(f"🌐Регистрация через веб-сайт: [тут]({web_url})")
-        lines.append("")
-
-        # Списки зарегистрированных участников (если используется новая система регистрации)
-        try:
-            from .registration_models import TournamentRegistration
-
-            registrations_qs = TournamentRegistration.objects.filter(tournament=tournament).select_related(
-                "player",
-                "partner",
-                "team",
-            )
-
-            # Основной состав (уникальные команды / игроки)
-            main_pairs: list[str] = []
-            seen_teams: set[int] = set()
-            for reg in registrations_qs.filter(status=TournamentRegistration.Status.MAIN_LIST):
-                team = reg.team
-                if team and team.id in seen_teams:
-                    continue
-                if team:
-                    seen_teams.add(team.id)
-                    p1 = getattr(team, "player_1", None) or reg.player
-                    p2 = getattr(team, "player_2", None) or reg.partner
-                else:
-                    # На всякий случай поддерживаем одиночные турниры без команды
-                    p1 = reg.player
-                    p2 = reg.partner
-
-                if p2:
-                    main_pairs.append(f"{p1} / {p2}")
-                else:
-                    main_pairs.append(str(p1))
-
-            # Резервный состав
-            reserve_pairs: list[str] = []
-            seen_teams_reserve: set[int] = set()
-            for reg in registrations_qs.filter(status=TournamentRegistration.Status.RESERVE_LIST):
-                team = reg.team
-                if team and team.id in seen_teams_reserve:
-                    continue
-                if team:
-                    seen_teams_reserve.add(team.id)
-                    p1 = getattr(team, "player_1", None) or reg.player
-                    p2 = getattr(team, "player_2", None) or reg.partner
-                else:
-                    p1 = reg.player
-                    p2 = reg.partner
-
-                if p2:
-                    reserve_pairs.append(f"{p1} / {p2}")
-                else:
-                    reserve_pairs.append(str(p1))
-
-            # Игроки, которые ищут пару
-            looking_players: list[str] = []
-            for reg in registrations_qs.filter(status=TournamentRegistration.Status.LOOKING_FOR_PARTNER):
-                looking_players.append(str(reg.player))
-
-            # Добавляем в текст только непустые списки
-            if main_pairs or reserve_pairs or looking_players:
-                if main_pairs:
-                    lines.append("🏅 Основной состав:")
-                    for name in main_pairs:
-                        lines.append(f"- {name}")
-                    lines.append("")
-
-                if reserve_pairs:
-                    lines.append("🧩 Резервный состав:")
-                    for name in reserve_pairs:
-                        lines.append(f"- {name}")
-                    lines.append("")
-
-                if looking_players:
-                    lines.append("🤝 Ищут пару:")
-                    for name in looking_players:
-                        lines.append(f"- {name}")
-                    lines.append("")
-        except Exception:
-            # Если система регистрации не используется или что-то пошло не так,
-            # не ломаем генерацию анонса.
-            pass
-
-        # Организатор
-        organizer_name = None
-        if tournament.created_by:
-            # Пробуем получить полное имя, если нет - username
-            full_name = tournament.created_by.get_full_name()
-            if full_name and full_name.strip():
-                organizer_name = full_name.strip()
-            elif tournament.created_by.username:
-                organizer_name = tournament.created_by.username
         
-        if organizer_name:
-            lines.append(f"👑 {organizer_name}")
-        else:
-            lines.append("👑 Артём Парамонычев")
-
-        return Response({"ok": True, "text": "\n".join(lines)})
+        text = generate_announcement_text(tournament)
+        return Response({"ok": True, "text": text})
 
     @method_decorator(csrf_exempt)
     @action(
