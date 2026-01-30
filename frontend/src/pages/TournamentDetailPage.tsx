@@ -124,6 +124,20 @@ export const TournamentDetailPage: React.FC = () => {
   const [showAnnouncementModal, setShowAnnouncementModal] = useState(false);
   const [announcementText, setAnnouncementText] = useState<string>('');
   const [loadingAnnouncement, setLoadingAnnouncement] = useState(false);
+  // Настройки авто-анонсов турнира
+  const [showAnnouncementSettingsModal, setShowAnnouncementSettingsModal] = useState(false);
+  const [announcementSettings, setAnnouncementSettings] = useState<{
+    telegram_chat_id: string;
+    announcement_mode: 'new_messages' | 'edit_single';
+    send_on_creation: boolean;
+    send_72h_before: boolean;
+    send_48h_before: boolean;
+    send_24h_before: boolean;
+    send_2h_before: boolean;
+    send_on_roster_change: boolean;
+  } | null>(null);
+  const [loadingAnnouncementSettings, setLoadingAnnouncementSettings] = useState(false);
+  const [savingAnnouncementSettings, setSavingAnnouncementSettings] = useState(false);
   // Модалка действий по ячейке счёта
   const [scoreDialog, setScoreDialog] = useState<null | { group: number; a: number; b: number; matchId?: number; isLive: boolean; matchTeam1Id?: number | null; matchTeam2Id?: number | null }>(null);
   // Модалка ввода счёта (унифицированная с олимпийкой)
@@ -208,6 +222,38 @@ export const TournamentDetailPage: React.FC = () => {
       alert('Не удалось загрузить текст анонса');
     } finally {
       setLoadingAnnouncement(false);
+    }
+  };
+
+  const handleOpenAnnouncementSettings = async () => {
+    if (!t || !canManageTournament || t.status !== 'created') return;
+    try {
+      setLoadingAnnouncementSettings(true);
+      const data = await tournamentApi.getAnnouncementSettings(t.id);
+      setAnnouncementSettings({ ...data });
+      setShowAnnouncementSettingsModal(true);
+    } catch (e: any) {
+      console.error('Failed to load announcement settings', e);
+      alert(e?.response?.data?.detail || 'Не удалось загрузить настройки авто-анонсов');
+    } finally {
+      setLoadingAnnouncementSettings(false);
+    }
+  };
+
+  const handleSaveAnnouncementSettings = async () => {
+    if (!t || !announcementSettings) return;
+    try {
+      setSavingAnnouncementSettings(true);
+      const payload = { ...announcementSettings };
+      const updated = await tournamentApi.updateAnnouncementSettings(t.id, payload);
+      setAnnouncementSettings({ ...updated });
+      setShowAnnouncementSettingsModal(false);
+    } catch (e: any) {
+      console.error('Failed to save announcement settings', e);
+      const detail = e?.response?.data?.detail || e?.message || 'Не удалось сохранить настройки авто-анонсов';
+      alert(detail);
+    } finally {
+      setSavingAnnouncementSettings(false);
     }
   };
 
@@ -1951,6 +1997,151 @@ export const TournamentDetailPage: React.FC = () => {
         </div>
       )}
 
+      {showAnnouncementSettingsModal && announcementSettings && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => !savingAnnouncementSettings && setShowAnnouncementSettingsModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: '#fff',
+              padding: 20,
+              maxWidth: 520,
+              width: '100%',
+              maxHeight: '80vh',
+              overflow: 'auto',
+              borderRadius: 8,
+              boxShadow: '0 10px 30px rgba(15,23,42,0.25)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>Настройка авто-анонсов</h3>
+            <div style={{ fontSize: 13, color: '#4b5563', marginBottom: 12 }}>
+              Укажите ID чата или канала Telegram, куда будут отправляться анонсы, и выберите, когда их слать.
+              Telegram-бот должен быть добавлен в этот чат и должен быть там администратором.
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>
+                ID чата Telegram
+              </label>
+              <input
+                type="text"
+                className="form-control"
+                value={announcementSettings.telegram_chat_id}
+                onChange={(e) => setAnnouncementSettings(prev => prev ? { ...prev, telegram_chat_id: e.target.value } : prev)}
+                placeholder="Например: -1001234567890"
+                disabled={savingAnnouncementSettings}
+              />
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Режим публикации:</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input
+                    type="radio"
+                    name="announcement_mode"
+                    value="edit_single"
+                    checked={announcementSettings.announcement_mode === 'edit_single'}
+                    onChange={(e) => setAnnouncementSettings(prev => prev ? { ...prev, announcement_mode: 'edit_single' } : prev)}
+                    disabled={savingAnnouncementSettings}
+                  />
+                  <span>Редактировать одно сообщение (рекомендуется)</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input
+                    type="radio"
+                    name="announcement_mode"
+                    value="new_messages"
+                    checked={announcementSettings.announcement_mode === 'new_messages'}
+                    onChange={(e) => setAnnouncementSettings(prev => prev ? { ...prev, announcement_mode: 'new_messages' } : prev)}
+                    disabled={savingAnnouncementSettings}
+                  />
+                  <span>Публиковать новые сообщения при каждом обновлении</span>
+                </label>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 600 }}>Когда отправлять анонсы:</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 16, fontSize: 13 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={announcementSettings.send_72h_before}
+                  onChange={(e) => setAnnouncementSettings(prev => prev ? { ...prev, send_72h_before: e.target.checked } : prev)}
+                  disabled={savingAnnouncementSettings}
+                />
+                <span>За 72 часа до начала</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={announcementSettings.send_48h_before}
+                  onChange={(e) => setAnnouncementSettings(prev => prev ? { ...prev, send_48h_before: e.target.checked } : prev)}
+                  disabled={savingAnnouncementSettings}
+                />
+                <span>За 48 часов до начала</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={announcementSettings.send_24h_before}
+                  onChange={(e) => setAnnouncementSettings(prev => prev ? { ...prev, send_24h_before: e.target.checked } : prev)}
+                  disabled={savingAnnouncementSettings}
+                />
+                <span>За 24 часа до начала</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={announcementSettings.send_2h_before}
+                  onChange={(e) => setAnnouncementSettings(prev => prev ? { ...prev, send_2h_before: e.target.checked } : prev)}
+                  disabled={savingAnnouncementSettings}
+                />
+                <span>За 2 часа до начала</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={announcementSettings.send_on_roster_change}
+                  onChange={(e) => setAnnouncementSettings(prev => prev ? { ...prev, send_on_roster_change: e.target.checked } : prev)}
+                  disabled={savingAnnouncementSettings}
+                />
+                <span>При изменении основного состава</span>
+              </label>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => setShowAnnouncementSettingsModal(false)}
+                disabled={savingAnnouncementSettings}
+              >
+                Отмена
+              </button>
+              <button
+                className="btn"
+                type="button"
+                onClick={handleSaveAnnouncementSettings}
+                disabled={savingAnnouncementSettings || !announcementSettings.telegram_chat_id.trim()}
+              >
+                Сохранить
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showAnnouncementModal && (
         <div
           style={{
@@ -2790,6 +2981,16 @@ export const TournamentDetailPage: React.FC = () => {
                 onClick={handleShowAnnouncementText}
               >
                 Текст анонса
+              </button>
+            )}
+            {t && canManageTournament && t.status === 'created' && (
+              <button
+                className="btn"
+                type="button"
+                disabled={loadingAnnouncementSettings}
+                onClick={handleOpenAnnouncementSettings}
+              >
+                Настройка авто-анонсов
               </button>
             )}
             {t && t.status === 'completed' && (

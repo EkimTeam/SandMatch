@@ -154,3 +154,81 @@ def recalculate_on_registration_deleted(sender, instance, **kwargs):
     transaction.on_commit(
         lambda: RegistrationService._recalculate_registration_statuses(tournament)
     )
+
+
+# ============================================================================
+# Сигналы для автоматических анонсов турниров
+# ============================================================================
+
+@receiver(post_save, sender=TournamentRegistration)
+def check_roster_change_for_announcement(sender, instance, created, **kwargs):
+    """
+    Отслеживаем изменения основного состава для отправки анонсов в Telegram чат.
+    """
+    # Проверяем только регистрации в основном составе
+    if instance.status != TournamentRegistration.Status.MAIN_LIST:
+        return
+    
+    # Проверяем наличие настроек анонсов
+    try:
+        from apps.tournaments.models import TournamentAnnouncementSettings
+        settings = instance.tournament.announcement_settings
+        
+        if not settings.send_on_roster_change:
+            return
+        
+        # Вычисляем хеш текущего состава
+        import hashlib
+        from apps.tournaments.registration_models import TournamentRegistration
+        
+        main_registrations = TournamentRegistration.objects.filter(
+            tournament=instance.tournament,
+            status=TournamentRegistration.Status.MAIN_LIST
+        ).select_related('player', 'partner', 'team').order_by('id')
+        
+        roster_items = []
+        for reg in main_registrations:
+            if reg.team:
+                roster_items.append(f"team_{reg.team.id}")
+            else:
+                roster_items.append(f"player_{reg.player.id}")
+        
+        roster_string = "|".join(roster_items)
+        new_hash = hashlib.md5(roster_string.encode()).hexdigest()
+        
+        # Если хеш изменился, отправляем анонс
+        if settings.roster_hash != new_hash:
+            settings.roster_hash = new_hash
+            settings.save(update_fields=['roster_hash', 'updated_at'])
+            
+            # Отправляем анонс асинхронно
+            from apps.telegram_bot.tasks import send_tournament_announcement_to_chat
+            transaction.on_commit(
+                lambda: send_tournament_announcement_to_chat.delay(instance.tournament.id, 'roster_change')
+            )
+    
+    except Exception:
+        # Не ломаем основной процесс регистрации при ошибках анонсов
+        pass
+
+
+@receiver(post_save, sender=Tournament)
+def send_announcement_on_tournament_creation(sender, instance, created, **kwargs):
+    """
+    Отправляем анонс при создании турнира, если настроено.
+    """
+    if not created:
+        return
+    
+    try:
+        from apps.tournaments.models import TournamentAnnouncementSettings
+        settings = instance.announcement_settings
+        
+        if settings.send_on_creation:
+            from apps.telegram_bot.tasks import send_tournament_announcement_to_chat
+            transaction.on_commit(
+                lambda: send_tournament_announcement_to_chat.delay(instance.id, 'creation')
+            )
+    except Exception:
+        # Настройки анонсов не обязательны для всех турниров
+        pass

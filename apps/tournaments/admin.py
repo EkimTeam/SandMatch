@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Ruleset, SetFormat, Tournament, TournamentEntry
+from .models import Ruleset, SetFormat, Tournament, TournamentEntry, TournamentAnnouncementSettings
 from .registration_models import TournamentRegistration, PairInvitation
 from .services.round_robin import generate_round_robin_matches, persist_generated_matches
 
@@ -68,3 +68,70 @@ class PairInvitationAdmin(admin.ModelAdmin):
     search_fields = ("sender__last_name", "receiver__last_name", "tournament__name")
     readonly_fields = ("created_at", "responded_at")
     ordering = ("-created_at",)
+
+
+@admin.register(TournamentAnnouncementSettings)
+class TournamentAnnouncementSettingsAdmin(admin.ModelAdmin):
+    list_display = (
+        "tournament",
+        "telegram_chat_id",
+        "announcement_mode",
+        "send_on_creation",
+        "send_72h_before",
+        "send_48h_before",
+        "send_24h_before",
+        "send_2h_before",
+        "send_on_roster_change",
+    )
+    list_filter = (
+        "announcement_mode",
+        "send_on_creation",
+        "send_72h_before",
+        "send_48h_before",
+        "send_24h_before",
+        "send_2h_before",
+        "send_on_roster_change",
+    )
+    search_fields = ("tournament__name", "telegram_chat_id")
+    readonly_fields = (
+        "last_announcement_message_id",
+        "sent_on_creation",
+        "sent_72h_before",
+        "sent_48h_before",
+        "sent_24h_before",
+        "sent_2h_before",
+        "last_roster_change_sent",
+        "roster_hash",
+        "created_at",
+        "updated_at",
+    )
+    fieldsets = (
+        ("Основные настройки", {
+            "fields": ("tournament", "telegram_chat_id", "announcement_mode")
+        }),
+        ("Триггеры отправки", {
+            "fields": (
+                "send_on_creation",
+                "send_72h_before",
+                "send_48h_before",
+                "send_24h_before",
+                "send_2h_before",
+                "send_on_roster_change",
+            )
+        }),
+        ("История отправок", {
+            "fields": (
+                "sent_on_creation",
+                "sent_72h_before",
+                "sent_48h_before",
+                "sent_24h_before",
+                "sent_2h_before",
+                "last_roster_change_sent",
+            ),
+            "classes": ("collapse",)
+        }),
+        ("Служебная информация", {
+            "fields": ("last_announcement_message_id", "roster_hash", "created_at", "updated_at"),
+            "classes": ("collapse",)
+        }),
+    )
