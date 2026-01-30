@@ -148,6 +148,11 @@ def recalculate_on_registration_deleted(sender, instance, **kwargs):
     """
     Пересчитать очередь при удалении регистрации.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"[ROSTER_CHANGE] Сигнал post_delete вызван для регистрации {instance.id}, статус был: {instance.status}")
+    
     # Удаляем TournamentEntry если есть команда
     if instance.team:
         TournamentEntry.objects.filter(
@@ -161,6 +166,20 @@ def recalculate_on_registration_deleted(sender, instance, **kwargs):
     transaction.on_commit(
         lambda: RegistrationService._recalculate_registration_statuses(tournament)
     )
+    
+    # Отправляем анонс об изменении состава
+    try:
+        from apps.tournaments.models import TournamentAnnouncementSettings
+        settings = tournament.announcement_settings
+        
+        if settings.send_on_roster_change:
+            logger.info(f"[ROSTER_CHANGE] Регистрация удалена, отправляем анонс")
+            from apps.telegram_bot.tasks import send_tournament_announcement_to_chat
+            transaction.on_commit(
+                lambda: send_tournament_announcement_to_chat.delay(tournament.id, 'roster_change')
+            )
+    except Exception as e:
+        logger.error(f"[ROSTER_CHANGE] Ошибка при отправке анонса после удаления: {e}", exc_info=True)
 
 
 # ============================================================================
@@ -170,17 +189,13 @@ def recalculate_on_registration_deleted(sender, instance, **kwargs):
 @receiver(post_save, sender=TournamentRegistration)
 def check_roster_change_for_announcement(sender, instance, created, **kwargs):
     """
-    Отслеживаем изменения основного состава для отправки анонсов в Telegram чат.
+    Отслеживаем изменения состава участников для отправки анонсов в Telegram чат.
+    Срабатывает при любых изменениях: добавление в основу, резерв, "ищу пару".
     """
     import logging
     logger = logging.getLogger(__name__)
     
-    logger.info(f"[ROSTER_CHANGE] Сигнал вызван для регистрации {instance.id}, статус: {instance.status}, created: {created}")
-    
-    # Проверяем только регистрации в основном составе
-    if instance.status != TournamentRegistration.Status.MAIN_LIST:
-        logger.info(f"[ROSTER_CHANGE] Пропускаем - статус не MAIN_LIST")
-        return
+    logger.info(f"[ROSTER_CHANGE] Сигнал post_save вызван для регистрации {instance.id}, статус: {instance.status}, created: {created}")
     
     # Проверяем наличие настроек анонсов
     try:
@@ -193,40 +208,14 @@ def check_roster_change_for_announcement(sender, instance, created, **kwargs):
             logger.info(f"[ROSTER_CHANGE] Триггер roster_change отключен")
             return
         
-        # Вычисляем хеш текущего состава
-        import hashlib
+        logger.info(f"[ROSTER_CHANGE] Отправляем анонс об изменении состава")
         
-        main_registrations = TournamentRegistration.objects.filter(
-            tournament=instance.tournament,
-            status=TournamentRegistration.Status.MAIN_LIST
-        ).select_related('player', 'partner', 'team').order_by('id')
-        
-        roster_items = []
-        for reg in main_registrations:
-            if reg.team:
-                roster_items.append(f"team_{reg.team.id}")
-            else:
-                roster_items.append(f"player_{reg.player.id}")
-        
-        roster_string = "|".join(roster_items)
-        new_hash = hashlib.md5(roster_string.encode()).hexdigest()
-        
-        logger.info(f"[ROSTER_CHANGE] Старый хеш: {settings.roster_hash}, новый хеш: {new_hash}")
-        
-        # Если хеш изменился, отправляем анонс
-        if settings.roster_hash != new_hash:
-            logger.info(f"[ROSTER_CHANGE] Хеш изменился, отправляем анонс")
-            settings.roster_hash = new_hash
-            settings.save(update_fields=['roster_hash', 'updated_at'])
-            
-            # Отправляем анонс асинхронно
-            from apps.telegram_bot.tasks import send_tournament_announcement_to_chat
-            transaction.on_commit(
-                lambda: send_tournament_announcement_to_chat.delay(instance.tournament.id, 'roster_change')
-            )
-            logger.info(f"[ROSTER_CHANGE] Задача отправки анонса поставлена в очередь")
-        else:
-            logger.info(f"[ROSTER_CHANGE] Хеш не изменился, анонс не отправляем")
+        # Отправляем анонс асинхронно при любом изменении регистрации
+        from apps.telegram_bot.tasks import send_tournament_announcement_to_chat
+        transaction.on_commit(
+            lambda: send_tournament_announcement_to_chat.delay(instance.tournament.id, 'roster_change')
+        )
+        logger.info(f"[ROSTER_CHANGE] Задача отправки анонса поставлена в очередь")
     
     except Exception as e:
         # Не ломаем основной процесс регистрации при ошибках анонсов
