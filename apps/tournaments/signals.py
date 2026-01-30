@@ -165,8 +165,14 @@ def check_roster_change_for_announcement(sender, instance, created, **kwargs):
     """
     Отслеживаем изменения основного состава для отправки анонсов в Telegram чат.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"[ROSTER_CHANGE] Сигнал вызван для регистрации {instance.id}, статус: {instance.status}, created: {created}")
+    
     # Проверяем только регистрации в основном составе
     if instance.status != TournamentRegistration.Status.MAIN_LIST:
+        logger.info(f"[ROSTER_CHANGE] Пропускаем - статус не MAIN_LIST")
         return
     
     # Проверяем наличие настроек анонсов
@@ -174,7 +180,10 @@ def check_roster_change_for_announcement(sender, instance, created, **kwargs):
         from apps.tournaments.models import TournamentAnnouncementSettings
         settings = instance.tournament.announcement_settings
         
+        logger.info(f"[ROSTER_CHANGE] Настройки найдены для турнира {instance.tournament.id}, send_on_roster_change: {settings.send_on_roster_change}")
+        
         if not settings.send_on_roster_change:
+            logger.info(f"[ROSTER_CHANGE] Триггер roster_change отключен")
             return
         
         # Вычисляем хеш текущего состава
@@ -195,8 +204,11 @@ def check_roster_change_for_announcement(sender, instance, created, **kwargs):
         roster_string = "|".join(roster_items)
         new_hash = hashlib.md5(roster_string.encode()).hexdigest()
         
+        logger.info(f"[ROSTER_CHANGE] Старый хеш: {settings.roster_hash}, новый хеш: {new_hash}")
+        
         # Если хеш изменился, отправляем анонс
         if settings.roster_hash != new_hash:
+            logger.info(f"[ROSTER_CHANGE] Хеш изменился, отправляем анонс")
             settings.roster_hash = new_hash
             settings.save(update_fields=['roster_hash', 'updated_at'])
             
@@ -205,10 +217,13 @@ def check_roster_change_for_announcement(sender, instance, created, **kwargs):
             transaction.on_commit(
                 lambda: send_tournament_announcement_to_chat.delay(instance.tournament.id, 'roster_change')
             )
+            logger.info(f"[ROSTER_CHANGE] Задача отправки анонса поставлена в очередь")
+        else:
+            logger.info(f"[ROSTER_CHANGE] Хеш не изменился, анонс не отправляем")
     
-    except Exception:
+    except Exception as e:
         # Не ломаем основной процесс регистрации при ошибках анонсов
-        pass
+        logger.error(f"[ROSTER_CHANGE] Ошибка в сигнале check_roster_change_for_announcement: {e}", exc_info=True)
 
 
 @receiver(post_save, sender=Tournament)
