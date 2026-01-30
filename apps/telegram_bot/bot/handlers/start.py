@@ -11,8 +11,9 @@ from apps.telegram_bot.models import TelegramUser
 
 router = Router()
 
-# URL веб-приложения
+# URL веб-приложения и имя бота
 WEB_APP_URL = os.getenv('WEB_APP_URL', 'https://beachplay.ru')
+BOT_USERNAME = os.getenv('TELEGRAM_BOT_USERNAME', '')
 
 
 @sync_to_async
@@ -90,10 +91,21 @@ async def cmd_start(message: Message):
     """
     # В группе/супергруппе подсказка одной строкой
     if message.chat.type in {"group", "supergroup"}:
-        await message.answer(
-            "Я BeachPlay-бот и показываю меню только в личных сообщениях. "
-            "Чтобы начать, открой диалог со мной и отправь /start."
-        )
+        # Строим ссылку на бота, чтобы пользователь открыл ЛС, а не вызывал /start в группе
+        if BOT_USERNAME:
+            start_link = f"https://t.me/{BOT_USERNAME}?start=start"
+            text = (
+                "Я BeachPlay-бот и показываю меню только в личных сообщениях. "
+                "Чтобы начать, открой диалог со мной по ссылке ниже и отправь команду:\n"
+                f"{start_link}"
+            )
+        else:
+            # Фоллбек, если имя бота не задано в окружении
+            text = (
+                "Я BeachPlay-бот и показываю меню только в личных сообщениях. "
+                "Чтобы начать, открой диалог со мной и отправь /start."
+            )
+        await message.answer(text)
         return
 
     # Личный чат: показываем полноценное меню и регистрируем пользователя
