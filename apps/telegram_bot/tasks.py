@@ -408,11 +408,12 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
         logger.info(f"[ANNOUNCEMENT] Текст анонса сгенерирован, длина: {len(announcement_text)} символов")
         
         # Отправляем в Telegram
-        from apps.telegram_bot.bot.bot_instance import get_bot
+        from aiogram import Bot
+        from aiogram.client.default import DefaultBotProperties
+        from aiogram.enums import ParseMode
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         from django.conf import settings as django_settings
         from asgiref.sync import async_to_sync
-        bot = get_bot()
 
         # Кнопка "Заявиться на турнир" — открывает личный чат с ботом
         bot_username = getattr(django_settings, 'TELEGRAM_BOT_USERNAME', 'beachplay_bot')
@@ -428,16 +429,21 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
         ])
 
         message_id = None
-        
+
+        # Для избежания ошибок "Event loop is closed" создаём Bot внутри каждого
+        # async-вызова и закрываем его сессию после использования.
         if settings.announcement_mode == 'edit_single' and settings.last_announcement_message_id:
             # Режим редактирования: пытаемся отредактировать существующее сообщение
             async def edit_message():
+                bot = Bot(
+                    token=django_settings.TELEGRAM_BOT_TOKEN,
+                    default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
+                )
                 try:
                     await bot.edit_message_text(
                         chat_id=settings.telegram_chat_id,
                         message_id=settings.last_announcement_message_id,
                         text=announcement_text,
-                        parse_mode="Markdown",
                         reply_markup=reply_markup
                     )
                     return settings.last_announcement_message_id
@@ -457,23 +463,30 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
                     msg = await bot.send_message(
                         chat_id=settings.telegram_chat_id,
                         text=announcement_text,
-                        parse_mode="Markdown",
                         reply_markup=reply_markup,
                     )
                     return msg.message_id
-            
+                finally:
+                    await bot.session.close()
+
             message_id = async_to_sync(edit_message)()
         else:
             # Режим новых сообщений или первая отправка в режиме редактирования
             async def send_message():
-                msg = await bot.send_message(
-                    chat_id=settings.telegram_chat_id,
-                    text=announcement_text,
-                    parse_mode="Markdown",
-                    reply_markup=reply_markup,
+                bot = Bot(
+                    token=django_settings.TELEGRAM_BOT_TOKEN,
+                    default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
                 )
-                return msg.message_id
-            
+                try:
+                    msg = await bot.send_message(
+                        chat_id=settings.telegram_chat_id,
+                        text=announcement_text,
+                        reply_markup=reply_markup,
+                    )
+                    return msg.message_id
+                finally:
+                    await bot.session.close()
+
             message_id = async_to_sync(send_message)()
         
         logger.info(f"[ANNOUNCEMENT] Сообщение отправлено успешно, message_id: {message_id}")
