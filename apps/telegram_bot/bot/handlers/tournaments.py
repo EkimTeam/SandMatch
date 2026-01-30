@@ -188,17 +188,19 @@ def search_players_by_name(query, exclude_player_id=None, tournament_id=None):
     if exclude_player_id:
         players = players.exclude(id=exclude_player_id)
     
-    # Исключаем игроков, уже зарегистрированных на турнир (кроме looking_for_partner)
+    # Исключаем игроков, которые уже зарегистрированы на турнир
+    # Оставляем только тех, кто вообще не зарегистрирован на этот турнир,
+    # либо зарегистрирован в статусе LOOKING_FOR_PARTNER.
     if tournament_id:
-        registered_player_ids = TournamentRegistration.objects.filter(
+        # Находим игроков, у которых есть регистрация на турнир
+        # с любым статусом, КРОМЕ LOOKING_FOR_PARTNER – их нужно скрыть
+        busy_player_ids = TournamentRegistration.objects.filter(
             tournament_id=tournament_id,
-            status__in=[
-                TournamentRegistration.Status.MAIN_LIST,
-                TournamentRegistration.Status.RESERVE_LIST,
-            ]
-        ).values_list('player_id', flat=True)
-        
-        players = players.exclude(id__in=registered_player_ids)
+        ).exclude(
+            status=TournamentRegistration.Status.LOOKING_FOR_PARTNER,
+        ).values_list("player_id", flat=True)
+
+        players = players.exclude(id__in=busy_player_ids)
     
     return list(players.order_by('last_name', 'first_name')[:10])
 
