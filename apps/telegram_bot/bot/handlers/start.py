@@ -31,17 +31,51 @@ def get_or_create_telegram_user(telegram_id, username, first_name, last_name, la
 
 @router.message(Command("chat_id"))
 async def cmd_chat_id(message: Message):
-    """Отправляет ID текущего чата (группы, канала или личного диалога)."""
+    """Отправляет ID текущего чата в личные сообщения пользователю.
+
+    В группе/канале бот шлёт chat_id в личку, а в самом чате пишет
+    короткую подсказку.
+    """
     chat = message.chat
+
+    # Если команда вызвана в группе/супергруппе/канале — шлём ID в личку
+    if chat.type in {"group", "supergroup", "channel"}:
+        try:
+            await message.bot.send_message(
+                chat_id=message.from_user.id,
+                text=f"ID чата '{chat.title}' ({chat.type}): {chat.id}"
+            )
+            await message.answer(
+                "Я отправил ID этого чата тебе в личные сообщения. "
+                "Если сообщения нет — сначала открой личный диалог со мной и отправь /start."
+            )
+        except Exception:
+            await message.answer(
+                "Не удалось отправить ID в личные сообщения. "
+                "Открой личный диалог со мной и отправь /start, а затем повтори /chat_id."
+            )
+        return
+
+    # В личном чате просто выводим ID этого диалога
     await message.answer(f"ID этого чата: {chat.id}")
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message):
+    """Обработка команды /start.
+
+    В группах не показываем большое меню, а просим написать в личку.
+    Полноценное меню доступно только в приватном чате.
     """
-    Обработка команды /start
-    """
-    # Получаем или создаём пользователя
+    # В группе/супергруппе подсказка одной строкой
+    if message.chat.type in {"group", "supergroup"}:
+        await message.answer(
+            "Я BeachPlay-бот и показываю меню только в личных сообщениях. "
+            "Чтобы начать, открой диалог со мной и отправь /start."
+        )
+        return
+
+    # Личный чат: показываем полноценное меню и регистрируем пользователя
     telegram_user, created = await get_or_create_telegram_user(
         telegram_id=message.from_user.id,
         username=message.from_user.username,
@@ -235,8 +269,15 @@ async def handle_website_button(message: Message):
 
 @router.message(F.text, StateFilter(None))
 async def fallback_text_handler(message: Message, state: FSMContext):
-    """Обработчик произвольного текста: подсказываем, как начать работу с ботом"""
-    # Не перебиваем стандартные команды, которые начинаются с "/"
+    """Обработчик произвольного текста.
+
+    В личке подсказываем про /start, в группах молчим, чтобы не спамить.
+    """
+    # В группах/каналах никак не реагируем на произвольный текст
+    if message.chat.type in {"group", "supergroup", "channel"}:
+        return
+
+    # В личке не перебиваем стандартные команды, которые начинаются с "/"
     if message.text and message.text.startswith("/"):
         return
 
