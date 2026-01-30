@@ -415,14 +415,15 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
         from django.conf import settings as django_settings
         from asgiref.sync import async_to_sync
 
-        # Кнопка "Заявиться на турнир" — открывает личный чат с ботом
+        # Кнопка "Зарегистрироваться" — открывает личный чат с ботом
+        # и сразу переводит пользователя на регистрацию в конкретный турнир
         bot_username = getattr(django_settings, 'TELEGRAM_BOT_USERNAME', 'beachplay_bot')
-        bot_url = f"https://t.me/{bot_username}?start=register"
+        bot_url = f"https://t.me/{bot_username}?start=register_{tournament.id}"
         
         reply_markup = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="✍️ Заявиться на турнир",
+                    text="✅ Зарегистрироваться",
                     url=bot_url,
                 )
             ]

@@ -175,18 +175,39 @@ async def cmd_start(message: Message):
         )
     
     # Если пришли по Deep Link с параметром register — автоматически показываем турниры для регистрации
-    if deep_link_param == "register":
-        from .registration import callback_cmd_register
+    if deep_link_param:
         from aiogram.types import CallbackQuery
         from unittest.mock import AsyncMock
-        
-        # Создаём фейковый callback для переиспользования логики
-        callback = AsyncMock(spec=CallbackQuery)
-        callback.from_user = message.from_user
-        callback.message = message
-        callback.answer = AsyncMock()
-        
-        await callback_cmd_register(callback)
+
+        # /start register_<tournament_id> -> сразу открыть конкретный турнир
+        if deep_link_param.startswith("register_"):
+            try:
+                tournament_id = int(deep_link_param.split("_", 1)[1])
+            except ValueError:
+                tournament_id = None
+
+            if tournament_id is not None:
+                from .tournaments import callback_register
+
+                callback = AsyncMock(spec=CallbackQuery)
+                callback.data = f"register_{tournament_id}"
+                callback.from_user = message.from_user
+                callback.message = message
+                callback.answer = AsyncMock()
+
+                await callback_register(callback)
+                return
+
+        # /start register -> общий список турниров для регистрации
+        if deep_link_param == "register":
+            from .registration import callback_cmd_register
+
+            callback = AsyncMock(spec=CallbackQuery)
+            callback.from_user = message.from_user
+            callback.message = message
+            callback.answer = AsyncMock()
+
+            await callback_cmd_register(callback)
 
 
 @router.message(F.text == "🏆 Турниры")
