@@ -403,8 +403,19 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
         
         # Отправляем в Telegram
         from apps.telegram_bot.bot.bot_instance import get_bot
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         bot = get_bot()
-        
+
+        # Кнопка "Заявиться на турнир" — поведение как в боте (callback_data="cmd_register")
+        reply_markup = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✍️ Заявиться на турнир",
+                    callback_data="cmd_register",
+                )
+            ]
+        ])
+
         message_id = None
         
         if settings.announcement_mode == 'edit_single' and settings.last_announcement_message_id:
@@ -434,7 +445,8 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
                     msg = await bot.send_message(
                         chat_id=settings.telegram_chat_id,
                         text=announcement_text,
-                        parse_mode="Markdown"
+                        parse_mode="Markdown",
+                        reply_markup=reply_markup,
                     )
                     return msg.message_id
             
@@ -445,7 +457,8 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
                 msg = await bot.send_message(
                     chat_id=settings.telegram_chat_id,
                     text=announcement_text,
-                    parse_mode="Markdown"
+                    parse_mode="Markdown",
+                    reply_markup=reply_markup,
                 )
                 return msg.message_id
             
