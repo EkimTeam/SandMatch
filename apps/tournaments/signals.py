@@ -179,7 +179,6 @@ def check_roster_change_for_announcement(sender, instance, created, **kwargs):
         
         # Вычисляем хеш текущего состава
         import hashlib
-        from apps.tournaments.registration_models import TournamentRegistration
         
         main_registrations = TournamentRegistration.objects.filter(
             tournament=instance.tournament,
