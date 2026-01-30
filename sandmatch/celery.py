@@ -18,10 +18,11 @@ app.autodiscover_tasks()
 
 # Периодические задачи
 app.conf.beat_schedule = {
-    # Проверка предстоящих турниров каждый час
+    # Проверка предстоящих турниров каждые 5 минут (для тестирования)
+    # В продакшене можно изменить на crontab(minute=0) для проверки раз в час
     'check-upcoming-tournaments': {
         'task': 'apps.telegram_bot.tasks.check_upcoming_tournaments',
-        'schedule': crontab(minute=0),  # Каждый час в 00 минут
+        'schedule': 300.0,  # Каждые 5 минут (300 секунд)
     },
     # Очистка старых логов уведомлений раз в день в 3:00
     'cleanup-old-notifications': {

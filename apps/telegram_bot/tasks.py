@@ -355,8 +355,11 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
     from django.utils import timezone
     import asyncio
     
+    logger.info(f"[ANNOUNCEMENT] Начало отправки анонса для турнира {tournament_id}, триггер: {trigger_type}")
+    
     try:
         tournament = Tournament.objects.get(id=tournament_id)
+        logger.info(f"[ANNOUNCEMENT] Турнир найден: {tournament.name}")
         
         # Проверяем наличие настроек анонсов
         try:
@@ -389,17 +392,21 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
             timestamp_field = "last_roster_change_sent"
         
         if not trigger_enabled:
-            logger.info(f"Триггер {trigger_type} отключен для турнира {tournament_id}")
+            logger.info(f"[ANNOUNCEMENT] Триггер {trigger_type} отключен для турнира {tournament_id}")
             return f"Триггер {trigger_type} отключен"
+        
+        logger.info(f"[ANNOUNCEMENT] Триггер {trigger_type} включен, проверяем отправку...")
         
         # Проверяем, не отправляли ли уже
         if timestamp_field and trigger_type != "roster_change":
             if getattr(settings, timestamp_field):
-                logger.info(f"Анонс {trigger_type} уже был отправлен для турнира {tournament_id}")
+                logger.info(f"[ANNOUNCEMENT] Анонс {trigger_type} уже был отправлен для турнира {tournament_id}")
                 return f"Анонс {trigger_type} уже отправлен"
         
+        logger.info(f"[ANNOUNCEMENT] Генерируем текст анонса...")
         # Генерируем текст анонса
         announcement_text = generate_announcement_text(tournament)
+        logger.info(f"[ANNOUNCEMENT] Текст анонса сгенерирован, длина: {len(announcement_text)} символов")
         
         # Отправляем в Telegram
         from apps.telegram_bot.bot.bot_instance import get_bot
@@ -464,6 +471,8 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
             
             message_id = asyncio.run(send_message())
         
+        logger.info(f"[ANNOUNCEMENT] Сообщение отправлено успешно, message_id: {message_id}")
+        
         # Сохраняем message_id для режима редактирования
         if settings.announcement_mode == 'edit_single' and message_id:
             settings.last_announcement_message_id = message_id
@@ -477,6 +486,7 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
             update_fields.append("last_announcement_message_id")
         
         settings.save(update_fields=update_fields)
+        logger.info(f"[ANNOUNCEMENT] Настройки сохранены, анонс {trigger_type} отправлен для турнира {tournament_id}")
         
         mode_str = "отредактирован" if settings.announcement_mode == 'edit_single' and settings.last_announcement_message_id else "отправлен"
         logger.info(f"Анонс турнира {tournament.name} {mode_str} в чат {settings.telegram_chat_id} (триггер: {trigger_type})")
