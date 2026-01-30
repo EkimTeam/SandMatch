@@ -1,5 +1,6 @@
 """Обработчик команды /start"""
 import os
+import asyncio
 from aiogram import Router, F
 from aiogram.filters import CommandStart, StateFilter, Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
@@ -14,6 +15,19 @@ router = Router()
 # URL веб-приложения и имя бота
 WEB_APP_URL = os.getenv('WEB_APP_URL', 'https://beachplay.ru')
 BOT_USERNAME = os.getenv('TELEGRAM_BOT_USERNAME', '')
+
+
+async def _delete_message_later(bot, chat_id: int, message_id: int, delay_seconds: int = 900) -> None:
+    """Удалить сообщение бота через указанную задержку.
+
+    Используется для подсказок в группах, чтобы они не висели в чате вечно.
+    """
+    try:
+        await asyncio.sleep(delay_seconds)
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception:
+        # Игнорируем любые ошибки удаления (сообщение уже удалено, нет прав и т.п.)
+        return
 
 
 @sync_to_async
@@ -78,7 +92,18 @@ async def cmd_chat_id(message: Message):
                     "Если сообщения нет — открой личный диалог со мной и отправь команду /start."
                 )
 
-            await message.answer(hint_text)
+            sent_hint = await message.answer(hint_text)
+
+            # В группе/канале удаляем подсказку через 15 минут, чтобы не захламлять чат
+            if chat.type in {"group", "supergroup", "channel"}:
+                asyncio.create_task(
+                    _delete_message_later(
+                        bot=message.bot,
+                        chat_id=chat.id,
+                        message_id=sent_hint.message_id,
+                        delay_seconds=900,
+                    )
+                )
         except Exception as e:
             if BOT_USERNAME:
                 start_link = f"https://t.me/{BOT_USERNAME}?start=start"
@@ -93,7 +118,18 @@ async def cmd_chat_id(message: Message):
                     "Открой личный диалог со мной и отправь /start, а затем повтори /chat_id."
                 )
 
-            await message.answer(error_hint)
+            sent_error = await message.answer(error_hint)
+
+            # В группе/канале также удаляем сообщение об ошибке через 15 минут
+            if chat.type in {"group", "supergroup", "channel"}:
+                asyncio.create_task(
+                    _delete_message_later(
+                        bot=message.bot,
+                        chat_id=chat.id,
+                        message_id=sent_error.message_id,
+                        delay_seconds=900,
+                    )
+                )
         return
 
     # В личном чате просто выводим ID этого диалога
@@ -104,37 +140,13 @@ async def cmd_chat_id(message: Message):
 async def cmd_start(message: Message):
     """Обработка команды /start.
 
-    В группах не показываем большое меню, а просим написать в личку.
     Полноценное меню доступно только в приватном чате.
-    
+
     Поддерживает Deep Link параметры:
     - /start register — показать турниры для регистрации
     """
-    # В группе/супергруппе показываем краткую подсказку и кнопку-ссылку на бота
+    # В группе/супергруппе вообще не отвечаем на /start, чтобы не спамить чат
     if message.chat.type in {"group", "supergroup"}:
-        if BOT_USERNAME:
-            start_link = f"https://t.me/{BOT_USERNAME}?start=start"
-            text = (
-                "Я BeachPlay-бот и показываю меню только в личных сообщениях. "
-                "Чтобы начать, открой диалог со мной по кнопке ниже."
-            )
-
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Открыть бота",
-                        url=start_link,
-                    )
-                ]
-            ])
-
-            await message.answer(text, reply_markup=keyboard)
-        else:
-            # Фоллбек, если имя бота не задано в окружении
-            await message.answer(
-                "Я BeachPlay-бот и показываю меню только в личных сообщениях. "
-                "Чтобы начать, открой диалог со мной и отправь команду /start."
-            )
         return
 
     # Личный чат: показываем полноценное меню и регистрируем пользователя
