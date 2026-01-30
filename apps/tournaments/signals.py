@@ -15,8 +15,15 @@ def sync_tournament_entry_created(sender, instance, created, **kwargs):
     """
     Синхронизировать TournamentEntry с TournamentRegistration при создании/обновлении.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"[ENTRY_SYNC] Сигнал вызван для TournamentEntry {instance.id}, created: {created}, team: {instance.team}")
+    
     if created or instance.team:
+        logger.info(f"[ENTRY_SYNC] Вызываем sync_tournament_entry_to_registration для турнира {instance.tournament.id}")
         RegistrationService.sync_tournament_entry_to_registration(instance)
+        logger.info(f"[ENTRY_SYNC] Синхронизация завершена")
 
 
 @receiver(post_delete, sender=TournamentEntry)

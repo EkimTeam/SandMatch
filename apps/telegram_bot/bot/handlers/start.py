@@ -41,23 +41,41 @@ async def cmd_chat_id(message: Message):
     # Если команда вызвана в группе/супергруппе/канале — шлём ID в личку
     if chat.type in {"group", "supergroup", "channel"}:
         try:
+            # Формируем подробную информацию о чате
+            info_lines = [
+                f"📋 **Информация о чате '{chat.title}'**",
+                f"",
+                f"🆔 **Chat ID:** `{chat.id}`",
+                f"📱 **Тип:** {chat.type}",
+            ]
+            
+            # Если это сообщение в теме (topic)
+            if hasattr(message, 'message_thread_id') and message.message_thread_id:
+                info_lines.append(f"💬 **Thread ID (тема):** `{message.message_thread_id}`")
+                info_lines.append(f"")
+                info_lines.append(f"⚠️ Для анонсов используй **Chat ID**, а не Thread ID")
+            
+            info_lines.append(f"")
+            info_lines.append(f"✅ Скопируй Chat ID и вставь в настройки анонсов турнира")
+            
             await message.bot.send_message(
                 chat_id=message.from_user.id,
-                text=f"ID чата '{chat.title}' ({chat.type}): {chat.id}"
+                text="\n".join(info_lines),
+                parse_mode="Markdown"
             )
             await message.answer(
-                "Я отправил ID этого чата тебе в личные сообщения. "
+                "Я отправил подробную информацию о чате тебе в личные сообщения. "
                 "Если сообщения нет — сначала открой личный диалог со мной и отправь /start."
             )
-        except Exception:
+        except Exception as e:
             await message.answer(
-                "Не удалось отправить ID в личные сообщения. "
+                f"Не удалось отправить ID в личные сообщения: {e}\n"
                 "Открой личный диалог со мной и отправь /start, а затем повтори /chat_id."
             )
         return
 
     # В личном чате просто выводим ID этого диалога
-    await message.answer(f"ID этого чата: {chat.id}")
+    await message.answer(f"ID этого чата: `{chat.id}`", parse_mode="Markdown")
 
 
 @router.message(CommandStart())

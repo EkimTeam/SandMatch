@@ -772,10 +772,16 @@ class RegistrationService:
         Args:
             tournament_entry: Запись TournamentEntry
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         tournament = tournament_entry.tournament
         team = tournament_entry.team
         
+        logger.info(f"[SYNC_TO_REG] Начало синхронизации TournamentEntry {tournament_entry.id} для турнира {tournament.id}, team: {team}")
+        
         if not team:
+            logger.info(f"[SYNC_TO_REG] Нет команды, пропускаем")
             return
         
         # Проверяем, есть ли уже регистрация для этой команды
@@ -785,6 +791,7 @@ class RegistrationService:
         ).first()
         
         if existing_reg:
+            logger.info(f"[SYNC_TO_REG] Регистрация уже существует (ID: {existing_reg.id}), пересчитываем статусы")
             # Обновляем существующую регистрацию
             # Пересчитываем статусы всех регистраций
             RegistrationService._recalculate_registration_statuses(tournament)
@@ -804,12 +811,16 @@ class RegistrationService:
             else TournamentRegistration.Status.RESERVE_LIST
         )
         
+        logger.info(f"[SYNC_TO_REG] Создаём новую регистрацию, статус: {status}, current_main_count: {current_main_count}, max_teams: {max_teams}")
+        
         # Создаём ОДНУ регистрацию для команды
         # player указывает на player_1, partner на player_2 (если есть)
-        TournamentRegistration.objects.create(
+        reg = TournamentRegistration.objects.create(
             tournament=tournament,
             player=team.player_1,
             partner=team.player_2,
             team=team,
             status=status
         )
+        
+        logger.info(f"[SYNC_TO_REG] Регистрация создана (ID: {reg.id}), статус: {reg.status}")
