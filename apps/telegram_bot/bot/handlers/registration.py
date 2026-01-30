@@ -319,13 +319,13 @@ async def callback_cancel_registration_choice(callback: CallbackQuery):
     """
     Отмена выбора режима регистрации
     """
-    from apps.telegram_bot.bot.keyboards.inline import get_main_menu_keyboard
+    from .start import cmd_start
 
     await callback.answer("Регистрация отменена")
-    await callback.message.edit_text(
-        "❌ Регистрация отменена",
-        reply_markup=get_main_menu_keyboard(),
-    )
+    # Показываем короткое сообщение об отмене в текущем сообщении
+    await callback.message.edit_text("❌ Регистрация отменена")
+    # Затем отправляем пользователю то же главное меню, что и после /start
+    await cmd_start(callback.message)
 
 
 @router.callback_query(F.data.startswith("cancel_reg_"))
