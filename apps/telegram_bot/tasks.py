@@ -433,7 +433,15 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
 
         # Для избежания ошибок "Event loop is closed" создаём Bot внутри каждого
         # async-вызова и закрываем его сессию после использования.
-        if settings.announcement_mode == 'edit_single' and settings.last_announcement_message_id:
+        #
+        # Особый случай: для roster_change мы всегда отправляем новое сообщение
+        # в конец чата и по возможности удаляем предыдущее, чтобы пользователи
+        # видели актуальную информацию, а не тихое редактирование старого поста.
+        if (
+            settings.announcement_mode == 'edit_single'
+            and settings.last_announcement_message_id
+            and trigger_type != 'roster_change'
+        ):
             # Режим редактирования: пытаемся отредактировать существующее сообщение
             async def edit_message():
                 bot = Bot(
@@ -479,6 +487,22 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
                     default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
                 )
                 try:
+                    # Для roster_change пробуем удалить предыдущее сообщение,
+                    # чтобы новое оказалось внизу чата
+                    if trigger_type == 'roster_change' and settings.last_announcement_message_id:
+                        try:
+                            await bot.delete_message(
+                                chat_id=settings.telegram_chat_id,
+                                message_id=settings.last_announcement_message_id,
+                            )
+                            logger.info(
+                                f"[ANNOUNCEMENT] Предыдущее сообщение {settings.last_announcement_message_id} удалено перед отправкой нового (roster_change)"
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"[ANNOUNCEMENT] Не удалось удалить предыдущее сообщение {settings.last_announcement_message_id} перед отправкой нового (roster_change): {e}"
+                            )
+
                     msg = await bot.send_message(
                         chat_id=settings.telegram_chat_id,
                         text=announcement_text,
