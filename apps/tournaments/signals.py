@@ -220,6 +220,8 @@ def check_roster_change_for_announcement(sender, instance, created, **kwargs):
     """
     Отслеживаем изменения состава участников для отправки анонсов в Telegram чат.
     Срабатывает при любых изменениях: добавление в основу, резерв, "ищу пару".
+    
+    Для парных операций использует transaction_id для группировки событий и предотвращения дубликатов.
     """
     import logging
     logger = logging.getLogger(__name__)
@@ -229,6 +231,8 @@ def check_roster_change_for_announcement(sender, instance, created, **kwargs):
     # Проверяем наличие настроек анонсов
     try:
         from apps.tournaments.models import TournamentAnnouncementSettings
+        from apps.tournaments.services.registration_service import RegistrationService
+        
         settings = instance.tournament.announcement_settings
         
         logger.info(f"[ROSTER_CHANGE] Настройки найдены для турнира {instance.tournament.id}, send_on_roster_change: {settings.send_on_roster_change}")
@@ -265,12 +269,20 @@ def check_roster_change_for_announcement(sender, instance, created, **kwargs):
         settings.save(update_fields=['roster_hash', 'updated_at'])
 
         logger.info(f"[ROSTER_CHANGE] (post_save) Хеш изменился, отправляем анонс")
-        # Отправляем анонс асинхронно
+        
+        # Получаем transaction_id для группировки парных операций
+        transaction_id = RegistrationService.get_transaction_id()
+        
+        # Отправляем анонс асинхронно с transaction_id
         from apps.telegram_bot.tasks import send_tournament_announcement_to_chat
         transaction.on_commit(
-            lambda: send_tournament_announcement_to_chat.delay(instance.tournament.id, 'roster_change')
+            lambda: send_tournament_announcement_to_chat.delay(
+                instance.tournament.id, 
+                'roster_change',
+                transaction_id=transaction_id
+            )
         )
-        logger.info(f"[ROSTER_CHANGE] Задача отправки анонса поставлена в очередь")
+        logger.info(f"[ROSTER_CHANGE] Задача отправки анонса поставлена в очередь (transaction_id: {transaction_id})")
     
     except Exception as e:
         # Не ломаем основной процесс регистрации при ошибках анонсов
