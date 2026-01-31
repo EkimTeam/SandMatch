@@ -342,20 +342,35 @@ def send_partner_cancelled_notification(registration_id: int):
 
 
 @shared_task
-def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str):
+def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str, transaction_id: str = None):
     """
     Отправка анонса турнира в Telegram чат
     
     Args:
         tournament_id: ID турнира
         trigger_type: тип триггера (creation, 72h, 48h, 24h, 2h, roster_change)
+        transaction_id: ID транзакции для группировки парных операций (опционально)
     """
     from apps.tournaments.models import Tournament, TournamentAnnouncementSettings
     from apps.tournaments.api_views import generate_announcement_text
     from django.utils import timezone
+    from django.core.cache import cache
     from datetime import timedelta
     
-    logger.info(f"[ANNOUNCEMENT] Начало отправки анонса для турнира {tournament_id}, триггер: {trigger_type}")
+    logger.info(f"[ANNOUNCEMENT] Начало отправки анонса для турнира {tournament_id}, триггер: {trigger_type}, transaction_id: {transaction_id}")
+    
+    # Для парных операций проверяем, не была ли уже отправлена задача для этой транзакции
+    if transaction_id and trigger_type == 'roster_change':
+        cache_key = f"announcement_sent_{tournament_id}_{trigger_type}_{transaction_id}"
+        
+        # Проверяем, была ли уже отправка для этой транзакции
+        if cache.get(cache_key):
+            logger.info(f"[ANNOUNCEMENT] Анонс для transaction_id {transaction_id} уже отправлен, пропускаем дубликат")
+            return "Дубликат анонса для парной операции пропущен"
+        
+        # Помечаем транзакцию как обработанную (TTL 10 секунд)
+        cache.set(cache_key, True, timeout=10)
+        logger.info(f"[ANNOUNCEMENT] Транзакция {transaction_id} помечена как обработанная")
     
     try:
         tournament = Tournament.objects.get(id=tournament_id)
