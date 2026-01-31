@@ -204,9 +204,9 @@ def recalculate_on_registration_deleted(sender, instance, **kwargs):
 
         logger.info("[ROSTER_CHANGE] (post_delete) Хеш изменился, отправляем анонс")
         
-        # Получаем transaction_id из экземпляра для группировки парных операций
+        # Получаем transaction_id из контекста для группировки парных операций
         from apps.tournaments.services.registration_service import RegistrationService
-        transaction_id = RegistrationService._get_transaction_id_from_instance(instance)
+        transaction_id = RegistrationService._get_transaction_id()
         
         # Захватываем переменные для lambda
         tournament_id = tournament.id
@@ -283,9 +283,9 @@ def check_roster_change_for_announcement(sender, instance, created, **kwargs):
 
         logger.info(f"[ROSTER_CHANGE] (post_save) Хеш изменился, отправляем анонс")
         
-        # Получаем transaction_id из экземпляра для группировки парных операций
-        transaction_id = RegistrationService._get_transaction_id_from_instance(instance)
-        logger.info(f"[ROSTER_CHANGE] (post_save) Получен transaction_id из instance: {transaction_id}, instance.id={instance.id}, player={instance.player_id}, partner={instance.partner_id}")
+        # Получаем transaction_id из контекста для группировки парных операций
+        transaction_id = RegistrationService._get_transaction_id()
+        logger.info(f"[ROSTER_CHANGE] (post_save) Получен transaction_id из контекста: {transaction_id}, instance.id={instance.id}, player={instance.player_id}, partner={instance.partner_id}")
         
         # Отправляем анонс асинхронно с transaction_id
         from apps.telegram_bot.tasks import send_tournament_announcement_to_chat
