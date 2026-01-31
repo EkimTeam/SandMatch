@@ -12,11 +12,11 @@
 
 ### Архитектура решения
 
-1. **Thread-local storage** для `transaction_id` в `RegistrationService`
+1. **Атрибуты экземпляра** для хранения `transaction_id` на объектах `TournamentRegistration`
 2. **Генерация UUID** при начале парной операции
-3. **Передача `transaction_id`** через сигналы в Celery-задачу
+3. **Передача `transaction_id`** через атрибуты экземпляра в сигналы, затем в Celery-задачу
 4. **Django cache** для отслеживания обработанных транзакций
-5. **Автоматическая очистка** `transaction_id` после завершения операции
+5. **Совместимость с `@sync_to_async`** — работает в разных потоках
 
 ### Изменённые файлы
 
@@ -25,44 +25,51 @@
 Добавлены методы для работы с `transaction_id`:
 
 ```python
-import threading
 import uuid
-
-_thread_locals = threading.local()
 
 class RegistrationService:
     @staticmethod
-    def set_transaction_id(transaction_id: str):
-        """Установить transaction_id для текущего потока"""
-        _thread_locals.transaction_id = transaction_id
+    def _set_transaction_id_on_instance(instance, transaction_id: str):
+        """Установить transaction_id на экземпляре регистрации (для передачи в сигналы)"""
+        instance._transaction_id = transaction_id
     
     @staticmethod
-    def get_transaction_id() -> Optional[str]:
-        """Получить transaction_id текущего потока"""
-        return getattr(_thread_locals, 'transaction_id', None)
-    
-    @staticmethod
-    def clear_transaction_id():
-        """Очистить transaction_id текущего потока"""
-        if hasattr(_thread_locals, 'transaction_id'):
-            delattr(_thread_locals, 'transaction_id')
+    def _get_transaction_id_from_instance(instance) -> Optional[str]:
+        """Получить transaction_id из экземпляра регистрации"""
+        return getattr(instance, '_transaction_id', None)
 ```
 
 Модифицированы методы парных операций:
 
-- `register_with_partner()` — генерирует UUID и устанавливает `transaction_id` в `try/finally`
+- `register_with_partner()` — генерирует UUID и устанавливает `_transaction_id` на обоих экземплярах регистрации
 - `leave_pair()` — аналогично
-- `cancel_registration()` — аналогично
+- `cancel_registration()` — устанавливает `_transaction_id` перед удалением
+
+Пример из `register_with_partner()`:
+```python
+# Генерируем transaction_id для группировки событий пары
+transaction_id = str(uuid.uuid4())
+
+# ... создание/обновление регистраций ...
+
+# Устанавливаем transaction_id для передачи в сигнал
+RegistrationService._set_transaction_id_on_instance(player_registration, transaction_id)
+player_registration.save()
+
+# То же для напарника
+RegistrationService._set_transaction_id_on_instance(partner_registration, transaction_id)
+partner_registration.save()
+```
 
 #### 2. `apps/tournaments/signals.py`
 
-Сигнал `check_roster_change_for_announcement` передаёт `transaction_id` в задачу:
+Сигнал `check_roster_change_for_announcement` получает `transaction_id` из экземпляра и передаёт в задачу:
 
 ```python
 from apps.tournaments.services.registration_service import RegistrationService
 
-# Получаем transaction_id для группировки парных операций
-transaction_id = RegistrationService.get_transaction_id()
+# Получаем transaction_id из экземпляра для группировки парных операций
+transaction_id = RegistrationService._get_transaction_id_from_instance(instance)
 
 # Отправляем анонс асинхронно с transaction_id
 from apps.telegram_bot.tasks import send_tournament_announcement_to_chat
@@ -101,14 +108,13 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str, 
 
 1. **Регистрация пары:**
    - `register_with_partner()` генерирует UUID: `"abc123-..."`
-   - Устанавливает его в thread-local: `set_transaction_id("abc123-...")`
+   - Устанавливает его на обоих экземплярах: `player_registration._transaction_id = "abc123-..."`
    - Сохраняет обе регистрации (игрок + напарник)
-   - Срабатывают 2 сигнала `post_save`
-   - Оба сигнала получают **один и тот же** `transaction_id` из thread-local
+   - Срабатывают 2 сигнала `post_save` (для каждого экземпляра)
+   - Оба сигнала получают **один и тот же** `transaction_id` из атрибута `instance._transaction_id`
    - Оба сигнала ставят задачу с `transaction_id="abc123-..."`
    - **Первая задача:** проверяет кеш → не найдено → помечает `abc123` как обработанный → отправляет анонс
    - **Вторая задача:** проверяет кеш → найдено `abc123` → **пропускает отправку**
-   - В `finally` очищается `transaction_id`
 
 2. **Одиночная регистрация:**
    - `transaction_id` не устанавливается (`None`)
@@ -120,8 +126,8 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str, 
 
 - ✅ **Нет дубликатов** при парных операциях
 - ✅ **Не влияет** на одиночные регистрации
-- ✅ **Thread-safe** (каждый поток имеет свой `transaction_id`)
-- ✅ **Автоматическая очистка** через `try/finally`
+- ✅ **Работает с `@sync_to_async`** — не зависит от потоков, т.к. использует атрибуты экземпляра
+- ✅ **Простота** — нет необходимости в `try/finally` для очистки
 - ✅ **Минимальное время жизни** в кеше (10 секунд)
 - ✅ **Обратная совместимость** (старый код без `transaction_id` работает как раньше)
 
