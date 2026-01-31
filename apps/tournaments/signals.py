@@ -208,12 +208,16 @@ def recalculate_on_registration_deleted(sender, instance, **kwargs):
         from apps.tournaments.services.registration_service import RegistrationService
         transaction_id = RegistrationService._get_transaction_id_from_instance(instance)
         
+        # Захватываем переменные для lambda
+        tournament_id = tournament.id
+        txn_id = transaction_id
+        
         from apps.telegram_bot.tasks import send_tournament_announcement_to_chat
         transaction.on_commit(
             lambda: send_tournament_announcement_to_chat.delay(
-                tournament.id, 
+                tournament_id, 
                 'roster_change',
-                transaction_id=transaction_id
+                transaction_id=txn_id
             )
         )
     except Exception as e:
@@ -281,6 +285,7 @@ def check_roster_change_for_announcement(sender, instance, created, **kwargs):
         
         # Получаем transaction_id из экземпляра для группировки парных операций
         transaction_id = RegistrationService._get_transaction_id_from_instance(instance)
+        logger.info(f"[ROSTER_CHANGE] (post_save) Получен transaction_id из instance: {transaction_id}, instance.id={instance.id}, player={instance.player_id}, partner={instance.partner_id}")
         
         # Отправляем анонс асинхронно с transaction_id
         from apps.telegram_bot.tasks import send_tournament_announcement_to_chat
