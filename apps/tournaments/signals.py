@@ -203,9 +203,18 @@ def recalculate_on_registration_deleted(sender, instance, **kwargs):
         settings.save(update_fields=['roster_hash', 'updated_at'])
 
         logger.info("[ROSTER_CHANGE] (post_delete) Хеш изменился, отправляем анонс")
+        
+        # Получаем transaction_id из экземпляра для группировки парных операций
+        from apps.tournaments.services.registration_service import RegistrationService
+        transaction_id = RegistrationService._get_transaction_id_from_instance(instance)
+        
         from apps.telegram_bot.tasks import send_tournament_announcement_to_chat
         transaction.on_commit(
-            lambda: send_tournament_announcement_to_chat.delay(tournament.id, 'roster_change')
+            lambda: send_tournament_announcement_to_chat.delay(
+                tournament.id, 
+                'roster_change',
+                transaction_id=transaction_id
+            )
         )
     except Exception as e:
         logger.error(f"[ROSTER_CHANGE] Ошибка при отправке анонса после удаления: {e}", exc_info=True)
@@ -270,8 +279,8 @@ def check_roster_change_for_announcement(sender, instance, created, **kwargs):
 
         logger.info(f"[ROSTER_CHANGE] (post_save) Хеш изменился, отправляем анонс")
         
-        # Получаем transaction_id для группировки парных операций
-        transaction_id = RegistrationService.get_transaction_id()
+        # Получаем transaction_id из экземпляра для группировки парных операций
+        transaction_id = RegistrationService._get_transaction_id_from_instance(instance)
         
         # Отправляем анонс асинхронно с transaction_id
         from apps.telegram_bot.tasks import send_tournament_announcement_to_chat
