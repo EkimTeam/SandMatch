@@ -1,6 +1,8 @@
 """
 Обработчик команды /link - связывание с аккаунтом
 """
+import logging
+
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -13,6 +15,7 @@ from apps.telegram_bot.models import TelegramUser, LinkCode
 from apps.players.models import Player
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 
 @sync_to_async
@@ -109,56 +112,72 @@ async def cmd_link(message: Message):
     """
     Обработка команды /link [КОД]
     """
-    # Получаем Telegram пользователя
-    telegram_user = await get_telegram_user(message.from_user.id)
-    if not telegram_user:
-        await message.answer(
-            "❌ Ошибка: твой Telegram аккаунт не найден в системе.\n"
-            "Отправь /start для регистрации."
-        )
-        return
-    
-    # Проверяем, не связан ли уже
-    if telegram_user.user:
-        await message.answer(
-            f"✅ Твой Telegram уже связан с аккаунтом:\n"
-            f"{hbold(telegram_user.user.get_full_name() or telegram_user.user.username)}\n\n"
-            f"Для отвязки обратись к администратору."
-        )
-        return
-    
-    # Извлекаем код из команды
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        await message.answer(
-            f"Для связывания аккаунта:\n\n"
-            f"1️⃣ Зайди на {hbold('beachplay.ru')}\n"
-            f"2️⃣ В профиле нажми {hbold('Связать с Telegram')}\n"
-            f"3️⃣ Скопируй код и отправь мне:\n"
-            f"   {hcode('/link ТВОЙ_КОД')}\n\n"
-            f"Пример: {hcode('/link ABC123')}"
-        )
-        return
-    
-    code = args[1].strip()
-    
-    # Валидируем и используем код
+    logger.info(
+        "[LINK] Received /link from telegram_id=%s username=%s text=%r",
+        message.from_user.id,
+        message.from_user.username,
+        message.text,
+    )
+
     try:
-        success, msg, user = await validate_and_use_code(code, telegram_user)
-    except Exception as e:
-        # Временный блок для дебага: показываем текст ошибки вместо немого падения
-        await message.answer(f"❌ Внутренняя ошибка при связывании: {e}")
-        return
-    
-    if success:
+        # Получаем Telegram пользователя
+        telegram_user = await get_telegram_user(message.from_user.id)
+        if not telegram_user:
+            await message.answer(
+                "❌ Ошибка: твой Telegram аккаунт не найден в системе.\n"
+                "Отправь /start для регистрации."
+            )
+            return
+        
+        # Проверяем, не связан ли уже
+        if telegram_user.user:
+            await message.answer(
+                f"✅ Твой Telegram уже связан с аккаунтом:\n"
+                f"{hbold(telegram_user.user.get_full_name() or telegram_user.user.username)}\n\n"
+                f"Для отвязки обратись к администратору."
+            )
+            return
+        
+        # Извлекаем код из команды
+        args = message.text.split(maxsplit=1)
+        if len(args) < 2:
+            await message.answer(
+                f"Для связывания аккаунта:\n\n"
+                f"1️⃣ Зайди на {hbold('beachplay.ru')}\n"
+                f"2️⃣ В профиле нажми {hbold('Связать с Telegram')}\n"
+                f"3️⃣ Скопируй код и отправь мне:\n"
+                f"   {hcode('/link ТВОЙ_КОД')}\n\n"
+                f"Пример: {hcode('/link ABC123')}"
+            )
+            return
+        
+        code = args[1].strip()
+        
+        # Валидируем и используем код
+        try:
+            success, msg, user = await validate_and_use_code(code, telegram_user)
+        except Exception as e:
+            # Временный блок для дебага: показываем текст ошибки вместо немого падения
+            await message.answer(f"❌ Внутренняя ошибка при связывании: {e}")
+            logger.exception("[LINK] Internal error during validate_and_use_code")
+            return
+        
+        if success:
+            await message.answer(
+                f"{msg}\n\n"
+                f"Привет, {hbold(user.get_full_name() or user.username)}! 👋\n\n"
+                f"Теперь ты можешь:\n"
+                f"• Регистрироваться на турниры через бота\n"
+                f"• Получать уведомления о матчах\n"
+                f"• Следить за своим рейтингом\n\n"
+                f"Используй /tournaments для просмотра турниров"
+            )
+        else:
+            await message.answer(msg)
+    except Exception:
+        # Ловим любые неожиданные ошибки в обработчике, логируем и отвечаем пользователю
+        logger.exception("[LINK] Unhandled error in cmd_link")
         await message.answer(
-            f"{msg}\n\n"
-            f"Привет, {hbold(user.get_full_name() or user.username)}! 👋\n\n"
-            f"Теперь ты можешь:\n"
-            f"• Регистрироваться на турниры через бота\n"
-            f"• Получать уведомления о матчах\n"
-            f"• Следить за своим рейтингом\n\n"
-            f"Используй /tournaments для просмотра турниров"
+            "❌ Произошла непредвиденная ошибка при обработке кода связывания. "
+            "Попробуй ещё раз позже или свяжись с администратором."
         )
-    else:
-        await message.answer(msg)
