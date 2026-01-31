@@ -379,7 +379,7 @@ async def handle_website_button(message: Message):
     )
 
 
-@router.message(F.text, StateFilter(None))
+@router.message(F.text & ~F.text.startswith("/"), StateFilter(None))
 async def fallback_text_handler(message: Message, state: FSMContext):
     """Обработчик произвольного текста.
 
@@ -387,10 +387,6 @@ async def fallback_text_handler(message: Message, state: FSMContext):
     """
     # В группах/каналах никак не реагируем на произвольный текст
     if message.chat.type in {"group", "supergroup", "channel"}:
-        return
-
-    # В личке не перебиваем стандартные команды, которые начинаются с "/"
-    if message.text and message.text.startswith("/"):
         return
 
     await message.answer("Чтобы начать, отправь /start.")
