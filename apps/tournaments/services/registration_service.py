@@ -30,7 +30,10 @@ class RegistrationService:
     @staticmethod
     def _set_transaction_id_on_instance(instance, transaction_id: str):
         """Установить transaction_id на экземпляре регистрации (для передачи в сигналы)"""
+        import logging
+        logger = logging.getLogger(__name__)
         instance._transaction_id = transaction_id
+        logger.info(f"[TRANSACTION_ID] Установлен transaction_id={transaction_id} на instance.id={instance.id if instance.id else 'NEW'}, player={getattr(instance, 'player_id', None)}")
     
     @staticmethod
     def _get_transaction_id_from_instance(instance) -> Optional[str]:
