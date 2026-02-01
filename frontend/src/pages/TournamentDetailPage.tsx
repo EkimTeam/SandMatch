@@ -157,6 +157,23 @@ export const TournamentDetailPage: React.FC = () => {
   const [setFormats, setSetFormats] = useState<SetFormatDict[]>([]);
   const [showInitialRatingModal, setShowInitialRatingModal] = useState(false);
   const [showCompleteRatingChoice, setShowCompleteRatingChoice] = useState(false);
+  
+  const handleRollbackTournamentCompletion = async () => {
+    if (!t || role !== 'ADMIN') return;
+    const confirmed = window.confirm('Откатить завершение турнира? Рейтинги за этот турнир будут отменены, статус станет "Активен".');
+    if (!confirmed) return;
+    try {
+      setSaving(true);
+      await tournamentApi.rollbackComplete(t.id);
+      alert('Завершение турнира откатано, статус снова "Активен".');
+      window.location.href = `/tournaments/${t.id}`;
+    } catch (e: any) {
+      console.error('Failed to rollback tournament completion', e);
+      alert(e?.response?.data?.error || 'Не удалось откатить завершение турнира');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleOpenEditSettings = () => {
     if (!t) return;
@@ -2973,7 +2990,7 @@ export const TournamentDetailPage: React.FC = () => {
         {role !== 'REFEREE' && (
           <>
             <button className="btn" onClick={handleShare}>Поделиться</button>
-            {canManageTournament && (
+            {t && canManageTournament && t.status === 'created' && (
               <button
                 className="btn"
                 type="button"
@@ -3001,6 +3018,17 @@ export const TournamentDetailPage: React.FC = () => {
                 onClick={handleShowTextResults}
               >
                 Результаты текстом
+              </button>
+            )}
+            {t && t.status === 'completed' && role === 'ADMIN' && (
+              <button
+                className="btn"
+                type="button"
+                disabled={saving}
+                onClick={handleRollbackTournamentCompletion}
+                style={{ background: BUTTON_COLORS.DANGER, borderColor: BUTTON_COLORS.DANGER }}
+              >
+                Откатить завершение турнира
               </button>
             )}
           </>

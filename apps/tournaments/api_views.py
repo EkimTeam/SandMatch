@@ -20,6 +20,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.db import transaction
+import logging
 from typing import Optional
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
@@ -4501,6 +4502,7 @@ def tournament_complete(request, pk: int):
     3. Рассчитать рейтинг с учетом is_out_of_competition.
     4. Завершить турнир.
     """
+    logger = logging.getLogger(__name__)
     t = get_object_or_404(Tournament, pk=pk)
     
     from apps.players.models import PlayerRatingDynamic, Player
@@ -4570,6 +4572,70 @@ def tournament_complete(request, pk: int):
             # Ошибки пересчёта мест не должны ломать завершение турнира
             pass
     
+    return Response({"ok": True})
+
+
+@csrf_exempt
+@api_view(["POST", "OPTIONS"])
+@permission_classes([IsAdmin])
+def tournament_rollback_complete(request, pk: int):
+    """Откатить завершение турнира.
+
+    Логика:
+    1. Откатить рейтинги игроков по данному турниру (аналог команды cleanup_tournament_rating).
+    2. Удалить PlayerRatingHistory и PlayerRatingDynamic для этого турнира.
+    3. Перевести турнир из COMPLETED обратно в ACTIVE.
+    """
+    t = get_object_or_404(Tournament, pk=pk)
+
+    # Разрешаем откат только для завершённых турниров
+    if t.status != Tournament.Status.COMPLETED:
+        return Response({"ok": False, "error": "Турнир ещё не завершён"}, status=400)
+
+    from apps.players.models import Player, PlayerRatingHistory, PlayerRatingDynamic
+
+    with transaction.atomic():
+        # Собираем агрегаты рейтинга по турниру
+        dyn_qs = PlayerRatingDynamic.objects.select_for_update().filter(tournament_id=t.id)
+        if dyn_qs.exists():
+            changes = list(dyn_qs.values("player_id", "total_change"))
+            affected_players = {row["player_id"] for row in changes}
+
+            # Откатим current_rating у затронутых игроков
+            for row in changes:
+                pid = row["player_id"]
+                delta = int(round(row["total_change"] or 0))
+                if delta == 0:
+                    continue
+                try:
+                    p = Player.objects.select_for_update().get(id=pid)
+                except Player.DoesNotExist:
+                    continue
+                before = int(p.current_rating or 0)
+                after = before - delta
+                if after < 0:
+                    after = 0
+                p.current_rating = after
+                p.save(update_fields=["current_rating"])
+
+            # Удаляем историю и агрегаты по турниру
+            PlayerRatingHistory.objects.filter(tournament_id=t.id).delete()
+            dyn_qs.delete()
+
+        # Переводим турнир обратно в статус ACTIVE
+        t.status = Tournament.Status.ACTIVE
+        t.save(update_fields=["status"])
+
+    # Логируем операцию отката завершения турнира
+    logger = logging.getLogger(__name__)
+    user = request.user
+    logger.info(
+        "[TOURNAMENT_ROLLBACK_COMPLETE] user_id=%s username=%s tournament_id=%s",
+        getattr(user, "id", None),
+        getattr(user, "username", None),
+        t.id,
+    )
+
     return Response({"ok": True})
 
 

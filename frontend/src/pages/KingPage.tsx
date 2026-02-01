@@ -94,6 +94,109 @@ export const KingPage: React.FC = () => {
   const [showTextResultsModal, setShowTextResultsModal] = useState(false);
   const [textResults, setTextResults] = useState<string>('');
   const [loadingTextResults, setLoadingTextResults] = useState(false);
+  const [showAnnouncementModal, setShowAnnouncementModal] = useState(false);
+  const [announcementText, setAnnouncementText] = useState<string>('');
+  const [loadingAnnouncement, setLoadingAnnouncement] = useState(false);
+  const [showAnnouncementSettingsModal, setShowAnnouncementSettingsModal] = useState(false);
+  const [announcementSettings, setAnnouncementSettings] = useState<{
+    telegram_chat_id: string;
+    announcement_mode: 'new_messages' | 'edit_single';
+    send_on_creation: boolean;
+    send_72h_before: boolean;
+    send_48h_before: boolean;
+    send_24h_before: boolean;
+    send_2h_before: boolean;
+    send_on_roster_change: boolean;
+  } | null>(null);
+  const [loadingAnnouncementSettings, setLoadingAnnouncementSettings] = useState(false);
+  const [savingAnnouncementSettings, setSavingAnnouncementSettings] = useState(false);
+  
+  const handleRollbackTournamentCompletion = async () => {
+    if (!t || role !== 'ADMIN') return;
+    const confirmed = window.confirm('Откатить завершение турнира? Рейтинги за этот турнир будут отменены, статус станет "Активен".');
+    if (!confirmed) return;
+    try {
+      setSaving(true);
+      await tournamentApi.rollbackComplete(t.id);
+      alert('Завершение турнира откатано, статус снова "Активен".');
+      window.location.href = `/tournaments/${t.id}/king`;
+    } catch (e: any) {
+      console.error('Failed to rollback tournament completion', e);
+      alert(e?.response?.data?.error || 'Не удалось откатить завершение турнира');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleShowAnnouncementText = async () => {
+    if (!t) return;
+    try {
+      setLoadingAnnouncement(true);
+      const res = await tournamentApi.getAnnouncementText(t.id);
+      setAnnouncementText(res?.text || '');
+      setShowAnnouncementModal(true);
+    } catch (e) {
+      console.error('Failed to load announcement text', e);
+      alert('Не удалось загрузить текст анонса');
+    } finally {
+      setLoadingAnnouncement(false);
+    }
+  };
+
+  const handleOpenAnnouncementSettings = async () => {
+    if (!t || !canManageTournament || t.status !== 'created') return;
+    try {
+      setLoadingAnnouncementSettings(true);
+      const data = await tournamentApi.getAnnouncementSettings(t.id);
+      setAnnouncementSettings({ ...data });
+      setShowAnnouncementSettingsModal(true);
+    } catch (e: any) {
+      console.error('Failed to load announcement settings', e);
+      alert(e?.response?.data?.detail || 'Не удалось загрузить настройки авто-анонсов');
+    } finally {
+      setLoadingAnnouncementSettings(false);
+    }
+  };
+
+  const handleSaveAnnouncementSettings = async () => {
+    if (!t || !announcementSettings) return;
+    try {
+      setSavingAnnouncementSettings(true);
+      const payload = { ...announcementSettings };
+      const updated = await tournamentApi.updateAnnouncementSettings(t.id, payload);
+      setAnnouncementSettings({ ...updated });
+      setShowAnnouncementSettingsModal(false);
+    } catch (e: any) {
+      console.error('Failed to save announcement settings', e);
+      const detail = e?.response?.data?.detail || e?.message || 'Не удалось сохранить настройки авто-анонсов';
+      alert(detail);
+    } finally {
+      setSavingAnnouncementSettings(false);
+    }
+  };
+
+  const handleCopyAnnouncementText = async () => {
+    try {
+      if (!announcementText) return;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(announcementText);
+        alert('Текст анонса скопирован в буфер обмена');
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = announcementText;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-1000px';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        alert('Текст анонса скопирован в буфер обмена');
+      }
+    } catch (e) {
+      console.error('Copy failed', e);
+      alert('Не удалось скопировать текст анонса');
+    }
+  };
   
   // Статистика King с бэкенда (аналогично groupStats в круговой)
   // Бэкенд отдаёт сразу три режима: NO, G-, M+ (поля без суффикса, с _g и _m)
@@ -1809,54 +1912,86 @@ export const KingPage: React.FC = () => {
               </div>
             )}
 
-            {/* Кнопки в подвале */}
-            <div style={{ marginTop: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }} data-export-exclude="true">
-              {canManageTournament && t.status === 'active' && (
-                <button className="btn" onClick={completeTournament} disabled={saving}>Завершить турнир</button>
-              )}
-              {(t as any).can_delete && (
-                <button className="btn" onClick={deleteTournament} disabled={saving} style={{ background: '#dc3545', borderColor: '#dc3545' }}>Удалить турнир</button>
-              )}
-              {canManageTournament && t.status === 'active' && (
-                <button
-                  className="btn"
-                  onClick={async () => {
-                    if (!t) return;
-                    try {
-                      setSaving(true);
-                      // Аналогично RR: возвращаем турнир в статус "Регистрация"
-                      await tournamentApi.unlockParticipants(t.id);
-                      await reload();
-                    } catch (error: any) {
-                      console.error('Failed to return tournament to registration status:', error);
-                      alert(error?.response?.data?.error || 'Не удалось вернуть турнир в статус "Регистрация"');
-                    } finally {
-                      setSaving(false);
-                    }
-                  }}
-                  disabled={saving}
-                >
-                  Вернуть статус "Регистрация"
-                </button>
-              )}
-              {role !== 'REFEREE' && (
-                <>
-                  <button className="btn" onClick={handleShare}>Поделиться</button>
-                  {t.status === 'completed' && (
-                    <button
-                      className="btn"
-                      type="button"
-                      disabled={loadingTextResults}
-                      onClick={handleShowTextResults}
-                    >
-                      Результаты текстом
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
           </div>
         )}
+
+        {/* Кнопки в подвале */}
+        <div style={{ marginTop: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }} data-export-exclude="true">
+          {canManageTournament && t.status === 'active' && (
+            <button className="btn" onClick={completeTournament} disabled={saving}>Завершить турнир</button>
+          )}
+          {(t as any).can_delete && (
+            <button className="btn" onClick={deleteTournament} disabled={saving} style={{ background: '#dc3545', borderColor: '#dc3545' }}>Удалить турнир</button>
+          )}
+          {canManageTournament && t.status === 'active' && (
+            <button
+              className="btn"
+              onClick={async () => {
+                if (!t) return;
+                try {
+                  setSaving(true);
+                  // Аналогично RR: возвращаем турнир в статус "Регистрация"
+                  await tournamentApi.unlockParticipants(t.id);
+                  await reload();
+                } catch (error: any) {
+                  console.error('Failed to return tournament to registration status:', error);
+                  alert(error?.response?.data?.error || 'Не удалось вернуть турнир в статус "Регистрация"');
+                } finally {
+                  setSaving(false);
+                }
+              }}
+              disabled={saving}
+            >
+              Вернуть статус "Регистрация"
+            </button>
+          )}
+          {role !== 'REFEREE' && (
+            <>
+              <button className="btn" onClick={handleShare}>Поделиться</button>
+              {t && canManageTournament && (
+                <button
+                  className="btn"
+                  type="button"
+                  disabled={loadingAnnouncement}
+                  onClick={handleShowAnnouncementText}
+                >
+                  Текст анонса
+                </button>
+              )}
+              {t && canManageTournament && t.status === 'created' && (
+                <button
+                  className="btn"
+                  type="button"
+                  disabled={loadingAnnouncementSettings}
+                  onClick={handleOpenAnnouncementSettings}
+                >
+                  Настройка авто-анонсов
+                </button>
+              )}
+              {t.status === 'completed' && (
+                <button
+                  className="btn"
+                  type="button"
+                  disabled={loadingTextResults}
+                  onClick={handleShowTextResults}
+                >
+                  Результаты текстом
+                </button>
+              )}
+              {t.status === 'completed' && role === 'ADMIN' && (
+                <button
+                  className="btn"
+                  type="button"
+                  disabled={saving}
+                  onClick={handleRollbackTournamentCompletion}
+                  style={{ background: '#dc3545', borderColor: '#dc3545' }}
+                >
+                  Откатить завершение турнира
+                </button>
+              )}
+            </>
+          )}
+        </div>
 
         <div data-export-only="true" style={{ padding: '12px 24px 20px 24px', borderTop: '1px solid #eee', display: 'none', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ fontSize: 14 }}>BeachPlay.ru</div>
@@ -1876,6 +2011,192 @@ export const KingPage: React.FC = () => {
             reload();
           }}
         />
+      )}
+
+      {showAnnouncementModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => setShowAnnouncementModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: '#fff',
+              padding: 20,
+              maxWidth: 600,
+              width: '100%',
+              maxHeight: '80vh',
+              overflow: 'auto',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <textarea
+              readOnly
+              value={announcementText}
+              style={{ width: '100%', height: 260, resize: 'vertical', marginTop: 8, whiteSpace: 'pre' }}
+            />
+            <div style={{ marginTop: 10, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn" type="button" onClick={() => setShowAnnouncementModal(false)}>
+                Закрыть
+              </button>
+              <button className="btn" type="button" onClick={handleCopyAnnouncementText} disabled={!announcementText}>
+                Копировать
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAnnouncementSettingsModal && announcementSettings && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => !savingAnnouncementSettings && setShowAnnouncementSettingsModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: '#fff',
+              padding: 20,
+              maxWidth: 520,
+              width: '100%',
+              maxHeight: '80vh',
+              overflow: 'auto',
+              borderRadius: 8,
+              boxShadow: '0 10px 30px rgba(15,23,42,0.25)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>Настройка авто-анонсов</h3>
+            <div style={{ fontSize: 13, color: '#4b5563', marginBottom: 12 }}>
+              Укажите ID чата или канала Telegram, куда будут отправляться анонсы, и выберите, когда их слать.
+              Telegram-бот должен быть добавлен в этот чат и должен быть там администратором.
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', fontSize: 13, marginBottom: 4 }}>
+                ID чата Telegram
+              </label>
+              <input
+                type="text"
+                className="form-control"
+                value={announcementSettings.telegram_chat_id}
+                onChange={(e) => setAnnouncementSettings(prev => prev ? { ...prev, telegram_chat_id: e.target.value } : prev)}
+                placeholder="Например: -1001234567890"
+                disabled={savingAnnouncementSettings}
+              />
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Режим публикации:</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input
+                    type="radio"
+                    name="announcement_mode"
+                    value="edit_single"
+                    checked={announcementSettings.announcement_mode === 'edit_single'}
+                    onChange={() => setAnnouncementSettings(prev => prev ? { ...prev, announcement_mode: 'edit_single' } : prev)}
+                    disabled={savingAnnouncementSettings}
+                  />
+                  <span>Редактировать одно сообщение (рекомендуется)</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input
+                    type="radio"
+                    name="announcement_mode"
+                    value="new_messages"
+                    checked={announcementSettings.announcement_mode === 'new_messages'}
+                    onChange={() => setAnnouncementSettings(prev => prev ? { ...prev, announcement_mode: 'new_messages' } : prev)}
+                    disabled={savingAnnouncementSettings}
+                  />
+                  <span>Публиковать новые сообщения при каждом обновлении</span>
+                </label>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 600 }}>Когда отправлять анонсы:</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 16, fontSize: 13 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={announcementSettings.send_72h_before}
+                  onChange={(e) => setAnnouncementSettings(prev => prev ? { ...prev, send_72h_before: e.target.checked } : prev)}
+                  disabled={savingAnnouncementSettings}
+                />
+                <span>За 72 часа до начала</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={announcementSettings.send_48h_before}
+                  onChange={(e) => setAnnouncementSettings(prev => prev ? { ...prev, send_48h_before: e.target.checked } : prev)}
+                  disabled={savingAnnouncementSettings}
+                />
+                <span>За 48 часов до начала</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={announcementSettings.send_24h_before}
+                  onChange={(e) => setAnnouncementSettings(prev => prev ? { ...prev, send_24h_before: e.target.checked } : prev)}
+                  disabled={savingAnnouncementSettings}
+                />
+                <span>За 24 часа до начала</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={announcementSettings.send_2h_before}
+                  onChange={(e) => setAnnouncementSettings(prev => prev ? { ...prev, send_2h_before: e.target.checked } : prev)}
+                  disabled={savingAnnouncementSettings}
+                />
+                <span>За 2 часа до начала</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={announcementSettings.send_on_roster_change}
+                  onChange={(e) => setAnnouncementSettings(prev => prev ? { ...prev, send_on_roster_change: e.target.checked } : prev)}
+                  disabled={savingAnnouncementSettings}
+                />
+                <span>При изменении основного состава</span>
+              </label>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => setShowAnnouncementSettingsModal(false)}
+                disabled={savingAnnouncementSettings}
+              >
+                Отмена
+              </button>
+              <button
+                className="btn"
+                type="button"
+                onClick={handleSaveAnnouncementSettings}
+                disabled={savingAnnouncementSettings || !announcementSettings.telegram_chat_id.trim()}
+              >
+                Сохранить
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {schedulePatternModal && (

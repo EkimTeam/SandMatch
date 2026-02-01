@@ -605,6 +605,10 @@ export const tournamentApi = {
     const { data } = await api.post(`/tournaments/${tournamentId}/complete/`, { force });
     return data;
   },
+  rollbackComplete: async (tournamentId: number) => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/rollback_complete/`);
+    return data;
+  },
 
   delete: async (tournamentId: number) => {
     await api.delete(`/tournaments/${tournamentId}/`);
