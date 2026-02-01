@@ -250,13 +250,13 @@ def check_roster_change_for_announcement(sender, instance, created, **kwargs):
     
     Это предотвращает дублирование анонсов при массовых операциях.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     # Пропускаем анонс, если установлен флаг _skip_announcement (для парных операций)
     if getattr(instance, '_skip_announcement', False):
         logger.info(f"[ROSTER_CHANGE] (post_save) Пропускаем анонс для instance.id={instance.id} (флаг _skip_announcement)")
         return
-    
-    import logging
-    logger = logging.getLogger(__name__)
     
     logger.info(f"[ROSTER_CHANGE] Сигнал post_save вызван для регистрации {instance.id}, статус: {instance.status}, created: {created}")
     
