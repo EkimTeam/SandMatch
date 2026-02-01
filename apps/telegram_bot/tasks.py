@@ -138,6 +138,25 @@ def check_upcoming_tournaments():
             # Проверяем наличие настроек анонсов
             try:
                 settings = tournament.announcement_settings
+                
+                # Проверяем, был ли уже отправлен анонс для этого триггера
+                timestamp_field = None
+                if trigger_type == "72h":
+                    timestamp_field = "sent_72h_before"
+                elif trigger_type == "48h":
+                    timestamp_field = "sent_48h_before"
+                elif trigger_type == "24h":
+                    timestamp_field = "sent_24h_before"
+                elif trigger_type == "2h":
+                    timestamp_field = "sent_2h_before"
+                
+                # Если анонс уже был отправлен, пропускаем
+                if timestamp_field:
+                    last_sent = getattr(settings, timestamp_field)
+                    if last_sent:
+                        logger.info(f"[CHECK_TOURNAMENTS] Анонс {trigger_type} для турнира {tournament.id} уже был отправлен {last_sent}, пропускаем")
+                        continue
+                
                 # Отправляем анонс в чат, если настроено
                 send_tournament_announcement_to_chat.delay(tournament.id, trigger_type)
                 sent_tasks += 1
