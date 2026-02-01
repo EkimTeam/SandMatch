@@ -153,6 +153,11 @@ def recalculate_on_registration_deleted(sender, instance, **kwargs):
     
     logger.info(f"[ROSTER_CHANGE] Сигнал post_delete вызван для регистрации {instance.id}, статус был: {instance.status}")
     
+    # Пропускаем анонс, если установлен флаг _skip_announcement (для парных операций)
+    skip_announcement = getattr(instance, '_skip_announcement', False)
+    if skip_announcement:
+        logger.info(f"[ROSTER_CHANGE] (post_delete) Пропускаем анонс для instance.id={instance.id} (флаг _skip_announcement)")
+    
     # Удаляем TournamentEntry если есть команда
     if instance.team:
         TournamentEntry.objects.filter(
@@ -167,7 +172,10 @@ def recalculate_on_registration_deleted(sender, instance, **kwargs):
         lambda: RegistrationService._recalculate_registration_statuses(tournament)
     )
     
-    # Отправляем анонс об изменении состава (с учётом хеша состава)
+    # Отправляем анонс об изменении состава (с учётом хеша состава) только если не пропускаем
+    if skip_announcement:
+        return
+    
     try:
         from apps.tournaments.models import TournamentAnnouncementSettings
         settings = tournament.announcement_settings
@@ -234,8 +242,19 @@ def check_roster_change_for_announcement(sender, instance, created, **kwargs):
     Отслеживаем изменения состава участников для отправки анонсов в Telegram чат.
     Срабатывает при любых изменениях: добавление в основу, резерв, "ищу пару".
     
-    Для парных операций использует transaction_id для группировки событий и предотвращения дубликатов.
+    Логика:
+    - Вычисляем хеш состава турнира (список пар в основном/резервном списке)
+    - Сравниваем с предыдущим хешем в TournamentSettings
+    - Если хеш изменился → отправляем анонс
+    - Если хеш не изменился → пропускаем
+    
+    Это предотвращает дублирование анонсов при массовых операциях.
     """
+    # Пропускаем анонс, если установлен флаг _skip_announcement (для парных операций)
+    if getattr(instance, '_skip_announcement', False):
+        logger.info(f"[ROSTER_CHANGE] (post_save) Пропускаем анонс для instance.id={instance.id} (флаг _skip_announcement)")
+        return
+    
     import logging
     logger = logging.getLogger(__name__)
     
