@@ -366,7 +366,7 @@ def _rank_by_h2h_mini_tournament(tournament: Tournament, group_index: int, team_
 def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[int, dict]) -> List[int]:
     """Ранжирование по правилам ITF.
 
-    Алгоритм ITF:
+    Алгоритм ITF (стандартный):
     1. Победы
     2. Личные встречи (мини-турнир)
     3. Разница сетов
@@ -374,8 +374,28 @@ def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[
     5. Разница геймов
     6. Личные встречи (мини-турнир)
     7. Финальные тай-брейкеры: спец. участник -> рейтинг -> алфавит
+    
+    Для свободного формата:
+    1. Победы (всегда 0)
+    2. Разница сетов
+    3. Личные встречи (мини-турнир)
+    4. Разница геймов
+    5. Личные встречи (мини-турнир)
+    6. Финальные тай-брейкеры: спец. участник -> рейтинг -> алфавит
     """
     priority: List[str] = ["wins", "sets_ratio", "games_ratio"]
+    
+    # Определяем, является ли турнир свободным форматом
+    set_format = getattr(tournament, "set_format", None)
+    is_free_format = False
+    if set_format is not None:
+        try:
+            is_free_format = (
+                int(getattr(set_format, "games_to", 6)) == 0
+                and int(getattr(set_format, "max_sets", 1)) == 0
+            )
+        except Exception:
+            is_free_format = False
 
     # Предрасчёт вспомогательных величин и состав группы
     sets_ratio: Dict[int, float] = {}
@@ -465,6 +485,11 @@ def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[
 
         current_crit = priority[criteria_index]
         
+        # Для свободного формата: пропускаем h2h после wins, применяем только после sets_ratio и games_ratio
+        should_apply_h2h = True
+        if is_free_format and current_crit == "wins":
+            should_apply_h2h = False
+        
         # Группируем команды по значению текущего критерия
         from collections import defaultdict
         groups = defaultdict(list)
@@ -482,24 +507,32 @@ def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[
             if len(group) == 1:
                 result.extend(group)
             elif len(group) == 2:
-                # Для пары применяем личную встречу
-                a, b = group[0], group[1]
-                winner = _head_to_head_winner(tournament, group_index, a, b)
-                if winner == a:
-                    result.extend([a, b])
-                elif winner == b:
-                    result.extend([b, a])
+                if should_apply_h2h:
+                    # Для пары применяем личную встречу
+                    a, b = group[0], group[1]
+                    winner = _head_to_head_winner(tournament, group_index, a, b)
+                    if winner == a:
+                        result.extend([a, b])
+                    elif winner == b:
+                        result.extend([b, a])
+                    else:
+                        # Нет данных о личной встрече — переходим к следующему критерию
+                        result.extend(rank_teams_recursive(group, criteria_index + 1))
                 else:
-                    # Нет данных о личной встрече — переходим к следующему критерию
+                    # Для свободного формата после wins: пропускаем h2h, сразу к следующему критерию
                     result.extend(rank_teams_recursive(group, criteria_index + 1))
             else:
-                # Для 3+ участников: сначала пробуем мини-турнир по личным встречам (ITF)
-                h2h_result = _rank_by_h2h_mini_tournament(tournament, group_index, group, agg)
-                if h2h_result is not None:
-                    # Личные встречи определили порядок
-                    result.extend(h2h_result)
+                if should_apply_h2h:
+                    # Для 3+ участников: сначала пробуем мини-турнир по личным встречам (ITF)
+                    h2h_result = _rank_by_h2h_mini_tournament(tournament, group_index, group, agg)
+                    if h2h_result is not None:
+                        # Личные встречи определили порядок
+                        result.extend(h2h_result)
+                    else:
+                        # Личные встречи не определили порядок — переходим к следующему критерию
+                        result.extend(rank_teams_recursive(group, criteria_index + 1))
                 else:
-                    # Личные встречи не определили порядок — переходим к следующему критерию
+                    # Для свободного формата после wins: пропускаем h2h, сразу к следующему критерию
                     result.extend(rank_teams_recursive(group, criteria_index + 1))
         
         return result
