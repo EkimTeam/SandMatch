@@ -62,7 +62,7 @@ async def callback_register_looking(callback: CallbackQuery):
                 [
                     InlineKeyboardButton(
                         text="📋 Подробнее",
-                        url=f"{WEB_APP_URL}/tournaments/{tournament_id}"
+                        url=f"{WEB_APP_URL}/tournaments/{tournament_id}/registration"
                     )
                 ],
                 [
@@ -297,7 +297,8 @@ async def callback_cancel_search(callback: CallbackQuery, state: FSMContext):
             ),
             InlineKeyboardButton(
                 text="🌐 На BeachPlay.ru",
-                url=f"{WEB_APP_URL}/tournaments/{tournament_id}"
+                # Для турниров, по которым мы показываем регистрацию, ведём на публичную страницу регистрации
+                url=f"{WEB_APP_URL}/tournaments/{tournament_id}/registration"
             )
         ])
         keyboard_buttons.append([

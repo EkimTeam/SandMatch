@@ -468,7 +468,7 @@ async def cmd_tournaments(message: Message):
                 reply_markup=keyboard
             )
     
-    # Турниры для регистрации
+    # Турниры для регистрации (набор участников)
     if registration_tournaments:
         await message.answer(f"{hbold('📝 Турниры для регистрации')}")
         for tournament in registration_tournaments:
@@ -493,7 +493,8 @@ async def cmd_tournaments(message: Message):
                 ),
                 InlineKeyboardButton(
                     text="🌐 На BeachPlay.ru",
-                    url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
+                    # Для турниров с открытой регистрацией ведём на публичную страницу регистрации
+                    url=f"{WEB_APP_URL}/tournaments/{tournament.id}/registration"
                 )
             ])
             keyboard_buttons.append([

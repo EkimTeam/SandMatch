@@ -142,8 +142,10 @@ def generate_announcement_text(tournament) -> str:
     lines.append("")
 
     # Регистрация
+    # Для публичной регистрации используем отдельную страницу /tournaments/{id}/registration,
+    # а не детальную страницу турнира для организаторов.
     base_url = getattr(settings, "FRONTEND_BASE_URL", "https://beachplay.ru").rstrip("/")
-    web_url = f"{base_url}/tournaments/{tournament.id}"
+    web_url = f"{base_url}/tournaments/{tournament.id}/registration"
 
     bot_link = "https://t.me/beachplay_bot"
     lines.append(f"📱Регистрация через тг-бот: [тут]({bot_link}) (нажмите '✍️Заявиться на турнир' и выберите нужный турнир)")
