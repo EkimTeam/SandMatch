@@ -186,6 +186,7 @@ def rank_group(tournament: Tournament, group_index: int, agg: Dict[int, dict]) -
 def _head_to_head_winner(tournament: Tournament, group_index: int, team_a: int, team_b: int) -> int | None:
     """Вернуть id команды-победителя личной встречи внутри группы или None, если нет данных."""
     from apps.matches.models import Match
+
     m = (
         Match.objects.filter(
             tournament=tournament,
@@ -202,9 +203,72 @@ def _head_to_head_winner(tournament: Tournament, group_index: int, team_a: int, 
             team_2_id=team_a,
         ).first()
     )
-    if not m or not m.winner_id:
+
+    if not m:
         return None
-    return int(m.winner_id)
+
+    # Если в матче явно проставлен победитель — используем это значение.
+    if m.winner_id:
+        return int(m.winner_id)
+
+    # Для свободного формата (и на всякий случай для обычного) пробуем вычислить победителя
+    # по сетам/геймам аналогично _aggregate_for_group.
+    set_format = getattr(tournament, "set_format", None)
+    is_free_format = False
+    only_tiebreak_mode = False
+    if set_format is not None:
+        try:
+            is_free_format = (
+                int(getattr(set_format, "games_to", 6)) == 0
+                and int(getattr(set_format, "max_sets", 1)) == 0
+            )
+            only_tiebreak_mode = bool(
+                getattr(set_format, "allow_tiebreak_only_set", False)
+            ) and int(getattr(set_format, "max_sets", 1)) == 1
+        except Exception:
+            is_free_format = False
+            only_tiebreak_mode = False
+
+    t1 = m.team_1_id
+    t2 = m.team_2_id
+    sets_won_1 = 0
+    sets_won_2 = 0
+
+    for s in m.sets.all().order_by("index"):
+        if s.is_tiebreak_only:
+            # Чемпионский TB: всегда 1:0/0:1 по сетам.
+            if s.tb_1 is not None and s.tb_2 is not None:
+                if s.tb_1 > s.tb_2:
+                    sets_won_1 += 1
+                elif s.tb_2 > s.tb_1:
+                    sets_won_2 += 1
+        else:
+            if is_free_format:
+                # Свободный формат: побеждает тот, у кого больше геймов в сете.
+                if s.games_1 > s.games_2:
+                    sets_won_1 += 1
+                elif s.games_2 > s.games_1:
+                    sets_won_2 += 1
+                # При равенстве считаем сет ничейным и не учитываем в head-to-head.
+            else:
+                # Стандартная логика: больше геймов или TB при равенстве.
+                if s.games_1 > s.games_2:
+                    sets_won_1 += 1
+                elif s.games_2 > s.games_1:
+                    sets_won_2 += 1
+                elif (s.tb_1 is not None) and (s.tb_2 is not None):
+                    if s.tb_1 > s.tb_2:
+                        sets_won_1 += 1
+                    elif s.tb_2 > s.tb_1:
+                        sets_won_2 += 1
+
+    if sets_won_1 > sets_won_2:
+        return int(t1) if t1 is not None else None
+    if sets_won_2 > sets_won_1:
+        return int(t2) if t2 is not None else None
+
+    # Полная ничья — личные встречи не помогают.
+    return None
 
 
 def _rank_by_h2h_mini_tournament(tournament: Tournament, group_index: int, team_list: List[int], agg: Dict[int, dict]) -> List[int]:
