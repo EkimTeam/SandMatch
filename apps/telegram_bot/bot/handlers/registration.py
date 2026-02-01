@@ -786,7 +786,7 @@ async def callback_cmd_tournaments(callback: CallbackQuery):
                 ),
                 InlineKeyboardButton(
                     text="🌐 На BeachPlay.ru",
-                    url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
+                    url=f"{WEB_APP_URL}/tournaments/{tournament.id}/registration"
                 )
             ])
             keyboard_buttons.append([
@@ -971,7 +971,7 @@ async def callback_cmd_mytournaments(callback: CallbackQuery):
                     ),
                     InlineKeyboardButton(
                         text="🌐 На BeachPlay.ru",
-                        url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
+                        url=f"{WEB_APP_URL}/tournaments/{tournament.id}/registration"
                     )
                 ],
                 [
@@ -1114,7 +1114,7 @@ async def callback_cmd_myregistration(callback: CallbackQuery):
                 ),
                 InlineKeyboardButton(
                     text="🌐 На BeachPlay.ru",
-                    url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
+                    url=f"{WEB_APP_URL}/tournaments/{tournament.id}/registration"
                 )
             ],
             [
@@ -1347,7 +1347,7 @@ async def callback_cmd_register(callback: CallbackQuery):
             ),
             InlineKeyboardButton(
                 text="🌐 На BeachPlay.ru",
-                url=f"{WEB_APP_URL}/tournaments/{tournament.id}"
+                url=f"{WEB_APP_URL}/tournaments/{tournament.id}/registration"
             )
         ])
         keyboard_buttons.append([
