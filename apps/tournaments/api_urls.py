@@ -22,6 +22,7 @@ urlpatterns = [
     path('tournaments/new_king/', new_king, name='api_tournament_create_king'),
     # Управляющие действия без CSRF
     path('tournaments/<int:pk>/complete/', api_views.tournament_complete, name='api_tournament_complete'),
+    path('tournaments/<int:pk>/rollback_complete/', api_views.tournament_rollback_complete, name='api_tournament_rollback_complete'),
     path('tournaments/<int:pk>/remove/', api_views.tournament_remove, name='api_tournament_remove'),
 
     # роутер DRF
