@@ -383,7 +383,8 @@ class RegistrationService:
                 'updated_at',
             ])
         else:
-            player_registration = TournamentRegistration.objects.create(
+            # Создаём объект без сохранения, помечаем флагом, затем сохраняем
+            player_registration = TournamentRegistration(
                 tournament=tournament,
                 player=player,
                 partner=partner,
@@ -391,8 +392,9 @@ class RegistrationService:
                 status=status,
                 registration_order=registration_order,
             )
-            # Помечаем для пропуска анонса в сигнале
+            # Помечаем для пропуска анонса в сигнале ДО сохранения
             RegistrationService._mark_skip_announcement(player_registration)
+            player_registration.save()
 
         # Обновляем/создаём регистрацию для напарника
         if partner_reg and partner_reg.status == TournamentRegistration.Status.LOOKING_FOR_PARTNER:
@@ -411,7 +413,8 @@ class RegistrationService:
                 'updated_at',
             ])
         else:
-            partner_registration = TournamentRegistration.objects.create(
+            # Создаём объект без сохранения, помечаем флагом, затем сохраняем
+            partner_registration = TournamentRegistration(
                 tournament=tournament,
                 player=partner,
                 partner=player,
@@ -419,8 +422,9 @@ class RegistrationService:
                 status=status,
                 registration_order=registration_order,
             )
-            # Помечаем для пропуска анонса в сигнале
+            # Помечаем для пропуска анонса в сигнале ДО сохранения
             RegistrationService._mark_skip_announcement(partner_registration)
+            partner_registration.save()
 
         # Синхронизируем с TournamentEntry
         RegistrationService._sync_to_tournament_entry(player_registration)
