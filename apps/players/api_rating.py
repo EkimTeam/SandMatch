@@ -182,7 +182,11 @@ def _wins_count(player_id: int, hard: bool, medium: bool, tbo: bool) -> int:
 def _tournaments_count(player_id: int, hard: bool, medium: bool, tbo: bool) -> int:
     return (
         Match.objects
-        .filter(_match_base_q(player_id, hard, medium, tbo), status=Match.Status.COMPLETED)
+        .filter(
+            _match_base_q(player_id, hard, medium, tbo), 
+            status=Match.Status.COMPLETED,
+            tournament__parent_tournament_id__isnull=True  # Только мастер-турниры
+        )
         .values('tournament_id')
         .distinct()
         .count()
