@@ -167,29 +167,31 @@ def generate_initial_matches(bracket: KnockoutBracket) -> int:
 
 @transaction.atomic
 def create_bye_positions(bracket: KnockoutBracket, num_participants: int) -> int:
-    """Создать DrawPosition записи для BYE в неполной сетке.
+    """Пометить DrawPosition записи как BYE в неполной сетке.
     
     Args:
         bracket: сетка турнира
         num_participants: количество реальных участников
     
     Returns:
-        Количество созданных BYE позиций
+        Количество помеченных BYE позиций
     """
     bye_positions = calculate_bye_positions(bracket.size, num_participants)
     
-    created_count = 0
+    updated_count = 0
     for position in bye_positions:
-        DrawPosition.objects.create(
+        # Обновляем существующую позицию, помечая её как BYE
+        DrawPosition.objects.filter(
             bracket=bracket,
-            position=position,
-            entry=None,  # NULL для BYE
+            position=position
+        ).update(
+            entry=None,
             source=DrawPosition.Source.BYE,
             seed=None
         )
-        created_count += 1
+        updated_count += 1
     
-    return created_count
+    return updated_count
 
 
 # ----------------------

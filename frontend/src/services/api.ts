@@ -601,6 +601,77 @@ export const tournamentApi = {
     return data;
   },
 
+  // --- Многостадийные турниры ---
+
+  // Данные мастер-турнира и всех стадий
+  getMasterData: async (tournamentId: number): Promise<{
+    master: { id: number; name: string; date: string; status: string; system: string; is_rating_calc: boolean; prize_fund: string };
+    stages: Array<{
+      id: number;
+      stage_name: string;
+      stage_order: number;
+      system: string;
+      participant_mode: string;
+      groups_count: number;
+      status: string;
+      participants_count: number;
+      matches_count: number;
+      is_current: boolean;
+      can_delete: boolean;
+      can_edit: boolean;
+    }>;
+    current_stage_id: number;
+    can_add_stage: boolean;
+  }> => {
+    const { data } = await api.get(`/tournaments/${tournamentId}/master_data/`);
+    return data;
+  },
+
+  // Создать новую стадию
+  createStage: async (
+    tournamentId: number,
+    payload: {
+      stage_name: string;
+      system: 'round_robin' | 'knockout' | 'king';
+      participant_mode: 'singles' | 'doubles';
+      groups_count?: number;
+      copy_participants?: boolean;
+      selected_participant_ids?: number[] | null;
+      participants_count?: number;
+      date?: string;
+      start_time?: string | null;
+      is_rating_calc?: boolean;
+      set_format_id?: number;
+    },
+  ): Promise<{ ok: boolean; stage_id?: number; message?: string; error?: string }> => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/create_stage/`, payload);
+    return data;
+  },
+
+  // Удалить стадию
+  deleteStage: async (stageId: number): Promise<{ ok: boolean; message?: string; error?: string }> => {
+    const { data } = await api.delete(`/tournaments/${stageId}/delete_stage/`);
+    return data;
+  },
+
+  // Обновить настройки стадии
+  updateStageSettings: async (
+    stageId: number,
+    payload: { system?: string; groups_count?: number; participant_mode?: 'singles' | 'doubles' },
+  ): Promise<{ ok: boolean; message?: string; error?: string }> => {
+    const { data } = await api.patch(`/tournaments/${stageId}/update_stage_settings/`, payload);
+    return data;
+  },
+
+  // Завершить мастер-турнир (все стадии)
+  completeMaster: async (
+    tournamentId: number,
+    force: boolean = false,
+  ): Promise<{ ok: boolean; message?: string; error?: string }> => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/complete_master/`, { force });
+    return data;
+  },
+
   complete: async (tournamentId: number, force: boolean = false) => {
     const { data } = await api.post(`/tournaments/${tournamentId}/complete/`, { force });
     return data;
@@ -889,7 +960,33 @@ export const ratingApi = {
     const { data } = await api.get(`/rating/players/briefs/${qs}`);
     return data;
   },
-  playerMatchDeltas: async (playerId: number): Promise<{ player_id: number; matches: Array<{ match_id: number; tournament_id: number; tournament_name: string; tournament_date: string; tournament_system?: string; participant_mode?: string; finished_at?: string; delta: number; opponent?: string; partner?: string; score?: string; team1: (number|null)[]; team2: (number|null)[]; team1_avg_before?: number | null; team2_avg_before?: number | null }> }> => {
+  playerMatchDeltas: async (playerId: number): Promise<{
+    player_id: number;
+    tournaments: Array<{
+      tournament_id: number;
+      tournament_name: string;
+      tournament_date: string;
+      tournament_system?: string;
+      participant_mode?: string;
+      total_delta: number;
+      matches: Array<{
+        match_id: number;
+        stage_id?: number;
+        stage_name?: string;
+        finished_at?: string;
+        delta: number;
+        opponent?: string;
+        opponent_ids?: number[];
+        partner?: string;
+        partner_id?: number | null;
+        score?: string;
+        team1: (number | null)[];
+        team2: (number | null)[];
+        team1_avg_before?: number | null;
+        team2_avg_before?: number | null;
+      }>;
+    }>;
+  }> => {
     const { data } = await api.get(`/rating/player/${playerId}/match_deltas/`);
     return data;
   },

@@ -16,6 +16,10 @@ import '../styles/knockout-dragdrop.css';
 import html2canvas from 'html2canvas';
 import { EditTournamentModal } from '../components/EditTournamentModal';
 import { InitialRatingModal } from '../components/InitialRatingModal';
+import { TournamentStageSelector, StageInfo } from '../components/TournamentStageSelector';
+import { CreateStageModal } from '../components/CreateStageModal';
+import { AddParticipantsFromStageModal } from '../components/AddParticipantsFromStageModal';
+import { IncompleteMatchesModal } from '../components/IncompleteMatchesModal';
 
 // Константы цветов для подсветки ячеек
 const MATCH_COLORS = {
@@ -77,6 +81,13 @@ type TournamentDetail = {
   can_delete?: boolean;
   participants_count?: number;
   has_zero_rating_players?: boolean;
+  parent_tournament?: number | null;
+  stage_name?: string;
+  stage_order?: number;
+  stages_count?: number | null;
+  is_master?: boolean;
+  master_tournament_id?: number;
+  is_rating_calc?: boolean;
 };
 
 type SetFormatDict = { id: number; name: string };
@@ -157,6 +168,15 @@ export const TournamentDetailPage: React.FC = () => {
   const [setFormats, setSetFormats] = useState<SetFormatDict[]>([]);
   const [showInitialRatingModal, setShowInitialRatingModal] = useState(false);
   const [showCompleteRatingChoice, setShowCompleteRatingChoice] = useState(false);
+  const [showIncompleteMatchesModal, setShowIncompleteMatchesModal] = useState(false);
+  const [incompleteMatches, setIncompleteMatches] = useState<any[]>([]);
+  // Многостадийные турниры
+  const [stages, setStages] = useState<StageInfo[]>([]);
+  const [currentStageId, setCurrentStageId] = useState<number | null>(null);
+  const [masterSystem, setMasterSystem] = useState<'round_robin' | 'knockout' | 'king' | null>(null);
+  const [canAddStage, setCanAddStage] = useState(false);
+  const [showCreateStageModal, setShowCreateStageModal] = useState(false);
+  const [showAddFromStageModal, setShowAddFromStageModal] = useState(false);
   
   const handleRollbackTournamentCompletion = async () => {
     if (!t || role !== 'ADMIN') return;
@@ -170,6 +190,35 @@ export const TournamentDetailPage: React.FC = () => {
     } catch (e: any) {
       console.error('Failed to rollback tournament completion', e);
       alert(e?.response?.data?.error || 'Не удалось откатить завершение турнира');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleStageChanged = (stageId: number) => {
+    if (!stageId || Number.isNaN(stageId) || stageId === idNum) return;
+    nav(`/tournaments/${stageId}`);
+  };
+
+  const handleDeleteStage = async (stageId: number) => {
+    if (!stageId) return;
+    if (!window.confirm('Удалить эту стадию?')) return;
+    try {
+      setSaving(true);
+      const res = await tournamentApi.deleteStage(stageId);
+      if (!res.ok) {
+        window.alert(res.error || 'Не удалось удалить стадию');
+      }
+      // Если удаляем текущую стадию — переходим на мастер-турнир
+      const masterId = (t as any)?.master_tournament_id || t?.id || stageId;
+      if (stageId === idNum && masterId && masterId !== stageId) {
+        nav(`/tournaments/${masterId}`);
+        return;
+      }
+      await reload();
+    } catch (e: any) {
+      console.error('Failed to delete stage', e);
+      window.alert(e?.response?.data?.error || 'Не удалось удалить стадию');
     } finally {
       setSaving(false);
     }
@@ -201,8 +250,39 @@ export const TournamentDetailPage: React.FC = () => {
     }
   };
 
-  const handleCompleteTournamentClick = () => {
+  const handleCompleteTournamentClick = async () => {
     if (!t) return;
+    
+    // Проверяем незавершенные матчи во всех стадиях
+    try {
+      const response = await api.get(`/tournaments/${t.id}/check_incomplete_matches/`);
+      const data = response.data;
+      
+      // Проверяем наличие стадий в статусе created
+      if (!data.ok && data.error === 'created_stages') {
+        alert(data.message);
+        return;
+      }
+      
+      // Если есть незавершенные матчи - показываем модалку с подтверждением
+      if (data.ok && data.count > 0) {
+        setIncompleteMatches(data.incomplete_matches);
+        setShowIncompleteMatchesModal(true);
+        return;
+      }
+      
+      // Все матчи завершены - показываем простое подтверждение
+      if (data.ok && data.count === 0) {
+        const confirmed = window.confirm('Завершить турнир?');
+        if (!confirmed) return;
+      }
+    } catch (e: any) {
+      console.error('Failed to check incomplete matches', e);
+      // Если проверка не удалась, показываем простое подтверждение
+      const confirmed = window.confirm('Завершить турнир?');
+      if (!confirmed) return;
+    }
+    
     // Если в турнире есть игроки без рейтинга, сначала показываем диалог выбора способа завершения
     if (t.has_zero_rating_players) {
       setShowCompleteRatingChoice(true);
@@ -325,6 +405,31 @@ export const TournamentDetailPage: React.FC = () => {
 
   // Функция для преобразования текста со ссылками в JSX с кликабельными ссылками
   // Поддерживает markdown-формат [текст](url) и обычные URL
+  const loadMasterData = useCallback(async () => {
+    if (!idNum || Number.isNaN(idNum)) return;
+    try {
+      const data = await tournamentApi.getMasterData(idNum);
+      const mapped: StageInfo[] = (data.stages || []).map((s: any) => ({
+        id: s.id,
+        stage_name: s.stage_name,
+        stage_order: s.stage_order,
+        system: s.system,
+        status: s.status,
+        can_delete: s.can_delete,
+        can_edit: s.can_edit,
+        is_current: s.id === idNum,
+      }));
+      // Всегда показываем все стадии, независимо от прав доступа
+      // Права доступа используются только для кнопок редактирования/удаления
+      setStages(mapped);
+      setCurrentStageId(idNum);
+      setMasterSystem(data.master.system as any);
+      setCanAddStage(data.can_add_stage ?? true);
+    } catch (e) {
+      console.warn('Failed to load master data', e);
+    }
+  }, [idNum, canManageTournament]);
+
   const renderAnnouncementWithLinks = (text: string) => {
     if (!text) return null;
     const lines = text.split('\n');
@@ -681,6 +786,9 @@ export const TournamentDetailPage: React.FC = () => {
       setT(data);
       setShowTech(Array.from({ length: data.groups_count || 1 }).map(() => false));
       
+      // Загрузить данные стадий для многостадийных турниров
+      loadMasterData();
+      
       // Инициализировать режим отображения имён один раз: по умолчанию ФИО,
       // исключение — турниры организатора ArtemPara (display_name по умолчанию)
       if (!showNamesInitializedRef.current) {
@@ -973,6 +1081,47 @@ export const TournamentDetailPage: React.FC = () => {
       alert(errorMsg);
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Обработчик сохранения участников из предыдущей стадии
+  const handleSaveParticipantsFromStage = async (selectedTeamIds: number[]) => {
+    if (!t) return;
+    
+    try {
+      // Получаем текущие team_id участников
+      const currentTeamIds = (t.participants || [])
+        .map(p => p.team?.id)
+        .filter((id): id is number => id !== undefined);
+      
+      // Определяем, кого нужно добавить и кого удалить
+      const toAdd = selectedTeamIds.filter(id => !currentTeamIds.includes(id));
+      const toRemove = currentTeamIds.filter(id => !selectedTeamIds.includes(id));
+      
+      // Удаляем участников
+      for (const teamId of toRemove) {
+        const entry = t.participants?.find(p => p.team?.id === teamId);
+        if (entry) {
+          // Используем тот же endpoint, что и в handleRemoveParticipantFromList
+          await api.delete(`/tournaments/${t.id}/remove_participant/`, {
+            data: { entry_id: entry.id },
+          });
+        }
+      }
+      
+      // Добавляем участников
+      for (const teamId of toAdd) {
+        // Добавляем существующую команду из предыдущей стадии по team_id
+        await api.post(`/tournaments/${t.id}/add_participant/`, {
+          team_id: teamId,
+        });
+      }
+      
+      // Перезагружаем данные
+      await reload();
+    } catch (e: any) {
+      console.error('Failed to update participants', e);
+      window.alert(e?.response?.data?.error || 'Не удалось обновить участников');
     }
   };
 
@@ -1364,6 +1513,13 @@ export const TournamentDetailPage: React.FC = () => {
     })();
   }, [fetchGroupSchedule]);
 
+  // Загрузка данных мастер-турнира при монтировании или изменении idNum
+  useEffect(() => {
+    if (idNum && !authLoading) {
+      loadMasterData();
+    }
+  }, [idNum, authLoading, loadMasterData]);
+
   // Загрузка регламентов для круговой системы (только для отображения селекта)
   useEffect(() => {
     const loadRulesets = async () => {
@@ -1538,32 +1694,18 @@ export const TournamentDetailPage: React.FC = () => {
     }
   };
 
-  const completeTournament = async () => {
+  const completeTournament = async (force: boolean = false) => {
     if (!t) return;
     setSaving(true);
     try {
-      await api.post(`/tournaments/${t.id}/complete/`);
+      // Используем complete_master для завершения всех стадий турнира
+      await api.post(`/tournaments/${t.id}/complete_master/`, { force });
+      alert('Турнир завершён, рейтинг рассчитан для всех стадий');
       // Перенаправить на страницу списка турниров
       window.location.href = '/tournaments';
     } catch (err: any) {
       const errorData = err?.response?.data;
-      
-      // Если есть незавершенные матчи, запросить подтверждение
-      if (errorData?.error === 'incomplete_matches') {
-        const confirmed = window.confirm(errorData.message);
-        if (confirmed) {
-          try {
-            // Повторить запрос с параметром force
-            await api.post(`/tournaments/${t.id}/complete/`, { force: true });
-            alert('Турнир завершён');
-            window.location.href = '/tournaments';
-          } catch (e2: any) {
-            alert(e2?.response?.data?.error || 'Ошибка завершения турнира');
-          }
-        }
-      } else {
-        alert(errorData?.error || 'Ошибка при завершении турнира');
-      }
+      alert(errorData?.error || 'Ошибка при завершении турнира');
     } finally {
       setSaving(false);
     }
@@ -1676,6 +1818,20 @@ export const TournamentDetailPage: React.FC = () => {
             {(t as any).prize_fund ? ` • Призовой фонд: ${(t as any).prize_fund}` : ''}
           </div>
         </div>
+
+        {/* Селектор стадий многостадийного турнира */}
+        {stages.length > 0 && (
+          <div style={{ padding: '0 24px', marginTop: 8 }}>
+            <TournamentStageSelector
+              stages={stages}
+              currentStageId={currentStageId || idNum}
+              canEdit={canManageTournament}
+              onStageChange={handleStageChanged}
+              onDeleteStage={handleDeleteStage}
+            />
+          </div>
+        )}
+
         {/* Модалка ввода счёта - выбор между обычной и свободным форматом */}
         {scoreInput && (t as any)?.set_format?.games_to === 0 && (t as any)?.set_format?.max_sets !== 1 ? (
           <FreeFormatScoreModal
@@ -2226,10 +2382,12 @@ export const TournamentDetailPage: React.FC = () => {
               reserveParticipants={dragDropState.reserveParticipants}
               onRemoveParticipant={handleRemoveParticipantFromList}
               onAddParticipant={() => setDragDropPickerOpen(true)}
+              onAddFromPreviousStage={() => setShowAddFromStageModal(true)}
               onAutoSeed={handleAutoSeed}
               onClearTables={handleClearTables}
               maxParticipants={t.planned_participants || 32}
               canAddMore={true}
+              isStage={!!t.parent_tournament}
             />
           </div>
 
@@ -2873,6 +3031,22 @@ export const TournamentDetailPage: React.FC = () => {
         />
       )}
 
+      {/* Модалка незавершенных матчей */}
+      <IncompleteMatchesModal
+        isOpen={showIncompleteMatchesModal}
+        onClose={() => setShowIncompleteMatchesModal(false)}
+        onConfirm={() => {
+          setShowIncompleteMatchesModal(false);
+          // Проверяем игроков без рейтинга
+          if (t?.has_zero_rating_players) {
+            setShowCompleteRatingChoice(true);
+          } else {
+            completeTournament(true); // force = true
+          }
+        }}
+        incompleteMatches={incompleteMatches}
+      />
+
       {/* Диалог выбора способа завершения турнира при наличии игроков без рейтинга */}
       {showCompleteRatingChoice && (
         <div
@@ -2911,7 +3085,8 @@ export const TournamentDetailPage: React.FC = () => {
                 disabled={saving}
                 onClick={() => {
                   setShowCompleteRatingChoice(false);
-                  completeTournament();
+                  // Если пришли сюда из модалки незавершенных матчей, передаем force=true
+                  completeTournament(incompleteMatches.length > 0);
                 }}
               >
                 Автоматически
@@ -2941,6 +3116,16 @@ export const TournamentDetailPage: React.FC = () => {
             disabled={saving}
           >
             Поменять настройки турнира
+          </button>
+        )}
+        {t && canManageTournament && t.status === 'active' && canAddStage && (
+          <button
+            className="btn"
+            style={{ background: '#28a745', borderColor: '#28a745' }}
+            disabled={saving}
+            onClick={() => setShowCreateStageModal(true)}
+          >
+            Добавить стадию
           </button>
         )}
         {t && canManageTournament && t.status === 'active' && (
@@ -3074,6 +3259,70 @@ export const TournamentDetailPage: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Модалка создания стадии */}
+      {showCreateStageModal && t && masterSystem && (
+        <CreateStageModal
+          isOpen={showCreateStageModal}
+          onClose={() => setShowCreateStageModal(false)}
+          tournamentId={t.id}
+          masterSystem={masterSystem}
+          masterParticipantMode={t.participant_mode as 'singles' | 'doubles'}
+          parentStageName={t.stage_name || null}
+          parentPlannedParticipants={t.planned_participants || undefined}
+          parentGroupsCount={t.groups_count || undefined}
+          parentDate={t.date ? t.date : undefined}
+          parentStartTime={(t as any).start_time || null}
+          parentIsRatingCalc={t.is_rating_calc ?? true}
+          parentSetFormatId={(t as any).set_format?.id || undefined}
+          currentParticipants={(t.participants || []).map((p) => {
+            const teamId = p.team?.id;
+            let place: number | null = null;
+            
+            // Найти место участника в groupStats
+            if (teamId) {
+              for (const groupIdx in groupStats) {
+                const block = groupStats[groupIdx];
+                if (block?.placements && block.placements[teamId]) {
+                  place = block.placements[teamId];
+                  break;
+                }
+              }
+            }
+            
+            // Используем full_name из team, который уже содержит "Фамилия Имя" или "Фамилия Имя1 / Фамилия Имя2"
+            const fullName = p.team?.full_name || (p.team && (p.team.display_name || p.team.name)) || `Участник #${p.id}`;
+            
+            return {
+              id: teamId || p.id,
+              name: fullName,
+              place,
+            };
+          })}
+          setFormats={setFormats}
+          onStageCreated={async (stageId) => {
+            setShowCreateStageModal(false);
+            await reload();
+            if (stageId) {
+              nav(`/tournaments/${stageId}`);
+            }
+          }}
+        />
+      )}
+
+      {/* Модалка добавления участников из предыдущей стадии */}
+      {showAddFromStageModal && t && t.parent_tournament && (
+        <AddParticipantsFromStageModal
+          isOpen={showAddFromStageModal}
+          onClose={() => setShowAddFromStageModal(false)}
+          tournamentId={t.id}
+          parentTournamentId={t.parent_tournament}
+          currentParticipantIds={(t.participants || [])
+            .map(p => p.team?.id)
+            .filter((id): id is number => id !== undefined)}
+          onSave={handleSaveParticipantsFromStage}
+        />
       )}
     </div>
   );

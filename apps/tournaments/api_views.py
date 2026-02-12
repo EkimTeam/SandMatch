@@ -59,6 +59,7 @@ from apps.tournaments.services.round_robin import (
     persist_generated_matches,
     generate_round_robin_matches,
 )
+from apps.tournaments.services.multi_stage_service import MultiStageService
 
 
 def generate_announcement_text(tournament) -> str:
@@ -269,10 +270,13 @@ class TournamentViewSet(viewsets.ModelViewSet):
             "unlock_participants",
             "complete",
             "announcement_settings",
+            "create_stage",
+            "update_stage_settings",
+            "complete_master",
         }:
             return [IsTournamentCreatorOrAdmin()]
 
-        if self.action in {"destroy", "remove"}:
+        if self.action in {"destroy", "remove", "delete_stage"}:
             return [IsTournamentCreatorOrAdminForDeletion()]
 
         if self.action in {
@@ -285,6 +289,18 @@ class TournamentViewSet(viewsets.ModelViewSet):
             return [IsAuthenticated()]
 
         return super().get_permissions()
+
+    def get_queryset(self):
+        """В списке показываем только мастер-турниры.
+
+        Детальный просмотр (retrieve) по-прежнему доступен для любых турниров,
+        включая стадии.
+        """
+
+        qs = super().get_queryset()
+        if getattr(self, "action", None) == "list":
+            qs = qs.filter(parent_tournament_id__isnull=True)
+        return qs.select_related("created_by")
 
     def perform_create(self, serializer):
         user = self.request.user if getattr(self.request, "user", None) and self.request.user.is_authenticated else None
@@ -356,6 +372,198 @@ class TournamentViewSet(viewsets.ModelViewSet):
         tournament = self.get_object()
         tournament.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    # === МНОГОСТАДИЙНЫЕ ТУРНИРЫ ===
+
+    @action(detail=True, methods=["get"], url_path="master_data")
+    def master_data(self, request, pk=None):
+        """GET /tournaments/{id}/master_data/ — данные мастер-турнира и стадий."""
+
+        try:
+            data = MultiStageService.get_master_tournament_data(int(pk))
+            return Response(data)
+        except Tournament.DoesNotExist:
+            return Response({"error": "Турнир не найден"}, status=404)
+
+    @action(detail=True, methods=["post"], url_path="create_stage")
+    def create_stage(self, request, pk=None):
+        """POST /tournaments/{id}/create_stage/ — создать новую стадию."""
+        from datetime import datetime
+
+        stage_name = request.data.get("stage_name")
+        system = request.data.get("system")
+        participant_mode = request.data.get("participant_mode")
+        groups_count = request.data.get("groups_count", 1)
+        copy_participants = request.data.get("copy_participants", True)
+        selected_participant_ids = request.data.get("selected_participant_ids") or None
+        participants_count = request.data.get("participants_count")
+        date_str = request.data.get("date")
+        start_time_str = request.data.get("start_time")
+        is_rating_calc = request.data.get("is_rating_calc")
+        set_format_id = request.data.get("set_format_id")
+
+        if not stage_name or not system or not participant_mode:
+            return Response({"ok": False, "error": "Не указаны обязательные поля"}, status=400)
+
+        # Парсим дату и время
+        date_value = None
+        if date_str:
+            try:
+                date_value = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except ValueError:
+                return Response({"ok": False, "error": "Неверный формат даты"}, status=400)
+
+        start_time_value = None
+        if start_time_str:
+            try:
+                start_time_value = datetime.strptime(start_time_str, "%H:%M").time()
+            except ValueError:
+                return Response({"ok": False, "error": "Неверный формат времени"}, status=400)
+
+        try:
+            new_stage = MultiStageService.create_next_stage(
+                parent_tournament_id=int(pk),
+                stage_name=stage_name,
+                system=system,
+                participant_mode=participant_mode,
+                groups_count=groups_count,
+                copy_participants=bool(copy_participants),
+                selected_participant_ids=selected_participant_ids,
+                created_by_user=request.user,
+                participants_count=participants_count,
+                date_value=date_value,
+                start_time=start_time_value,
+                is_rating_calc=is_rating_calc,
+                set_format_id=set_format_id,
+            )
+        except ValueError as e:
+            return Response({"ok": False, "error": str(e)}, status=400)
+        except Exception as e:
+            return Response({"ok": False, "error": str(e)}, status=500)
+
+        return Response(
+            {"ok": True, "stage_id": new_stage.id, "message": f'Стадия "{stage_name}" создана'},
+            status=201,
+        )
+
+    @action(detail=True, methods=["delete"], url_path="delete_stage")
+    def delete_stage(self, request, pk=None):
+        """DELETE /tournaments/{id}/delete_stage/ — удалить стадию.
+
+        Здесь {id} — ID стадии, а не мастер-турнира.
+        """
+
+        try:
+            MultiStageService.delete_stage(int(pk))
+            return Response({"ok": True, "message": "Стадия удалена"})
+        except ValueError as e:
+            return Response({"ok": False, "error": str(e)}, status=400)
+        except Exception as e:
+            return Response({"ok": False, "error": str(e)}, status=500)
+
+    @action(detail=True, methods=["patch"], url_path="update_stage_settings")
+    def update_stage_settings(self, request, pk=None):
+        """PATCH /tournaments/{id}/update_stage_settings/ — изменить настройки стадии."""
+
+        system = request.data.get("system")
+        groups_count = request.data.get("groups_count")
+        participant_mode = request.data.get("participant_mode")
+
+        try:
+            MultiStageService.update_stage_settings(
+                stage_id=int(pk),
+                system=system,
+                groups_count=groups_count,
+                participant_mode=participant_mode,
+            )
+            return Response({"ok": True, "message": "Настройки обновлены"})
+        except ValueError as e:
+            return Response({"ok": False, "error": str(e)}, status=400)
+        except Exception as e:
+            return Response({"ok": False, "error": str(e)}, status=500)
+
+        
+    @action(detail=True, methods=["get"], url_path="check_incomplete_matches")
+    def check_incomplete_matches(self, request, pk=None):
+        """GET /tournaments/{id}/check_incomplete_matches/ — проверить незавершенные матчи во всех стадиях."""
+        from apps.matches.models import Match
+        
+        try:
+            tournament = self.get_object()
+            
+            # Получаем мастер-турнир и все его стадии
+            if tournament.is_master():
+                master = tournament
+            else:
+                master = tournament.get_master_tournament()
+            
+            all_stages = master.get_all_stages()
+            
+            # Проверяем наличие стадий в статусе created
+            created_stages = [s for s in all_stages if s.status == Tournament.Status.CREATED]
+            if created_stages:
+                created_stage_names = [s.stage_name or s.name for s in created_stages]
+                return Response({
+                    'ok': False,
+                    'error': 'created_stages',
+                    'message': f"Есть стадии, игры по которым до сих пор не начались: {', '.join(created_stage_names)}. Переведите эти стадии в статус 'Идет', введите счет для всех матчей и тогда турнир можно будет завершить. Или удалите ненужную стадию.",
+                    'created_stages': created_stage_names,
+                })
+            
+            # Собираем незавершенные матчи из всех стадий
+            incomplete_matches = []
+            
+            for stage in all_stages:
+                # Получаем все запланированные матчи стадии
+                matches = Match.objects.filter(tournament=stage).exclude(status='cancelled')
+                
+                for match in matches:
+                    # Матч считается завершенным если есть победитель ИЛИ есть счет
+                    has_winner = match.winner_id is not None
+                    has_score = match.sets.exists()  # Проверяем наличие сетов
+                    
+                    is_complete = has_winner or has_score
+                    
+                    if not is_complete:
+                        team1_name = str(match.team_1) if match.team_1 else "—"
+                        team2_name = str(match.team_2) if match.team_2 else "—"
+                        
+                        incomplete_matches.append({
+                            'id': match.id,
+                            'stage_name': stage.stage_name or stage.name,
+                            'stage_id': stage.id,
+                            'team1': team1_name,
+                            'team2': team2_name,
+                            'group': match.group_index if hasattr(match, 'group_index') else None,
+                        })
+            
+            return Response({
+                'ok': True,
+                'incomplete_matches': incomplete_matches,
+                'count': len(incomplete_matches),
+            })
+            
+        except Exception as e:
+            return Response({'ok': False, 'error': str(e)}, status=500)
+
+    @action(detail=True, methods=["post"], url_path="complete_master")
+    def complete_master(self, request, pk=None):
+        """POST /tournaments/{id}/complete_master/ — завершить мастер-турнир."""
+
+        force = bool(request.data.get("force", False))
+
+        try:
+            MultiStageService.complete_master_tournament(int(pk), force=force)
+            return Response(
+                {
+                    "ok": True,
+                    "message": "Турнир завершен, рейтинг рассчитан для всех стадий",
+                }
+            )
+        except ValueError as e:
+            return Response({"ok": False, "error": str(e)}, status=400)
+        except Exception as e:
+            return Response({"ok": False, "error": str(e)}, status=500)
 
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="edit_settings", permission_classes=[IsAuthenticated])
@@ -767,6 +975,13 @@ class TournamentViewSet(viewsets.ModelViewSet):
             from apps.tournaments.models import DrawPosition
             for pos in range(1, size + 1):
                 DrawPosition.objects.create(bracket=bracket, position=pos)
+            
+            # Создать BYE позиции на основе planned_participants
+            num_participants = tournament.planned_participants or tournament.participants_count or size
+            if num_participants < size:
+                from apps.tournaments.services.knockout import create_bye_positions
+                create_bye_positions(bracket, num_participants)
+            
             # Сгенерируем пустые матчи
             created = generate_initial_matches(bracket)
 
@@ -820,23 +1035,37 @@ class TournamentViewSet(viewsets.ModelViewSet):
         except KnockoutBracket.DoesNotExist:
             return Response({"ok": False, "error": "Сетка не найдена"}, status=404)
 
-        # Получить только участников из ОСНОВНОГО СОСТАВА (MAIN_LIST)
-        from apps.tournaments.registration_models import TournamentRegistration
-        
-        main_list_registrations = TournamentRegistration.objects.filter(
-            tournament=tournament,
-            status=TournamentRegistration.Status.MAIN_LIST
-        ).values_list('team_id', flat=True).distinct()
-        
-        main_list_team_ids = [tid for tid in main_list_registrations if tid is not None]
-        
-        if not main_list_team_ids:
-            return Response({"ok": False, "error": "Нет участников в основном составе для посева"}, status=400)
-        
-        # Получаем только участников из основного списка
-        all_entries = list(tournament.entries.filter(
-            team_id__in=main_list_team_ids
-        ).select_related("team__player_1", "team__player_2"))
+        # Для стадий (есть parent_tournament) основной состав полностью задаётся
+        # текущими TournamentEntry. Регистрации используются только в головном турнире.
+        if tournament.parent_tournament_id:
+            all_entries = list(
+                tournament.entries.select_related(
+                    'team__player_1',
+                    'team__player_2',
+                )
+                .all()
+            )
+
+            if not all_entries:
+                return Response({'ok': False, 'error': 'Нет участников в основном составе для посева'}, status=400)
+        else:
+            # Головной турнир: основной состав определяется через TournamentRegistration
+            from apps.tournaments.registration_models import TournamentRegistration
+            
+            main_list_registrations = TournamentRegistration.objects.filter(
+                tournament=tournament,
+                status=TournamentRegistration.Status.MAIN_LIST
+            ).values_list('team_id', flat=True).distinct()
+            
+            main_list_team_ids = [tid for tid in main_list_registrations if tid is not None]
+            
+            if not main_list_team_ids:
+                return Response({"ok": False, "error": "Нет участников в основном составе для посева"}, status=400)
+            
+            # Получаем только участников из основного списка
+            all_entries = list(tournament.entries.filter(
+                team_id__in=main_list_team_ids
+            ).select_related("team__player_1", "team__player_2"))
         
         # Отсортировать по рейтингу (убывание) и взять только первых planned_participants
         planned_count = tournament.planned_participants or len(all_entries)
@@ -3152,79 +3381,120 @@ class TournamentViewSet(viewsets.ModelViewSet):
     def get_participants(self, request, pk=None):
         """Получить список участников турнира для Drag-and-Drop.
         
-        Возвращает данные из TournamentRegistration (MAIN_LIST/RESERVE_LIST),
-        чтобы корректно разделить участников на основной состав и резерв.
+        Для стадий (с parent_tournament) возвращает данные из TournamentEntry.
+        Для мастер-турниров возвращает данные из TournamentRegistration (MAIN_LIST/RESERVE_LIST).
         """
         from apps.tournaments.registration_models import TournamentRegistration
         
         tournament: Tournament = self.get_object()
-        
-        # Получаем регистрации из основного и резервного списков
-        registrations = TournamentRegistration.objects.filter(
-            tournament=tournament,
-            status__in=[
-                TournamentRegistration.Status.MAIN_LIST,
-                TournamentRegistration.Status.RESERVE_LIST
-            ]
-        ).select_related('player', 'partner', 'team').order_by('registration_order')
-        
         participants = []
-        seen_teams = set()  # Чтобы не дублировать пары
         
-        for reg in registrations:
-            # Для пар: добавляем только один раз (по первому игроку)
-            if reg.team_id:
-                if reg.team_id in seen_teams:
+        # Если это стадия турнира, берём участников из TournamentEntry
+        if tournament.parent_tournament_id:
+            entries = tournament.entries.select_related('team', 'team__player_1', 'team__player_2').all()
+            
+            for entry in entries:
+                if not entry.team:
                     continue
-                seen_teams.add(reg.team_id)
-            
-            # Формируем имя
-            if reg.partner:
-                # Пара
-                full_name = f"{reg.player.last_name} {reg.player.first_name} / {reg.partner.last_name} {reg.partner.first_name}"
-            else:
-                # Одиночка
-                full_name = f"{reg.player.last_name} {reg.player.first_name}"
-            
-            # Рейтинг
-            rating = 0
-            try:
-                if reg.partner:
-                    # Для пар - средний рейтинг
-                    r1 = int(reg.player.current_rating or 0)
-                    r2 = int(reg.partner.current_rating or 0)
-                    rating = round((r1 + r2) / 2) if (r1 > 0 or r2 > 0) else 0
+                
+                team = entry.team
+                # Формируем имя
+                if team.player_2:
+                    # Пара
+                    full_name = f"{team.player_1.last_name} {team.player_1.first_name} / {team.player_2.last_name} {team.player_2.first_name}"
                 else:
-                    # Для одиночек - рейтинг игрока
-                    rating = int(reg.player.current_rating or 0)
-            except Exception:
+                    # Одиночка
+                    full_name = f"{team.player_1.last_name} {team.player_1.first_name}"
+                
+                # Рейтинг
                 rating = 0
-            
-            # Находим соответствующий TournamentEntry для получения entry.id
-            entry_id = None
-            team_id = None
-            if reg.team_id:
                 try:
-                    entry = tournament.entries.filter(team_id=reg.team_id).first()
-                    if entry:
-                        entry_id = entry.id
-                        team_id = entry.team_id
+                    if team.player_2:
+                        # Для пар - средний рейтинг
+                        r1 = int(team.player_1.current_rating or 0)
+                        r2 = int(team.player_2.current_rating or 0)
+                        rating = round((r1 + r2) / 2) if (r1 > 0 or r2 > 0) else 0
+                    else:
+                        # Для одиночек - рейтинг игрока
+                        rating = int(team.player_1.current_rating or 0)
                 except Exception:
-                    pass
+                    rating = 0
+                
+                participants.append({
+                    'id': entry.id,
+                    'name': full_name,
+                    'team_id': team.id,
+                    'rating': rating,
+                    'list_status': 'main',  # Все участники стадии в основном составе
+                    'registration_order': entry.id,  # Используем ID для сортировки
+                    'isInBracket': False
+                })
+        else:
+            # Мастер-турнир: получаем регистрации из основного и резервного списков
+            registrations = TournamentRegistration.objects.filter(
+                tournament=tournament,
+                status__in=[
+                    TournamentRegistration.Status.MAIN_LIST,
+                    TournamentRegistration.Status.RESERVE_LIST
+                ]
+            ).select_related('player', 'partner', 'team').order_by('registration_order')
             
-            # Если нет TournamentEntry, пропускаем (это игроки только в регистрации, без команды)
-            if not entry_id:
-                continue
+            seen_teams = set()  # Чтобы не дублировать пары
             
-            participants.append({
-                'id': entry_id,  # ID TournamentEntry для DnD
-                'name': full_name,
-                'team_id': team_id,
-                'rating': rating,
-                'list_status': 'main' if reg.status == TournamentRegistration.Status.MAIN_LIST else 'reserve',
-                'registration_order': reg.registration_order,  # Для сортировки резервного списка
-                'isInBracket': False
-            })
+            for reg in registrations:
+                # Для пар: добавляем только один раз (по первому игроку)
+                if reg.team_id:
+                    if reg.team_id in seen_teams:
+                        continue
+                    seen_teams.add(reg.team_id)
+                
+                # Формируем имя
+                if reg.partner:
+                    # Пара
+                    full_name = f"{reg.player.last_name} {reg.player.first_name} / {reg.partner.last_name} {reg.partner.first_name}"
+                else:
+                    # Одиночка
+                    full_name = f"{reg.player.last_name} {reg.player.first_name}"
+                
+                # Рейтинг
+                rating = 0
+                try:
+                    if reg.partner:
+                        # Для пар - средний рейтинг
+                        r1 = int(reg.player.current_rating or 0)
+                        r2 = int(reg.partner.current_rating or 0)
+                        rating = round((r1 + r2) / 2) if (r1 > 0 or r2 > 0) else 0
+                    else:
+                        # Для одиночек - рейтинг игрока
+                        rating = int(reg.player.current_rating or 0)
+                except Exception:
+                    rating = 0
+                
+                # Находим соответствующий TournamentEntry для получения entry.id
+                entry_id = None
+                team_id = None
+                if reg.team_id:
+                    try:
+                        entry = tournament.entries.filter(team_id=reg.team_id).first()
+                        if entry:
+                            entry_id = entry.id
+                            team_id = entry.team_id
+                    except Exception:
+                        pass
+                
+                # Если нет TournamentEntry, пропускаем (это игроки только в регистрации, без команды)
+                if not entry_id:
+                    continue
+                
+                participants.append({
+                    'id': entry_id,  # ID TournamentEntry для DnD
+                    'name': full_name,
+                    'team_id': team_id,
+                    'rating': rating,
+                    'list_status': 'main' if reg.status == TournamentRegistration.Status.MAIN_LIST else 'reserve',
+                    'registration_order': reg.registration_order,  # Для сортировки резервного списка
+                    'isInBracket': False
+                })
         
         return Response({'participants': participants})
     
@@ -3495,15 +3765,30 @@ class TournamentViewSet(viewsets.ModelViewSet):
         player_id = request.data.get('player_id')
         player1_id = request.data.get('player1_id')
         player2_id = request.data.get('player2_id')
+        team_id = request.data.get('team_id')
         
-        if not name and not (player1_id and player2_id):
-            return Response({'ok': False, 'error': 'Не указано имя или игроки'}, status=400)
+        # Должен быть либо name, либо player_id / (player1_id+player2_id), либо существующая команда team_id
+        if not name and not player_id and not (player1_id and player2_id) and not team_id:
+            return Response({'ok': False, 'error': 'Не указано имя, игроки или команда'}, status=400)
         
         try:
             with transaction.atomic():
                 existing_entries = tournament.entries.select_related('team').all()
-                
-                if player_id:
+                team = None
+
+                if team_id:
+                    # Добавление существующей команды (например, из предыдущей стадии)
+                    try:
+                        team = Team.objects.get(id=team_id)
+                    except Team.DoesNotExist:
+                        return Response({'ok': False, 'error': 'Команда не найдена'}, status=404)
+
+                    # Проверяем, что эта команда ещё не участвует в турнире
+                    for entry in existing_entries:
+                        if entry.team_id == team.id:
+                            return Response({'ok': False, 'error': 'Эта команда уже участвует в турнире'}, status=400)
+
+                elif player_id:
                     # Одиночный игрок
                     player = Player.objects.get(id=player_id)
                     
@@ -3539,7 +3824,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     
                     if not team:
                         team = Team.objects.create(player_1=player1, player_2=player2)
-                else:
+                elif name:
                     # Создание нового игрока
                     names = name.split(maxsplit=1)
                     player = Player.objects.create(
@@ -3549,7 +3834,6 @@ class TournamentViewSet(viewsets.ModelViewSet):
                         current_rating=1000
                     )
                     team = Team.objects.create(player_1=player)
-                
                 # Для круговой системы, King и Knockout в статусе created участники добавляются БЕЗ позиции
                 if tournament.system in [Tournament.System.ROUND_ROBIN, Tournament.System.KING, Tournament.System.KNOCKOUT] and tournament.status == Tournament.Status.CREATED:
                     entry = TournamentEntry.objects.create(
@@ -3937,32 +4221,56 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 group_index=None,
                 row_index=None
             )
-            
-            # Получаем только участников из ОСНОВНОГО СОСТАВА (MAIN_LIST)
-            # Находим team_id всех регистраций в основном списке
-            main_list_registrations = TournamentRegistration.objects.filter(
-                tournament=tournament,
-                status=TournamentRegistration.Status.MAIN_LIST
-            ).values_list('team_id', flat=True).distinct()
-            
-            main_list_team_ids = [tid for tid in main_list_registrations if tid is not None]
-            
-            if not main_list_team_ids:
-                return Response({'ok': False, 'error': 'Нет участников в основном составе для посева'}, status=400)
-            
-            # Получаем TournamentEntry только для команд из основного списка
-            entries = list(tournament.entries.filter(
-                team_id__in=main_list_team_ids
-            ).select_related(
-                'team__player_1__btr_player', 
-                'team__player_2__btr_player'
-            ).prefetch_related(
-                'team__player_1__btr_player__snapshots',
-                'team__player_2__btr_player__snapshots'
-            ).all())
-            
-            if not entries:
-                return Response({'ok': False, 'error': 'Нет участников в основном составе для посева'}, status=400)
+
+            # Для стадий (есть parent_tournament) основной состав полностью задаётся
+            # текущими TournamentEntry. Регистрации используются только в головном турнире.
+            if tournament.parent_tournament_id:
+                entries = list(
+                    tournament.entries.select_related(
+                        'team__player_1__btr_player',
+                        'team__player_2__btr_player',
+                    )
+                    .prefetch_related(
+                        'team__player_1__btr_player__snapshots',
+                        'team__player_2__btr_player__snapshots',
+                    )
+                    .all()
+                )
+
+                if not entries:
+                    return Response({'ok': False, 'error': 'Нет участников в основном составе для посева'}, status=400)
+            else:
+                # Головной турнир: основной состав определяется через TournamentRegistration
+                main_list_registrations = (
+                    TournamentRegistration.objects.filter(
+                        tournament=tournament,
+                        status=TournamentRegistration.Status.MAIN_LIST,
+                    )
+                    .values_list('team_id', flat=True)
+                    .distinct()
+                )
+
+                main_list_team_ids = [tid for tid in main_list_registrations if tid is not None]
+
+                if not main_list_team_ids:
+                    return Response({'ok': False, 'error': 'Нет участников в основном составе для посева'}, status=400)
+
+                # Получаем TournamentEntry только для команд из основного списка
+                entries = list(
+                    tournament.entries.filter(team_id__in=main_list_team_ids)
+                    .select_related(
+                        'team__player_1__btr_player',
+                        'team__player_2__btr_player',
+                    )
+                    .prefetch_related(
+                        'team__player_1__btr_player__snapshots',
+                        'team__player_2__btr_player__snapshots',
+                    )
+                    .all()
+                )
+
+                if not entries:
+                    return Response({'ok': False, 'error': 'Нет участников в основном составе для посева'}, status=400)
             
             # Функция для вычисления рейтинга участника (BP)
             def get_entry_rating(entry):
@@ -4299,9 +4607,15 @@ def tournament_list(request):
     date_from = request.GET.get('date_from', '').strip()
     date_to = request.GET.get('date_to', '').strip()
     
-    # Базовые запросы
-    active_qs = Tournament.objects.filter(status__in=[Tournament.Status.CREATED, Tournament.Status.ACTIVE])
-    history_qs = Tournament.objects.filter(status=Tournament.Status.COMPLETED)
+    # Базовые запросы - показываем только головные турниры (без parent_tournament_id)
+    active_qs = Tournament.objects.filter(
+        status__in=[Tournament.Status.CREATED, Tournament.Status.ACTIVE],
+        parent_tournament_id__isnull=True
+    )
+    history_qs = Tournament.objects.filter(
+        status=Tournament.Status.COMPLETED,
+        parent_tournament_id__isnull=True
+    )
 
     # Ограничение для гостей: показываем только завершённые турниры круговой и олимпийской систем.
     # Завершённые турниры Кинг оставляем только для аутентифицированных пользователей.
@@ -4581,10 +4895,13 @@ def tournament_complete(request, pk: int):
 def tournament_rollback_complete(request, pk: int):
     """Откатить завершение турнира.
 
-    Логика:
-    1. Откатить рейтинги игроков по данному турниру (аналог команды cleanup_tournament_rating).
-    2. Удалить PlayerRatingHistory и PlayerRatingDynamic для этого турнира.
-    3. Перевести турнир из COMPLETED обратно в ACTIVE.
+    Логика для multi-stage турниров:
+    1. Определить головной турнир и все его стадии
+    2. Откатить рейтинги игроков по головному турниру (из PlayerRatingDynamic)
+    3. Удалить PlayerRatingHistory для всех стадий
+    4. Удалить PlayerRatingDynamic для головного турнира
+    5. Перевести все стадии из COMPLETED обратно в ACTIVE
+    6. Удалить места (placements) если они были сохранены
     """
     t = get_object_or_404(Tournament, pk=pk)
 
@@ -4595,11 +4912,19 @@ def tournament_rollback_complete(request, pk: int):
     from apps.players.models import Player, PlayerRatingHistory, PlayerRatingDynamic
 
     with transaction.atomic():
-        # Собираем агрегаты рейтинга по турниру
-        dyn_qs = PlayerRatingDynamic.objects.select_for_update().filter(tournament_id=t.id)
+        # Определяем головной турнир и все стадии
+        if t.is_master():
+            master = t
+        else:
+            master = t.get_master_tournament()
+        
+        all_stages = master.get_all_stages()
+        stage_ids = [s.id for s in all_stages]
+        
+        # Собираем агрегаты рейтинга по головному турниру
+        dyn_qs = PlayerRatingDynamic.objects.select_for_update().filter(tournament_id=master.id)
         if dyn_qs.exists():
             changes = list(dyn_qs.values("player_id", "total_change"))
-            affected_players = {row["player_id"] for row in changes}
 
             # Откатим current_rating у затронутых игроков
             for row in changes:
@@ -4618,22 +4943,34 @@ def tournament_rollback_complete(request, pk: int):
                 p.current_rating = after
                 p.save(update_fields=["current_rating"])
 
-            # Удаляем историю и агрегаты по турниру
-            PlayerRatingHistory.objects.filter(tournament_id=t.id).delete()
+            # Удаляем историю для всех стадий
+            PlayerRatingHistory.objects.filter(tournament_id__in=stage_ids).delete()
+            # Удаляем агрегат по головному турниру
             dyn_qs.delete()
 
-        # Переводим турнир обратно в статус ACTIVE
-        t.status = Tournament.Status.ACTIVE
-        t.save(update_fields=["status"])
+        # Удаляем места (placements) если они были сохранены
+        # Проверяем наличие таблицы placements
+        try:
+            from apps.tournaments.models import TournamentPlacement
+            TournamentPlacement.objects.filter(tournament_id__in=stage_ids).delete()
+        except (ImportError, AttributeError):
+            pass
+
+        # Переводим все стадии обратно в статус ACTIVE
+        for stage in all_stages:
+            stage.status = Tournament.Status.ACTIVE
+            stage.save(update_fields=["status"])
 
     # Логируем операцию отката завершения турнира
     logger = logging.getLogger(__name__)
     user = request.user
     logger.info(
-        "[TOURNAMENT_ROLLBACK_COMPLETE] user_id=%s username=%s tournament_id=%s",
+        "[TOURNAMENT_ROLLBACK_COMPLETE] user_id=%s username=%s tournament_id=%s master_id=%s stages=%s",
         getattr(user, "id", None),
         getattr(user, "username", None),
         t.id,
+        master.id,
+        stage_ids,
     )
 
     return Response({"ok": True})

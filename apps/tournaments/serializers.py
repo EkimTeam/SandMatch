@@ -226,6 +226,10 @@ class TournamentSerializer(serializers.ModelSerializer):
     rating_coefficient = serializers.FloatField(read_only=True)
     prize_fund = serializers.CharField(read_only=True, allow_blank=True, allow_null=True)
     winner = serializers.SerializerMethodField()
+    # Многостадийные турниры
+    stages_count = serializers.SerializerMethodField()
+    is_master = serializers.SerializerMethodField()
+    master_tournament_id = serializers.SerializerMethodField()
 
     class Meta:
         model = Tournament
@@ -260,6 +264,13 @@ class TournamentSerializer(serializers.ModelSerializer):
             "prize_fund",
             "winner",
             "has_zero_rating_players",
+            # Многостадийные турниры
+            "parent_tournament",
+            "stage_name",
+            "stage_order",
+            "stages_count",
+            "is_master",
+            "master_tournament_id",
         ]
 
     def get_participants_count(self, obj: Tournament) -> int:
@@ -412,6 +423,22 @@ class TournamentSerializer(serializers.ModelSerializer):
             return False
 
         return Player.objects.filter(id__in=player_ids, current_rating=0).exists()
+
+    # === Многостадийные турниры ===
+
+    def get_stages_count(self, obj: Tournament):
+        """Количество стадий (только для мастер-турниров)."""
+
+        if obj.parent_tournament_id is None:
+            # child_tournaments — related_name на parent_tournament
+            return 1 + obj.child_tournaments.count()
+        return None
+
+    def get_is_master(self, obj: Tournament):
+        return obj.is_master()
+
+    def get_master_tournament_id(self, obj: Tournament):
+        return obj.get_master_tournament().id
 
     def get_winner(self, obj: Tournament):
         """Победитель завершённого турнира для веб-списка турниров.
