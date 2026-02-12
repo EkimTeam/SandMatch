@@ -220,8 +220,8 @@ export const StatsPage: React.FC = () => {
           <div className="text-3xl font-bold">{data?.by_tournament_types?.medium_tournaments ?? '-'}</div>
         </div>
         <div className="bg-white border border-gray-200 rounded-lg p-4 min-h-[96px]">
-          <div className="text-sm text-gray-600">Всего турниров "Только тай-брейк"</div>
-          <div className="text-3xl font-bold">{data?.by_tournament_types?.tiebreak_only_tournaments ?? '-'}</div>
+          <div className="text-sm text-gray-600">Всего ПроАм турниров</div>
+          <div className="text-3xl font-bold">{data?.by_tournament_types?.proam_tournaments ?? '-'}</div>
         </div>
         <div className="bg-white border border-gray-200 rounded-lg p-4 min-h-[96px]">
           <div className="text-sm text-gray-600">Всего турниров других типов</div>
