@@ -95,9 +95,8 @@ def summary_stats(request: HttpRequest) -> JsonResponse:
     hard_tournaments = Tournament.objects.filter(t_q & Q(name__icontains='HARD')).count()
     medium_tournaments = Tournament.objects.filter(t_q & Q(name__icontains='MEDIUM')).count()
     other_tournaments = Tournament.objects.filter(t_q & ~Q(name__icontains='HARD') & ~Q(name__icontains='MEDIUM')).count()
-    # турниры только тай-брейк: определяем по формату турнира (set_format_id=4)
-    # учитываем фильтр по датам
-    tiebreak_tournaments = Tournament.objects.filter(t_q & Q(set_format_id=4)).count()
+    # турниры ПроАм: по названию турнира (без учёта регистра)
+    proam_tournaments = Tournament.objects.filter(t_q & Q(name__icontains='ПроАм')).count()
 
     # Распределение игроков по типам турниров (по участию в матчах)
     hard_players: Set[int] = set()
@@ -215,7 +214,7 @@ def summary_stats(request: HttpRequest) -> JsonResponse:
             'hard_tournaments': hard_tournaments,
             'medium_tournaments': medium_tournaments,
             'other_tournaments': other_tournaments,
-            'tiebreak_only_tournaments': tiebreak_tournaments,
+            'proam_tournaments': proam_tournaments,
         },
         'players_distribution_by_types': {
             'only_hard': only_hard,
