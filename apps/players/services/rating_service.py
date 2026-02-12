@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 import logging
 
-from django.db import transaction
+from django.db import models, transaction
 
 from apps.players.models import Player, PlayerRatingHistory, PlayerRatingDynamic
 from apps.tournaments.models import Tournament
@@ -582,15 +582,26 @@ def recompute_history(options: RecomputeOptions) -> None:
 
     for master in masters:
         # Проверяем, есть ли у мастер-турнира стадии
-        stages_qs = master.child_tournaments.all().order_by('stage_order', 'date', 'id')
-        stage_ids = [s.id for s in stages_qs]
+        from apps.tournaments.models import Tournament as _T
+        children_qs = master.child_tournaments.all()
 
-        if stage_ids:
-            # Многостадийный турнир: считаем рейтинг по всем стадиям единым блоком
+        if children_qs.exists():
+            # Многостадийный турнир: мастер + все стадии как единый блок.
+            # Мастер имеет stage_order=0, стадии — >0.
+            stages_qs = (
+                _T.objects
+                .filter(models.Q(id=master.id) | models.Q(parent_tournament=master))
+                .order_by('stage_order', 'date', 'id')
+            )
+            stage_ids = [s.id for s in stages_qs]
+
+            print(f"[recompute] Мастер-турнир #{master.id}: многостадийный, всего стадий (включая master)= {len(stage_ids)}")
+            from apps.matches.models import Match
             for s in stages_qs:
-                from apps.matches.models import Match
                 mc = Match.objects.filter(tournament=s, status=Match.Status.COMPLETED).count()
-                print(f"[recompute]   стадия #{s.id} '{s.name or s.stage_name}' дата={s.date} завершённых матчей={mc}")
+                stage_label = 'MASTER' if s.id == master.id else (s.name or s.stage_name)
+                print(f"[recompute]   stage_order={s.stage_order} турнир #{s.id} '{stage_label}' дата={s.date} завершённых матчей={mc}")
+
             compute_ratings_for_multi_stage_tournament(master.id, stage_ids)
             print(f"[recompute] Мастер-турнир #{master.id} завершён (multi-stage)")
         else:
