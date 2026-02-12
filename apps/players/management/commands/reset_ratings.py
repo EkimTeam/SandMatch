@@ -208,10 +208,10 @@ class Command(BaseCommand):
             # Если --recompute вызван без --clear-history, то история не очищается
             options = RecomputeOptions(
                 wipe_history=False,  # История уже очищена на шаге 1, если был --clear-history
-                start_date=None,
-                end_date=None,
-                tournament_ids=None,
-                start_ratings_per_player=None
+                from_date=None,
+                to_date=None,
+                tournaments=None,
+                start_ratings_per_player=None,
             )
             
             self.stdout.write('  Запуск recompute_history...\n')
