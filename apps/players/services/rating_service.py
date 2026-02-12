@@ -1,12 +1,17 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
+import logging
+
 from django.db import transaction
 
 from apps.players.models import Player, PlayerRatingHistory, PlayerRatingDynamic
 from apps.tournaments.models import Tournament
 from apps.matches.models import Match, MatchSet
 from apps.players.services.initial_rating_service import get_initial_bp_rating
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -39,6 +44,9 @@ def _format_modifier(match_id: int) -> float:
     """
     sets = list(MatchSet.objects.filter(match_id=match_id).order_by('index'))
     if not sets:
+        # Частая ситуация при старых данных: матч завершён, но нет детализации по сетам.
+        # Для прозрачности логируем это при полном пересчёте.
+        logger.warning("[rating] Match %s: нет записей MatchSet, форматный множитель принят = 1.0", match_id)
         return 1.0
     total_sets = len(sets)
     if total_sets == 1:
@@ -70,6 +78,8 @@ def compute_ratings_for_tournament(tournament_id: int, k_factor: float = 32.0) -
     tournament_date = getattr(tournament, 'date', None)
     tournament_coefficient = float(getattr(tournament, 'rating_coefficient', 1.0))
 
+    logger.info("[rating] === Турнир #%s '%s' (%s), k=%.1f, coef=%.2f ===", tournament.id, tournament.name, tournament_date, k_factor, tournament_coefficient)
+
     matches = (
         Match.objects
         .filter(tournament_id=tournament_id, status=Match.Status.COMPLETED)
@@ -77,6 +87,12 @@ def compute_ratings_for_tournament(tournament_id: int, k_factor: float = 32.0) -
         .prefetch_related('tournament__entries')
         .order_by('id')
     )
+
+    matches_count = matches.count()
+    if matches_count == 0:
+        logger.warning("[rating] Турнир #%s: нет завершённых матчей, рейтинг не меняется", tournament_id)
+        return
+    logger.info("[rating] Турнир #%s: завершённых матчей = %s", tournament_id, matches_count)
     
     # Получаем все TournamentEntry для проверки is_out_of_competition
     from apps.tournaments.models import TournamentEntry
@@ -101,9 +117,9 @@ def compute_ratings_for_tournament(tournament_id: int, k_factor: float = 32.0) -
         if p.current_rating and p.current_rating > 0:
             ratings_before[pid] = float(p.current_rating)
         else:
-            # Определяем стартовый рейтинг
             initial_rating = get_initial_bp_rating(p, tournament)
             ratings_before[pid] = float(initial_rating)
+            logger.info("[rating] Турнир #%s: игрок #%s '%s' не имел рейтинга, присвоен стартовый %.1f", tournament_id, pid, p, initial_rating)
     # Накопленные изменения по игрокам за турнир (int)
     delta_by_player: Dict[int, int] = {pid: 0 for pid in player_ids}
     # Пер-матч журнал для записи истории: (match_id, change:int, fmt:float, opp_team_rating:float)
@@ -144,6 +160,14 @@ def compute_ratings_for_tournament(tournament_id: int, k_factor: float = 32.0) -
 
         # Если определить победителя нельзя или не хватает команд — пишем нулевые дельты
         if not m.team_1 or not m.team_2 or not m.winner_id:
+            logger.warning(
+                "[rating] Турнир #%s: матч #%s пропущен для расчёта (team_1=%s, team_2=%s, winner_id=%s)",
+                tournament_id,
+                m.id,
+                bool(m.team_1),
+                bool(m.team_2),
+                m.winner_id,
+            )
             t1_p1 = getattr(m.team_1, 'player_1_id', None) if m.team_1 else None
             t1_p2 = getattr(m.team_1, 'player_2_id', None) if m.team_1 else None
             t2_p1 = getattr(m.team_2, 'player_1_id', None) if m.team_2 else None
@@ -165,6 +189,13 @@ def compute_ratings_for_tournament(tournament_id: int, k_factor: float = 32.0) -
         t2_p1 = getattr(m.team_2, 'player_1_id', None)
         t2_p2 = getattr(m.team_2, 'player_2_id', None)
         if not t1_p1 or not t2_p1:
+            logger.warning(
+                "[rating] Турнир #%s: матч #%s без обеих команд для расчёта (t1_p1=%s, t2_p1=%s)",
+                tournament_id,
+                m.id,
+                t1_p1,
+                t2_p1,
+            )
             # Один из игроков отсутствует — трактуем как 0-дельты
             for pid in filter(None, [t1_p1, t1_p2, t2_p1, t2_p2]):
                 per_match_records[pid].append((m.id, 0, fmt, 0.0))
@@ -207,6 +238,16 @@ def compute_ratings_for_tournament(tournament_id: int, k_factor: float = 32.0) -
         after = int(round(before + total_delta))
         if after < 1:
             after = 1
+        logger.info(
+            "[rating] Турнир #%s: игрок #%s '%s' рейтинг %.1f → %.1f (Δ=%+d, матчей=%s)",
+            tournament_id,
+            pid,
+            player,
+            before,
+            after,
+            total_delta,
+            total_matches_by_player.get(pid, 0),
+        )
         # Обновляем текущий рейтинг
         player.current_rating = after
         player.save(update_fields=["current_rating"])
@@ -265,6 +306,14 @@ def compute_ratings_for_multi_stage_tournament(master_tournament_id: int, stage_
     master_tournament = Tournament.objects.get(id=master_tournament_id)
     tournament_date = getattr(master_tournament, 'date', None)
     
+    logger.info(
+        "[rating] === Мастер-турнир #%s '%s' (%s), multi-stage, k=%.1f ===",
+        master_tournament.id,
+        master_tournament.name,
+        tournament_date,
+        k_factor,
+    )
+
     # Получаем все стадии
     stages = Tournament.objects.filter(id__in=stage_ids).order_by('stage_order')
     
@@ -289,6 +338,13 @@ def compute_ratings_for_multi_stage_tournament(master_tournament_id: int, stage_
             # Определяем стартовый рейтинг
             initial_rating = get_initial_bp_rating(p, master_tournament)
             ratings_before[pid] = float(initial_rating)
+            logger.info(
+                "[rating] Мастер-турнир #%s: игрок #%s '%s' не имел рейтинга, присвоен стартовый %.1f",
+                master_tournament_id,
+                pid,
+                p,
+                initial_rating,
+            )
     
     # Накопленные изменения по игрокам за весь турнир
     delta_by_player: Dict[int, int] = {pid: 0 for pid in player_ids}
@@ -345,6 +401,15 @@ def compute_ratings_for_multi_stage_tournament(master_tournament_id: int, stage_
             fmt = _format_modifier(m.id)
             
             if not m.team_1 or not m.team_2 or not m.winner_id:
+                logger.warning(
+                    "[rating] Мастер-турнир #%s, стадия #%s: матч #%s пропущен для расчёта (team_1=%s, team_2=%s, winner_id=%s)",
+                    master_tournament_id,
+                    stage.id,
+                    m.id,
+                    bool(m.team_1),
+                    bool(m.team_2),
+                    m.winner_id,
+                )
                 # Нулевые дельты, но для meta считаем рейтинги команд от стартового рейтинга
                 t1_p1 = getattr(m.team_1, 'player_1_id', None) if m.team_1 else None
                 t1_p2 = getattr(m.team_1, 'player_2_id', None) if m.team_1 else None
@@ -370,6 +435,14 @@ def compute_ratings_for_multi_stage_tournament(master_tournament_id: int, stage_
             t2_p2 = getattr(m.team_2, 'player_2_id', None)
             
             if not t1_p1 or not t2_p1:
+                logger.warning(
+                    "[rating] Мастер-турнир #%s, стадия #%s: матч #%s без обеих команд для расчёта (t1_p1=%s, t2_p1=%s)",
+                    master_tournament_id,
+                    stage.id,
+                    m.id,
+                    t1_p1,
+                    t2_p1,
+                )
                 for pid in filter(None, [t1_p1, t1_p2, t2_p1, t2_p2]):
                     per_match_records[pid].append((m.id, 0, fmt, 0.0, stage.id))
                 continue
@@ -407,6 +480,16 @@ def compute_ratings_for_multi_stage_tournament(master_tournament_id: int, stage_
         after = int(round(before + total_delta))
         if after < 1:
             after = 1
+        logger.info(
+            "[rating] Мастер-турнир #%s: игрок #%s '%s' рейтинг %.1f → %.1f (Δ=%+d, матчей=%s)",
+            master_tournament_id,
+            pid,
+            player,
+            before,
+            after,
+            total_delta,
+            total_matches_by_player.get(pid, 0),
+        )
         
         # Обновляем текущий рейтинг
         player.current_rating = after
@@ -469,7 +552,8 @@ def recompute_history(options: RecomputeOptions) -> None:
         # Глобальный старт, если у игрока рейтинг нулевой
         Player.objects.filter(current_rating=0).update(current_rating=int(round(options.start_rating)))
 
-    qs = Tournament.objects.all()
+    # Берём только мастер-турниры (parent_tournament_id IS NULL)
+    qs = Tournament.objects.filter(parent_tournament__isnull=True)
     if options.from_date:
         qs = qs.filter(date__gte=options.from_date)
     if options.to_date:
@@ -477,16 +561,18 @@ def recompute_history(options: RecomputeOptions) -> None:
     if options.tournaments:
         qs = qs.filter(id__in=options.tournaments)
 
-    def _priority_name(name: str) -> Tuple[int, str]:
-        n = (name or '').lower()
-        if 'редварит' in n:
-            return (0, n)
-        if 'инал' in n:
-            return (1, n)
-        return (2, n)
+    # Сортировка: по дате проведения от старых к новым, затем по имени
+    masters: List[Tournament] = list(qs)
+    masters.sort(key=lambda t: (getattr(t, 'date', None) or '1900-01-01', getattr(t, 'name', '') or ''))
 
-    tournaments = list(qs)
-    tournaments.sort(key=lambda t: (getattr(t, 'date', None) or '1900-01-01',) + _priority_name(getattr(t, 'name', '')))
+    for master in masters:
+        # Проверяем, есть ли у мастер-турнира стадии
+        stages_qs = master.child_tournaments.all().order_by('stage_order', 'date', 'id')
+        stage_ids = [s.id for s in stages_qs]
 
-    for t in tournaments:
-        compute_ratings_for_tournament(t.id)
+        if stage_ids:
+            # Многостадийный турнир: считаем рейтинг по всем стадиям единым блоком
+            compute_ratings_for_multi_stage_tournament(master.id, stage_ids)
+        else:
+            # Обычный однотурнирный случай
+            compute_ratings_for_tournament(master.id)
