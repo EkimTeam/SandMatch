@@ -87,7 +87,7 @@ def summary_stats(request: HttpRequest) -> JsonResponse:
     avg_winrate = round(sum(winrates) / len(winrates), 1) if winrates else 0.0
 
     # Статистика по типам турниров
-    t_q = Q()
+    t_q = Q(parent_tournament_id__isnull=True)  # Только мастер-турниры
     if d_from:
         t_q &= Q(date__gte=d_from.date())
     if d_to:
