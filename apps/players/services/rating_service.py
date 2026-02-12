@@ -78,6 +78,8 @@ def compute_ratings_for_tournament(tournament_id: int, k_factor: float = 32.0) -
     tournament_date = getattr(tournament, 'date', None)
     tournament_coefficient = float(getattr(tournament, 'rating_coefficient', 1.0))
 
+    # Дополнительный вывод в консоль для ручного пересчёта
+    print(f"[recompute] Турнир #{tournament.id} '{tournament.name}' ({tournament_date}) system={tournament.system} single-stage")
     logger.info("[rating] === Турнир #%s '%s' (%s), k=%.1f, coef=%.2f ===", tournament.id, tournament.name, tournament_date, k_factor, tournament_coefficient)
 
     matches = (
@@ -90,8 +92,11 @@ def compute_ratings_for_tournament(tournament_id: int, k_factor: float = 32.0) -
 
     matches_count = matches.count()
     if matches_count == 0:
+        msg = f"[recompute] Турнир #{tournament.id}: нет завершённых матчей, рейтинг не меняется"
+        print(msg)
         logger.warning("[rating] Турнир #%s: нет завершённых матчей, рейтинг не меняется", tournament_id)
         return
+    print(f"[recompute] Турнир #{tournament.id}: завершённых матчей = {matches_count}")
     logger.info("[rating] Турнир #%s: завершённых матчей = %s", tournament_id, matches_count)
     
     # Получаем все TournamentEntry для проверки is_out_of_competition
@@ -305,7 +310,10 @@ def compute_ratings_for_multi_stage_tournament(master_tournament_id: int, stage_
     
     master_tournament = Tournament.objects.get(id=master_tournament_id)
     tournament_date = getattr(master_tournament, 'date', None)
-    
+
+    # Дополнительный вывод в консоль для ручного пересчёта
+    print(f"[recompute] Мастер-турнир #{master_tournament.id} '{master_tournament.name}' ({tournament_date}) system={master_tournament.system} stages={stage_ids}")
+
     logger.info(
         "[rating] === Мастер-турнир #%s '%s' (%s), multi-stage, k=%.1f ===",
         master_tournament.id,
@@ -540,6 +548,9 @@ def recompute_history(options: RecomputeOptions) -> None:
     - Идём по турнирам по дате, при совпадении даты — сортируем по названию: сначала включающие "редварит", затем "инал", затем остальные
     - Считаем каждый турнир функцией compute_ratings_for_tournament
     """
+    print("[recompute] Запуск пересчёта рейтинга...")
+    print(f"[recompute] Параметры: wipe_history={options.wipe_history}, from_date={options.from_date}, to_date={options.to_date}, tournaments={options.tournaments}, start_rating={options.start_rating}")
+
     if options.wipe_history:
         PlayerRatingHistory.objects.all().delete()
         PlayerRatingDynamic.objects.all().delete()
@@ -565,6 +576,10 @@ def recompute_history(options: RecomputeOptions) -> None:
     masters: List[Tournament] = list(qs)
     masters.sort(key=lambda t: (getattr(t, 'date', None) or '1900-01-01', getattr(t, 'name', '') or ''))
 
+    print(f"[recompute] Найдено мастер-турниров: {len(masters)}")
+    for master in masters:
+        print(f"[recompute]  -> мастер #{master.id} '{master.name}' дата={master.date} system={master.system}")
+
     for master in masters:
         # Проверяем, есть ли у мастер-турнира стадии
         stages_qs = master.child_tournaments.all().order_by('stage_order', 'date', 'id')
@@ -572,7 +587,13 @@ def recompute_history(options: RecomputeOptions) -> None:
 
         if stage_ids:
             # Многостадийный турнир: считаем рейтинг по всем стадиям единым блоком
+            for s in stages_qs:
+                from apps.matches.models import Match
+                mc = Match.objects.filter(tournament=s, status=Match.Status.COMPLETED).count()
+                print(f"[recompute]   стадия #{s.id} '{s.name or s.stage_name}' дата={s.date} завершённых матчей={mc}")
             compute_ratings_for_multi_stage_tournament(master.id, stage_ids)
+            print(f"[recompute] Мастер-турнир #{master.id} завершён (multi-stage)")
         else:
             # Обычный однотурнирный случай
             compute_ratings_for_tournament(master.id)
+            print(f"[recompute] Турнир #{master.id} завершён (single-stage)")
