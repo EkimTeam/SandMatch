@@ -303,17 +303,27 @@ def player_briefs(request: HttpRequest) -> Response:
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def player_match_deltas(request: HttpRequest, player_id: int) -> Response:
-    from apps.players.models import PlayerRatingHistory
+    from apps.players.models import PlayerRatingHistory, PlayerRatingDynamic
+    from apps.tournaments.models import Tournament
+    from collections import defaultdict
+    
     items = list(
         PlayerRatingHistory.objects
         .filter(player_id=player_id)
         .select_related('match', 'tournament')
         .order_by('created_at', 'id')
-        .values('id', 'value', 'created_at', 'match_id', 'tournament_id', 'tournament__name')
+        .values('id', 'value', 'created_at', 'match_id', 'tournament_id', 'tournament__name', 'tournament__parent_tournament_id')
     )
-    result = []
+    
+    # Группируем матчи по головному турниру
+    tournaments_data = defaultdict(lambda: {'matches': [], 'total_delta': 0})
     match_ids = [it['match_id'] for it in items if it['match_id']]
     matches = {m.id: m for m in Match.objects.filter(id__in=match_ids).select_related('team_1', 'team_2', 'tournament')}
+    
+    # Получаем информацию о головных турнирах
+    tournament_ids = set(it['tournament_id'] for it in items if it['tournament_id'])
+    tournaments = {t.id: t for t in Tournament.objects.filter(id__in=tournament_ids)}
+    
     for it in items:
         match_id = it['match_id']
         if match_id is None:
@@ -321,10 +331,18 @@ def player_match_deltas(request: HttpRequest, player_id: int) -> Response:
         m = matches.get(match_id)
         if not m:
             continue
-        # Пропускаем матчи с BYE (когда одна из команд отсутствует)
+        # Пропускаем матчи с BYE
         if m.team_1 is None or m.team_2 is None:
             continue
-        # Значение value в истории теперь — это дельта за ЭТОТ матч
+        
+        # Определяем головной турнир
+        stage_tournament = tournaments.get(m.tournament_id)
+        if not stage_tournament:
+            continue
+        
+        master_tournament_id = stage_tournament.parent_tournament_id or m.tournament_id
+        master_tournament = tournaments.get(master_tournament_id) if stage_tournament.parent_tournament_id else stage_tournament
+        
         delta = it['value']
         opp = _opponent_name(m, player_id)
         partner = _partner_name(m, player_id)
@@ -342,27 +360,28 @@ def player_match_deltas(request: HttpRequest, player_id: int) -> Response:
             ids = [pid for pid in ids if pid and pid != player_id]
             partner_id = ids[0] if ids else None
         score = _match_score_str(m.id)
-        # Средние рейтинги до турнира для каждой команды
+        
+        # Средние рейтинги до турнира
         def avg_before(tid: int, ids: list[int | None]) -> float | None:
             valid_ids = [pid for pid in ids if pid]
             if not valid_ids:
                 return None
-            dyn = list(PlayerRatingDynamic.objects.filter(player_id__in=valid_ids, tournament_id=tid).values_list('rating_before', flat=True))
+            # Ищем рейтинг в головном турнире
+            dyn = list(PlayerRatingDynamic.objects.filter(player_id__in=valid_ids, tournament_id=master_tournament_id).values_list('rating_before', flat=True))
             vals = [float(x) for x in dyn if x is not None]
             if not vals:
                 return None
             return sum(vals) / len(vals)
+        
         team1_ids = [getattr(m.team_1, 'player_1_id', None), getattr(m.team_1, 'player_2_id', None)] if m.team_1 else []
         team2_ids = [getattr(m.team_2, 'player_1_id', None), getattr(m.team_2, 'player_2_id', None)] if m.team_2 else []
-        team1_avg = avg_before(m.tournament_id, team1_ids)
-        team2_avg = avg_before(m.tournament_id, team2_ids)
-        result.append({
+        team1_avg = avg_before(master_tournament_id, team1_ids)
+        team2_avg = avg_before(master_tournament_id, team2_ids)
+        
+        match_data = {
             'match_id': match_id,
-            'tournament_id': m.tournament_id,
-            'tournament_name': getattr(m.tournament, 'name', it['tournament__name']),
-            'tournament_date': str(getattr(m.tournament, 'date', '') or ''),
-            'tournament_system': getattr(m.tournament, 'system', ''),
-            'participant_mode': getattr(m.tournament, 'participant_mode', ''),
+            'stage_id': m.tournament_id,
+            'stage_name': getattr(stage_tournament, 'stage_name', '') or getattr(stage_tournament, 'name', ''),
             'finished_at': str(getattr(m, 'finished_at', '') or ''),
             'delta': delta,
             'opponent': opp,
@@ -374,8 +393,32 @@ def player_match_deltas(request: HttpRequest, player_id: int) -> Response:
             'team2': [getattr(m.team_2, 'player_1_id', None), getattr(m.team_2, 'player_2_id', None)],
             'team1_avg_before': team1_avg,
             'team2_avg_before': team2_avg,
-        })
-    return Response({'player_id': player_id, 'matches': result})
+        }
+        
+        tournaments_data[master_tournament_id]['matches'].append(match_data)
+        tournaments_data[master_tournament_id]['total_delta'] += delta
+        
+        # Сохраняем информацию о турнире
+        if 'tournament_name' not in tournaments_data[master_tournament_id]:
+            tournaments_data[master_tournament_id].update({
+                'tournament_id': master_tournament_id,
+                'tournament_name': getattr(master_tournament, 'name', ''),
+                'tournament_date': str(getattr(master_tournament, 'date', '') or ''),
+                'tournament_system': getattr(master_tournament, 'system', ''),
+                'participant_mode': getattr(master_tournament, 'participant_mode', ''),
+            })
+    
+    # Сортируем матчи внутри каждого турнира по finished_at
+    result = []
+    for master_id, data in tournaments_data.items():
+        # Сортируем матчи по finished_at
+        data['matches'].sort(key=lambda x: x['finished_at'] or '')
+        result.append(data)
+    
+    # Сортируем турниры по дате
+    result.sort(key=lambda x: x['tournament_date'], reverse=True)
+    
+    return Response({'player_id': player_id, 'tournaments': result})
 
 
 @api_view(["GET"])

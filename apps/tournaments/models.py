@@ -277,12 +277,25 @@ class Tournament(models.Model):
         verbose_name="Призовой фонд",
         help_text="Наличие и размер призового фонда (например: '50000 руб', '1000 USD')"
     )
+    # Родительский турнир (мастер-турнир для многостадийных турниров)
     parent_tournament = models.ForeignKey(
         "self",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="child_tournaments",
+    )
+
+    # Название и порядок стадии в рамках мастер-турнира
+    stage_name = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        help_text="Название стадии (например: 'Предварительная стадия', 'Плей-офф')",
+    )
+    stage_order = models.IntegerField(
+        default=0,
+        help_text="Порядковый номер стадии (0 для мастера, 1, 2, 3... для стадий)",
     )
 
     # JSON структура: {"Группа 1": pattern_id, "Группа 2": pattern_id}
@@ -332,6 +345,76 @@ class Tournament(models.Model):
 
     def __str__(self) -> str:
         return f"{self.name} ({self.date})"
+
+    # === Методы для работы с многостадийными турнирами ===
+
+    def get_master_tournament(self) -> "Tournament":
+        """Возвращает корневой турнир (мастер-турнир)."""
+
+        if self.parent_tournament_id is None:
+            return self
+        return self.parent_tournament.get_master_tournament()
+
+    def get_all_stages(self) -> list["Tournament"]:
+        """Возвращает мастер-турнир и все его стадии по порядку stage_order."""
+
+        master = self.get_master_tournament()
+        stages = [master]
+        stages.extend(master.child_tournaments.all().order_by("stage_order", "id"))
+        return stages
+
+    def is_master(self) -> bool:
+        """Является ли турнир корневым (мастер-турниром)."""
+
+        return self.parent_tournament_id is None
+
+    def get_stage_number(self) -> int:
+        """Возвращает номер стадии (1 для мастера, 2, 3... для стадий)."""
+
+        if self.is_master():
+            return 1
+        return self.stage_order + 1
+
+    def can_delete_stage(self) -> bool:
+        """Можно ли удалить эту стадию как часть многостадийного турнира."""
+
+        # Нельзя удалить мастер-турнир через этот метод
+        if self.is_master():
+            return False
+
+        # Можно удалить только в статусе CREATED
+        if self.status != self.Status.CREATED:
+            return False
+
+        # Можно удалить только последнюю стадию
+        master = self.get_master_tournament()
+        all_stages = master.get_all_stages()
+        last_stage = all_stages[-1] if all_stages else None
+        return bool(last_stage and last_stage.id == self.id)
+
+    def can_edit_stage_settings(self) -> bool:
+        """Можно ли редактировать настройки стадии (система, группы и т.п.)."""
+
+        return self.status == self.Status.CREATED
+
+    def validate_stage_system(self, new_system: str) -> bool:
+        """Проверяет совместимость системы стадии с мастер-турниром.
+
+        Правило: KING может иметь подстадией только KING.
+        Round Robin и Knockout могут смешиваться между собой.
+        """
+
+        master = self.get_master_tournament()
+
+        # Если мастер - KING, то все стадии должны быть KING
+        if master.system == Tournament.System.KING and new_system != Tournament.System.KING:
+            raise ValueError("Турнир системы KING может иметь только стадии системы KING")
+
+        # Если мастер - не KING, то стадии не могут быть KING
+        if master.system != Tournament.System.KING and new_system == Tournament.System.KING:
+            raise ValueError("Турнир системы Round Robin/Knockout не может иметь стадии системы KING")
+
+        return True
 
 
 class TournamentEntry(models.Model):

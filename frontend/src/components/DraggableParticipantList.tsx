@@ -7,11 +7,13 @@ interface Props {
   reserveParticipants?: DraggableParticipant[];
   onRemoveParticipant: (id: number) => void;
   onAddParticipant: () => void;
+  onAddFromPreviousStage?: () => void;
   onAutoSeed: () => void;
   onClearTables: () => void;
   maxParticipants: number;
   canAddMore: boolean;
   tournamentSystem?: 'round_robin' | 'king' | 'knockout';
+  isStage?: boolean;
 }
 
 export const DraggableParticipantList: React.FC<Props> = ({
@@ -20,11 +22,13 @@ export const DraggableParticipantList: React.FC<Props> = ({
   reserveParticipants,
   onRemoveParticipant,
   onAddParticipant,
+  onAddFromPreviousStage,
   onAutoSeed,
   onClearTables,
   maxParticipants,
   canAddMore,
-  tournamentSystem = 'round_robin'
+  tournamentSystem = 'round_robin',
+  isStage = false
 }) => {
   const [draggedParticipant, setDraggedParticipant] = useState<DraggableParticipant | null>(null);
   const [touchStartY, setTouchStartY] = useState<number>(0);
@@ -220,14 +224,24 @@ export const DraggableParticipantList: React.FC<Props> = ({
           </select>
         </div>
         <div className="participant-actions">
-          <button 
-            className="btn btn-primary btn-sm"
-            onClick={onAddParticipant}
-            disabled={!canAddMore}
-            title={!canAddMore ? 'Достигнуто максимальное количество участников' : ''}
-          >
-            + Добавить участника
-          </button>
+          {isStage ? (
+            <button 
+              className="btn btn-primary btn-sm"
+              onClick={onAddFromPreviousStage}
+              title="Добавить участников из предыдущей стадии"
+            >
+              + Добавить из пред.стадии
+            </button>
+          ) : (
+            <button 
+              className="btn btn-primary btn-sm"
+              onClick={onAddParticipant}
+              disabled={!canAddMore}
+              title={!canAddMore ? 'Достигнуто максимальное количество участников' : ''}
+            >
+              + Добавить участника
+            </button>
+          )}
           <button 
             className="btn btn-outline btn-sm"
             onClick={onAutoSeed}

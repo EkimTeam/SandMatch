@@ -63,7 +63,26 @@ export const PlayerCardPage: React.FC = () => {
         const h = await ratingApi.playerHistory(playerId);
         setHistory(h.history || []);
         const md = await ratingApi.playerMatchDeltas(playerId);
-        setMatchDeltas(md.matches || []);
+        // API теперь возвращает tournaments с группировкой по головному турниру
+        // Преобразуем в плоский список матчей для совместимости
+        const allMatches: any[] = [];
+        if (md && Array.isArray(md.tournaments)) {
+          for (const t of md.tournaments) {
+            if (t && Array.isArray(t.matches)) {
+              for (const m of t.matches) {
+                allMatches.push({
+                  ...m,
+                  tournament_id: t.tournament_id,
+                  tournament_name: t.tournament_name,
+                  tournament_date: t.tournament_date,
+                  tournament_system: t.tournament_system,
+                  participant_mode: t.participant_mode,
+                });
+              }
+            }
+          }
+        }
+        setMatchDeltas(allMatches);
         const rel = await ratingApi.playerRelations(playerId);
         setRelations({ opponents: rel.opponents || [], partners: rel.partners || [] });
         const wins = await ratingApi.playerTopWins(playerId);
@@ -537,8 +556,8 @@ export const PlayerCardPage: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {t.matches.map((m) => (
-                      <tr key={m.match_id}>
+                    {t.matches.map((m, idx) => (
+                      <tr key={`${t.tournament_id}-${m.match_id}-${idx}`}>
                         <td className="px-3 py-2">{m.left} {typeof m.left_rating === 'number' ? (<span className="text-xs text-gray-600">— {Math.round(m.left_rating)} <span className="opacity-70">BP</span></span>) : null}</td>
                         <td className="px-3 py-2 text-center whitespace-nowrap">{m.score}</td>
                         <td className="px-3 py-2">{m.right} {typeof m.right_rating === 'number' ? (<span className="text-xs text-gray-600">— {Math.round(m.right_rating)} <span className="opacity-70">BP</span></span>) : null}</td>
