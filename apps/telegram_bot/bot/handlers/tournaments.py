@@ -33,7 +33,8 @@ def get_live_tournaments():
     """Получение турниров в процессе (live), отсортированных по алфавиту"""
     return list(
         Tournament.objects.filter(
-            status='active'
+            status='active',
+            parent_tournament__isnull=True,
         ).annotate(
             participants_count=Count('entries')
         ).order_by('name')[:10]
@@ -45,7 +46,8 @@ def get_registration_tournaments():
     """Получение турниров для регистрации, отсортированных по дате и времени (ближайший первым)"""
     return list(
         Tournament.objects.filter(
-            status='created'
+            status='created',
+            parent_tournament__isnull=True,
         ).annotate(
             participants_count=Count('entries')
         ).order_by('date', 'start_time', 'created_at')[:10]
@@ -57,7 +59,8 @@ def get_completed_tournaments(limit=5):
     """Получение завершенных турниров"""
     return list(
         Tournament.objects.filter(
-            status='completed'
+            status='completed',
+            parent_tournament__isnull=True,
         ).annotate(
             participants_count=Count('entries')
         ).order_by('-date', '-created_at')[:limit]
@@ -84,7 +87,8 @@ def get_user_tournaments(player_id):
     active_tournaments = list(
         Tournament.objects.filter(
             id__in=tournament_ids,
-            status='active'
+            status='active',
+            parent_tournament__isnull=True,
         ).annotate(
             participants_count=Count('entries')
         ).order_by('-date', '-created_at')
@@ -93,7 +97,8 @@ def get_user_tournaments(player_id):
     created_tournaments = list(
         Tournament.objects.filter(
             id__in=tournament_ids,
-            status='created'
+            status='created',
+            parent_tournament__isnull=True,
         ).annotate(
             participants_count=Count('entries')
         ).order_by('date', 'created_at')
@@ -113,7 +118,8 @@ def get_user_tournaments(player_id):
     completed_tournaments = list(
         Tournament.objects.filter(
             id__in=tournament_ids,
-            status='completed'
+            status='completed',
+            parent_tournament__isnull=True,
         ).annotate(
             participants_count=Count('entries')
         ).order_by('-date', '-created_at')[:completed_limit]

@@ -159,12 +159,15 @@ class MiniAppTournamentViewSet(viewsets.ReadOnlyModelViewSet):
             participants_count=Count('entries')
         ).select_related('venue', 'created_by')
 
-        # Для детального просмотра не ограничиваем по статусу,
-        # чтобы можно было открывать completed турниры.
-        if getattr(self, 'action', None) == 'retrieve':
+        action = getattr(self, 'action', None)
+
+        # Для детального просмотра не ограничиваем по мастер/стадии и по статусу,
+        # чтобы можно было открывать любые турниры по ID (в т.ч. завершённые / стадии).
+        if action == 'retrieve':
             return base_qs.order_by('-date', '-created_at')
 
-        queryset = base_qs
+        # Для списков (в том числе my_tournaments) показываем только мастер-турниры
+        queryset = base_qs.filter(parent_tournament__isnull=True)
 
         # Фильтр по статусу для списков
         status_filter = self.request.query_params.get('status')
@@ -208,14 +211,16 @@ class MiniAppTournamentViewSet(viewsets.ReadOnlyModelViewSet):
         # Получаем турниры по статусам
         active_tournaments = Tournament.objects.filter(
             id__in=tournament_ids,
-            status='active'
+            status='active',
+            parent_tournament__isnull=True,
         ).annotate(
             participants_count=Count('entries')
         ).order_by('-date', '-created_at')
         
         created_tournaments = Tournament.objects.filter(
             id__in=tournament_ids,
-            status='created'
+            status='created',
+            parent_tournament__isnull=True,
         ).annotate(
             participants_count=Count('entries')
         ).order_by('date', 'created_at')
@@ -232,7 +237,8 @@ class MiniAppTournamentViewSet(viewsets.ReadOnlyModelViewSet):
         
         completed_tournaments = Tournament.objects.filter(
             id__in=tournament_ids,
-            status='completed'
+            status='completed',
+            parent_tournament__isnull=True,
         ).annotate(
             participants_count=Count('entries')
         ).order_by('-date', '-created_at')[:completed_limit]

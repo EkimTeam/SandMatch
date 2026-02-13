@@ -130,15 +130,36 @@ def generate_announcement_text(tournament) -> str:
         max_participants = int(max_participants)
     except Exception:
         max_participants = 16
-    lines.append(f"👤 4-{max_participants}, Все")
+
+    # Минимум всегда 4. Формат:
+    # - если max_participants == 4: "4"
+    # - иначе: "4-max_participants"
+    if max_participants == 4:
+        participants_range = "4"
+    else:
+        participants_range = f"4-{max_participants}"
+
+    # Эмодзи: 👥 для парных турниров, 👤 для одиночных
+    from apps.tournaments.models import Tournament as _T
+    is_doubles = getattr(tournament, "participant_mode", _T.ParticipantMode.DOUBLES) == _T.ParticipantMode.DOUBLES
+    participants_emoji = "👥" if is_doubles else "👤"
+
+    lines.append(f"{participants_emoji} {participants_range}, Все")
 
     # Регламент
     lines.append("")
     lines.append("✍️Регламент:")
-    lines.append("Заявка только парой☝️")
-    lines.append("Пару можно искать через сервис в тг-боте")
-    lines.append("До турнира допускаются пары ММ,ЖЖ,МЖ уровень Hard и команды ProAm ( профессионал -любитель) ")
-    lines.append("Подача -сверху/снизу для всех")
+
+    if is_doubles:
+        # Парный турнир
+        lines.append("Заявка только парой☝️")
+        lines.append("Пару можно искать через сервис в тг-боте")
+        lines.append("До турнира допускаются пары ММ,ЖЖ,МЖ уровень Hard и команды ProAm (профессионал -любитель)")
+    else:
+        # Индивидуальный турнир
+        lines.append("Заявка индивидуальная")
+
+    lines.append("Подача - сверху/снизу для всех")
     lines.append("Сетка 180")
     lines.append("Уровень игроков определяется организатором❗️")
     lines.append("")
@@ -212,19 +233,22 @@ def generate_announcement_text(tournament) -> str:
         if main_pairs or reserve_pairs or looking_players:
             if main_pairs:
                 lines.append("🏅 Основной состав:")
-                for name in main_pairs:
-                    lines.append(f"- {name}")
+                for idx, name in enumerate(main_pairs, start=1):
+                    # Нумерованный список
+                    lines.append(f"{idx}. {name}")
                 lines.append("")
 
             if reserve_pairs:
                 lines.append("🧩 Резервный состав:")
-                for name in reserve_pairs:
-                    lines.append(f"- {name}")
+                for idx, name in enumerate(reserve_pairs, start=1):
+                    # Нумерованный список
+                    lines.append(f"{idx}. {name}")
                 lines.append("")
 
             if looking_players:
                 lines.append("🤝 Ищут пару:")
                 for name in looking_players:
+                    # Оставляем маркированный список для блока "Ищут пару"
                     lines.append(f"- {name}")
                 lines.append("")
 
