@@ -3,7 +3,7 @@
 """
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo, FSInputFile
 from aiogram.utils.markdown import hbold
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -654,12 +654,16 @@ async def cmd_my_registration(message: Message):
 
 @router.callback_query(F.data == "main_menu")
 async def callback_main_menu(callback: CallbackQuery):
-    """
+    """ 
     Возврат в главное меню
     """
     await callback.answer()
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+
+    from .tournaments import get_telegram_user
+
+    telegram_user = await get_telegram_user(callback.from_user.id)
+
+    keyboard_rows = [
         [
             InlineKeyboardButton(
                 text="📱 Мини-апп",
@@ -699,13 +703,49 @@ async def callback_main_menu(callback: CallbackQuery):
                 text="👤 Мой профиль",
                 callback_data="cmd_profile"
             )
-        ]
-    ])
-    
+        ],
+    ]
+
+    # Для пользователей без связанного профиля игрока показываем кнопку с инструкцией по регистрации
+    if telegram_user and not getattr(telegram_user, "player", None):
+        keyboard_rows.append([
+            InlineKeyboardButton(
+                text="📄 Инструкция по регистрации",
+                callback_data="registration_instruction",
+            )
+        ])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
+
     await callback.message.edit_text(
         f"{hbold('🏠 Главное меню')}\n\n"
         "Используй кнопки ниже для быстрого доступа:",
         reply_markup=keyboard
+    )
+
+
+@router.callback_query(F.data == "registration_instruction")
+async def callback_registration_instruction(callback: CallbackQuery):
+    """Отправить пользователю PDF-инструкцию по регистрации на платформе."""
+    await callback.answer()
+
+    # Путь к файлу инструкции. Предполагается, что файл лежит в media/telegram/instructions/.
+    file_path = os.path.join("media", "telegram", "instructions", "registration_guide.pdf")
+
+    try:
+        document = FSInputFile(file_path, filename="Инструкция по регистрации.pdf")
+    except Exception:
+        await callback.message.answer(
+            "❌ Не удалось найти файл инструкции. Пожалуйста, сообщи администратору."
+        )
+        return
+
+    await callback.message.answer_document(
+        document=document,
+        caption=(
+            "📄 Инструкция по регистрации на платформе BeachPlay.\n\n"
+            "Открой файл и следуй шагам, чтобы создать аккаунт и связать его с Telegram."
+        ),
     )
 
 
