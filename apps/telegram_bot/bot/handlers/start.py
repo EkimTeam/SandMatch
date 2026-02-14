@@ -206,7 +206,8 @@ async def cmd_start(message: Message):
     ]
 
     # Для пользователей без связанного профиля игрока показываем кнопку с инструкцией по регистрации
-    if not getattr(telegram_user, "player", None):
+    # Важно: используем player_id, чтобы не дергать БД из async-контекста через telegram_user.player
+    if not getattr(telegram_user, "player_id", None):
         keyboard_rows.append([
             InlineKeyboardButton(
                 text="📄 Инструкция по регистрации",
