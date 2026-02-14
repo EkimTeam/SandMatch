@@ -3,7 +3,7 @@
 """
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.markdown import hbold, hcode
 from asgiref.sync import sync_to_async
 from django.utils import timezone
@@ -12,7 +12,11 @@ from django.db import models
 from apps.telegram_bot.models import TelegramUser, LinkCode
 from apps.players.models import Player
 
+import os
+
 router = Router()
+
+BOT_USERNAME = os.getenv('TELEGRAM_BOT_USERNAME', '')
 
 
 @sync_to_async
@@ -109,6 +113,24 @@ async def cmd_link(message: Message):
     """
     Обработка команды /link [КОД]
     """
+    # В группах перенаправляем пользователя в личный чат с ботом
+    if message.chat.type in {"group", "supergroup"}:
+        if BOT_USERNAME:
+            bot_url = f"https://t.me/{BOT_USERNAME}?start=link"
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+                text="🤖 Открыть бота",
+                url=bot_url,
+            )]])
+            await message.answer(
+                "Чтобы связать аккаунт, перейди в личный чат с ботом и отправь команду /link КОД:",
+                reply_markup=keyboard,
+            )
+        else:
+            await message.answer(
+                "Чтобы связать аккаунт, открой личный чат с ботом и отправь команду /link КОД."
+            )
+        return
+
     import logging
     logger = logging.getLogger(__name__)
     logger.info(f"[LINK] Получена команда /link от пользователя {message.from_user.id}")

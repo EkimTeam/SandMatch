@@ -1,6 +1,5 @@
-"""
-Обработчик команды /profile - просмотр профиля
-"""
+"""Обработчик команды /profile - просмотр профиля."""
+import os
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -10,6 +9,8 @@ from asgiref.sync import sync_to_async
 from apps.telegram_bot.models import TelegramUser
 
 router = Router()
+
+BOT_USERNAME = os.getenv('TELEGRAM_BOT_USERNAME', '')
 
 
 @sync_to_async
@@ -24,10 +25,20 @@ def get_user_profile(telegram_id):
 
 @router.message(Command("profile"))
 async def cmd_profile(message: Message):
-    """
-    Обработка команды /profile
-    Показывает информацию о профиле пользователя
-    """
+    """Обработка команды /profile."""
+    # В группах перенаправляем пользователя в личный чат с ботом
+    if message.chat.type in {"group", "supergroup"}:
+        if BOT_USERNAME:
+            bot_url = f"https://t.me/{BOT_USERNAME}?start=profile"
+            await message.answer(
+                "Профиль доступен в личном чате с ботом. Перейдите по ссылке и отправьте /profile:\n"
+                f"{bot_url}"
+            )
+        else:
+            await message.answer(
+                "Профиль доступен в личном чате с ботом. Откройте диалог и отправьте /profile."
+            )
+        return
     telegram_user = await get_user_profile(message.from_user.id)
     
     if not telegram_user:
