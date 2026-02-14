@@ -23,7 +23,11 @@ from .tournaments import (
 )
 from ..keyboards import get_main_keyboard
 
+import os
+
 router = Router()
+
+BOT_USERNAME = os.getenv('TELEGRAM_BOT_USERNAME', '')
 
 # URL веб-приложения
 import os
@@ -498,9 +502,24 @@ async def callback_back_to_tournament(callback: CallbackQuery):
 
 @router.message(Command("myregistration"))
 async def cmd_my_registration(message: Message):
-    """
-    Команда для просмотра статуса регистрации на турниры
-    """
+    """Команда для просмотра статуса регистрации на турниры."""
+    # В группах перенаправляем пользователя в личный чат с ботом
+    if message.chat.type in {"group", "supergroup"}:
+        if BOT_USERNAME:
+            bot_url = f"https://t.me/{BOT_USERNAME}?start=myregistration"
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+                text="🤖 Открыть бота",
+                url=bot_url,
+            )]])
+            await message.answer(
+                "Статус твоих заявок доступен в личном чате с ботом:",
+                reply_markup=keyboard,
+            )
+        else:
+            await message.answer(
+                "Статус твоих заявок доступен в личном чате с ботом. Открой диалог и отправь /myregistration."
+            )
+        return
     telegram_user = await get_telegram_user(message.from_user.id)
     
     if not telegram_user:

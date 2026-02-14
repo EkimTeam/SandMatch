@@ -1,6 +1,4 @@
-"""
-Обработчики команд для работы с турнирами
-"""
+"""Обработчики команд для работы с турнирами."""
 import os
 from aiogram import Router, F
 from aiogram.filters import Command
@@ -8,6 +6,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.utils.markdown import hbold, hcode
 from asgiref.sync import sync_to_async
 from django.db.models import Q, Count
+from django.conf import settings as django_settings
 
 from apps.telegram_bot.models import TelegramUser
 from apps.tournaments.models import Tournament, TournamentEntry, TournamentPlacement
@@ -17,6 +16,9 @@ router = Router()
 
 # URL веб-приложения из переменной окружения
 WEB_APP_URL = os.getenv('WEB_APP_URL', 'https://beachplay.ru')
+
+# Username бота для формирования deep-link в личный чат
+BOT_USERNAME = getattr(django_settings, 'TELEGRAM_BOT_USERNAME', 'beachplay_bot')
 
 
 @sync_to_async
@@ -421,6 +423,24 @@ async def cmd_tournaments(message: Message):
     Показывает активные турниры, турниры для регистрации и завершенные
     """
     from aiogram.types import WebAppInfo
+
+    # В группах и супергруппах не спамим списком турниров, а даём ссылку в личку
+    chat_type = getattr(message.chat, "type", "")
+    if chat_type in ("group", "supergroup"):
+        bot_url = f"https://t.me/{BOT_USERNAME}?start=tournaments"
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🤖 Открыть бота",
+                    url=bot_url,
+                )
+            ]
+        ])
+        await message.answer(
+            "Чтобы посмотреть турниры и зарегистрироваться, перейдите в личный чат с ботом:",
+            reply_markup=keyboard,
+        )
+        return
     
     telegram_user = await get_telegram_user(message.from_user.id)
     
@@ -573,7 +593,20 @@ async def cmd_my_tournaments(message: Message):
     Показывает турниры пользователя
     """
     from aiogram.types import WebAppInfo
-    
+
+    # В группах перенаправляем пользователя в личный чат с ботом
+    if message.chat.type in {"group", "supergroup"}:
+        bot_url = f"https://t.me/{BOT_USERNAME}?start=mytournaments"
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+            text="🤖 Открыть бота",
+            url=bot_url,
+        )]])
+        await message.answer(
+            "Список твоих турниров доступен в личном чате с ботом:",
+            reply_markup=keyboard,
+        )
+        return
+
     telegram_user = await get_telegram_user(message.from_user.id)
     
     if not telegram_user:

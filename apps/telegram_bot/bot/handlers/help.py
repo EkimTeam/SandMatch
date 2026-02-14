@@ -11,6 +11,7 @@ router = Router()
 
 # URL веб-приложения
 WEB_APP_URL = os.getenv('WEB_APP_URL', 'https://beachplay.ru')
+BOT_USERNAME = os.getenv('TELEGRAM_BOT_USERNAME', '')
 
 
 @router.message(Command("help"))
@@ -19,6 +20,23 @@ async def cmd_help(message: Message):
     Обработка команды /help
     Показывает список доступных команд
     """
+    # В группах перенаправляем пользователя в личный чат с ботом
+    if message.chat.type in {"group", "supergroup"}:
+        if BOT_USERNAME:
+            bot_url = f"https://t.me/{BOT_USERNAME}?start=help"
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+                text="🤖 Открыть бота",
+                url=bot_url,
+            )]])
+            await message.answer(
+                "Справка по командам доступна в личном чате с ботом:",
+                reply_markup=keyboard,
+            )
+        else:
+            await message.answer(
+                "Справка по командам доступна в личном чате с ботом. Откройте диалог и отправьте /help."
+            )
+        return
     help_text = f"{hbold('📖 Справка по командам')}\n\n"
     
     help_text += f"{hbold('Основные команды:')}\n"
