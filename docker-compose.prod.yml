@@ -38,6 +38,8 @@ services:
     depends_on:
       - web
       - redis
+    volumes:
+      - ./media:/app/media
 
   celery:
     image: ${WEB_IMAGE:-ghcr.io/ekimteam/sandmatch/web}:${WEB_IMAGE_TAG:-latest}
