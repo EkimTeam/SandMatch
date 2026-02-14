@@ -162,7 +162,7 @@ async def cmd_start(message: Message):
     deep_link_param = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else None
     
     # Создаём inline-клавиатуру с командами бота (4 ряда по 2 кнопки)
-    bot_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    keyboard_rows = [
         [
             InlineKeyboardButton(
                 text="📱 Мини-апп",
@@ -202,8 +202,19 @@ async def cmd_start(message: Message):
                 text="👤 Мой профиль",
                 callback_data="cmd_profile"
             )
-        ]
-    ])
+        ],
+    ]
+
+    # Для пользователей без связанного профиля игрока показываем кнопку с инструкцией по регистрации
+    if not getattr(telegram_user, "player", None):
+        keyboard_rows.append([
+            InlineKeyboardButton(
+                text="📄 Инструкция по регистрации",
+                callback_data="registration_instruction",
+            )
+        ])
+
+    bot_keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
     if created:
         # Первый заход в бота — показываем приветствие и сразу 8 кнопок
