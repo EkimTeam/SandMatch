@@ -374,7 +374,7 @@ async def handle_website_button(message: Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
-                text="🌐 Открыть BeachPlay.ru",
+                text="🌐 BeachPlay",
                 url=f"{WEB_APP_URL}"
             )
         ]
