@@ -707,7 +707,8 @@ async def callback_main_menu(callback: CallbackQuery):
     ]
 
     # Для пользователей без связанного профиля игрока показываем кнопку с инструкцией по регистрации
-    if telegram_user and not getattr(telegram_user, "player", None):
+    # Используем player_id, чтобы не триггерить синхронный запрос к БД через telegram_user.player
+    if telegram_user and not getattr(telegram_user, "player_id", None):
         keyboard_rows.append([
             InlineKeyboardButton(
                 text="📄 Инструкция по регистрации",
