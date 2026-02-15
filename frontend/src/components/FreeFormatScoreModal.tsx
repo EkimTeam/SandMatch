@@ -21,13 +21,15 @@ interface FreeFormatScoreModalProps {
   tournament: any;
   onClose: () => void;
   onSave: (sets: SetScore[]) => Promise<void>;
+  mirror?: boolean; // true если UI порядок команд не совпадает с порядком в БД (нужен разворот)
 }
 
 const FreeFormatScoreModal: React.FC<FreeFormatScoreModalProps> = ({
   match,
   tournament,
   onClose,
-  onSave
+  onSave,
+  mirror = false
 }) => {
   const [sets, setSets] = useState<SetScore[]>([
     {
@@ -51,10 +53,14 @@ const FreeFormatScoreModal: React.FC<FreeFormatScoreModalProps> = ({
         const isChampionTB = s.is_tiebreak_only;
         const hasTB = !isChampionTB && s.tb_1 !== null && s.tb_2 !== null;
         
+        // Если mirror=true, разворачиваем счёт (меняем games_1 и games_2 местами)
+        const g1 = isChampionTB ? (s.tb_1 || 0) : (s.games_1 || 0);
+        const g2 = isChampionTB ? (s.tb_2 || 0) : (s.games_2 || 0);
+        
         return {
           index: s.index,
-          games_1: isChampionTB ? (s.tb_1 || 0) : (s.games_1 || 0),
-          games_2: isChampionTB ? (s.tb_2 || 0) : (s.games_2 || 0),
+          games_1: mirror ? g2 : g1,
+          games_2: mirror ? g1 : g2,
           tb_loser_points: hasTB ? Math.min(s.tb_1, s.tb_2) : null,
           is_tiebreak_only: isChampionTB,
           custom_enabled: !isChampionTB,
@@ -64,7 +70,7 @@ const FreeFormatScoreModal: React.FC<FreeFormatScoreModalProps> = ({
       });
       setSets(loadedSets);
     }
-  }, [match]);
+  }, [match, mirror]);
 
   // Пресеты счета
   const presets = [

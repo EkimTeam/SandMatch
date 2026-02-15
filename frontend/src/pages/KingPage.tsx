@@ -83,12 +83,16 @@ export const KingPage: React.FC = () => {
     team1: { id: number; name: string };
     team2: { id: number; name: string };
     existingSets: any[];
+    matchTeam1Id?: number | null;
+    matchTeam2Id?: number | null;
   }>(null);
   const [scoreInput, setScoreInput] = useState<null | {
     matchId: number;
     team1: { id: number; name: string };
     team2: { id: number; name: string };
     existingSets?: any[];
+    matchTeam1Id?: number | null;
+    matchTeam2Id?: number | null;
   }>(null);
   const [showCalcTip, setShowCalcTip] = useState(false);
   const [showTextResultsModal, setShowTextResultsModal] = useState(false);
@@ -1780,6 +1784,8 @@ export const KingPage: React.FC = () => {
                                             team1: { id: team1Players[0]?.id || 0, name: team1Name },
                                             team2: { id: team2Players[0]?.id || 0, name: team2Name },
                                             existingSets: (match as any).sets || [],
+                                            matchTeam1Id: (match as any).team_1_id ?? (match as any).team_1?.id ?? null,
+                                            matchTeam2Id: (match as any).team_2_id ?? (match as any).team_2?.id ?? null,
                                           });
                                         };
 
@@ -1833,6 +1839,8 @@ export const KingPage: React.FC = () => {
                                       team1: { id: team1Players[0]?.id || 0, name: team1Name },
                                       team2: { id: team2Players[0]?.id || 0, name: team2Name },
                                       existingSets: match.sets || [],
+                                      matchTeam1Id: match.team_1_id ?? match.team_1?.id ?? null,
+                                      matchTeam2Id: match.team_2_id ?? match.team_2?.id ?? null,
                                     });
                                   };
 
@@ -2301,6 +2309,8 @@ export const KingPage: React.FC = () => {
                           team1: scoreDialog.team1,
                           team2: scoreDialog.team2,
                           existingSets: scoreDialog.existingSets,
+                          matchTeam1Id: scoreDialog.matchTeam1Id ?? null,
+                          matchTeam2Id: scoreDialog.matchTeam2Id ?? null,
                         });
                         setScoreDialog(null);
                       }}
@@ -2340,6 +2350,8 @@ export const KingPage: React.FC = () => {
                           team1: scoreDialog.team1,
                           team2: scoreDialog.team2,
                           existingSets: scoreDialog.existingSets,
+                          matchTeam1Id: scoreDialog.matchTeam1Id ?? null,
+                          matchTeam2Id: scoreDialog.matchTeam2Id ?? null,
                         });
                         setScoreDialog(null);
                       }}
@@ -2366,6 +2378,8 @@ export const KingPage: React.FC = () => {
                           team1: scoreDialog.team1,
                           team2: scoreDialog.team2,
                           existingSets: scoreDialog.existingSets,
+                          matchTeam1Id: scoreDialog.matchTeam1Id ?? null,
+                          matchTeam2Id: scoreDialog.matchTeam2Id ?? null,
                         });
                         setScoreDialog(null);
                       }}
@@ -2418,6 +2432,7 @@ export const KingPage: React.FC = () => {
             sets: scoreInput.existingSets || [],
           }}
           tournament={t}
+          mirror={scoreInput.matchTeam1Id !== null && scoreInput.matchTeam1Id !== scoreInput.team1.id}
           onClose={() => setScoreInput(null)}
           onSave={async (sets) => {
             if (!t || !scoreInput) return;

@@ -1850,6 +1850,7 @@ export const TournamentDetailPage: React.FC = () => {
               sets: scoreInput.existingSets || []
             }}
             tournament={t}
+            mirror={scoreInput.matchTeam1Id !== null && scoreInput.matchTeam1Id !== scoreInput.team1.id}
             onClose={() => setScoreInput(null)}
             onSave={async (sets) => {
               if (!t) return;
