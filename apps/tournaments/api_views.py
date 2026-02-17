@@ -61,6 +61,9 @@ from apps.tournaments.services.round_robin import (
 )
 from apps.tournaments.services.multi_stage_service import MultiStageService
 
+from apps.schedules.models import Schedule, ScheduleCourt, ScheduleRun, ScheduleScope
+from apps.schedules.serializers import ScheduleSerializer
+
 
 def generate_announcement_text(tournament) -> str:
     """Генерация текста анонса турнира для публикации.
@@ -297,6 +300,8 @@ class TournamentViewSet(viewsets.ModelViewSet):
             "create_stage",
             "update_stage_settings",
             "complete_master",
+            "schedule",
+            "schedule_generate",
         }:
             return [IsTournamentCreatorOrAdmin()]
 
@@ -313,6 +318,122 @@ class TournamentViewSet(viewsets.ModelViewSet):
             return [IsAuthenticated()]
 
         return super().get_permissions()
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["get"], url_path="schedule", permission_classes=[AllowAny])
+    def schedule(self, request, pk=None):
+        """Получить расписание для турнира.
+
+        Поведение по умолчанию:
+        - если есть расписание на дату tournament.date — вернуть его;
+        - иначе вернуть последнее созданное расписание, в scope которого входит турнир;
+        - если нет — вернуть schedule=null.
+        """
+
+        tournament: Tournament = self.get_object()
+        self._ensure_can_view_tournament(request, tournament)
+
+        qs = Schedule.objects.filter(scopes__tournament=tournament).distinct().order_by("-created_at")
+        selected = None
+        if tournament.date:
+            selected = qs.filter(date=tournament.date).order_by("-created_at").first()
+        if selected is None:
+            selected = qs.first()
+
+        if not selected:
+            return Response({"ok": True, "schedule": None})
+
+        return Response({"ok": True, "schedule": ScheduleSerializer(selected).data})
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="schedule/generate", permission_classes=[IsAuthenticated])
+    def schedule_generate(self, request, pk=None):
+        """Создать/пересоздать расписание для турнира.
+
+        Ограничения:
+        - только для турниров/стадий в статусе active
+        - только для ADMIN/ORGANIZER (через IsTournamentCreatorOrAdmin)
+
+        Payload (минимальный):
+        - date: YYYY-MM-DD (опционально; по умолчанию tournament.date)
+        - courts_count: int (обязательно)
+        - runs_count: int (обязательно)
+        - match_duration_minutes: int (опционально; по умолчанию 40)
+        - start_time: HH:MM (опционально; по умолчанию tournament.start_time или 10:00)
+        """
+
+        tournament: Tournament = self.get_object()
+        if tournament.status != Tournament.Status.ACTIVE:
+            return Response(
+                {"ok": False, "error": "only_active", "detail": "Расписание можно создавать только для active"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        payload = request.data or {}
+        date_value = payload.get("date") or tournament.date
+        courts_count = payload.get("courts_count")
+        runs_count = payload.get("runs_count")
+        match_duration_minutes = payload.get("match_duration_minutes") or 40
+        start_time_value = payload.get("start_time") or getattr(tournament, "start_time", None) or "10:00"
+
+        try:
+            courts_count = int(courts_count)
+            runs_count = int(runs_count)
+            match_duration_minutes = int(match_duration_minutes)
+        except Exception:
+            return Response(
+                {"ok": False, "error": "bad_params", "detail": "courts_count/runs_count/match_duration_minutes должны быть числами"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not date_value:
+            return Response(
+                {"ok": False, "error": "no_date", "detail": "Не указана дата расписания"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if courts_count <= 0 or runs_count <= 0:
+            return Response(
+                {"ok": False, "error": "bad_counts", "detail": "courts_count и runs_count должны быть > 0"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from datetime import time
+
+        try:
+            if isinstance(start_time_value, str):
+                hh, mm = start_time_value.split(":")
+                start_time_obj = time(int(hh), int(mm))
+            else:
+                start_time_obj = start_time_value
+        except Exception:
+            start_time_obj = time(10, 0)
+
+        with transaction.atomic():
+            schedule = Schedule.objects.create(
+                date=date_value,
+                match_duration_minutes=match_duration_minutes,
+                created_by=request.user,
+            )
+            ScheduleScope.objects.create(schedule=schedule, tournament=tournament)
+
+            for ci in range(1, courts_count + 1):
+                ScheduleCourt.objects.create(
+                    schedule=schedule,
+                    index=ci,
+                    name=f"Корт {ci}",
+                    first_start_time=start_time_obj if ci == 1 else None,
+                )
+
+            for ri in range(1, runs_count + 1):
+                ScheduleRun.objects.create(
+                    schedule=schedule,
+                    index=ri,
+                    start_mode=ScheduleRun.StartMode.FIXED,
+                    start_time=start_time_obj,
+                )
+
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data}, status=status.HTTP_201_CREATED)
 
     def get_queryset(self):
         """В списке показываем только мастер-турниры.

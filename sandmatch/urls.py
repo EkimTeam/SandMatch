@@ -55,6 +55,7 @@ urlpatterns = [
     
     # API endpoints
     path("api/", include("apps.tournaments.api_urls")),
+    path("api/", include("apps.schedules.api_urls")),
     path("api/rating/", include("apps.players.api_urls")),
     path("api/btr/", include("apps.btr.api_urls")),
     path("api/auth/", include("apps.accounts.api_urls")),
