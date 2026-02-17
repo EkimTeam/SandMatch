@@ -91,7 +91,11 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                 if len(parts) >= 2:
                     hh = parts[0]
                     mm = parts[1]
-                    return time(int(hh), int(mm))
+                    ss = parts[2] if len(parts) >= 3 else "0"
+                    try:
+                        return time(int(hh), int(mm), int(ss))
+                    except Exception:
+                        return time(int(hh), int(mm))
                 return None
             return None
 
@@ -204,6 +208,7 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         pool_qs = (
             Match.objects.filter(tournament_id__in=tournament_ids)
             .exclude(stage=Match.Stage.PLACEMENT)
+            .exclude(status=Match.Status.COMPLETED)
             .select_related("tournament", "team_1", "team_2", "winner")
             .prefetch_related("sets")
             .order_by("tournament_id", "stage", "round_index", "order_in_round", "id")

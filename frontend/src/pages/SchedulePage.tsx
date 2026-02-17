@@ -20,11 +20,19 @@ export const SchedulePage: React.FC = () => {
   const [courtsCount, setCourtsCount] = useState<number>(6);
   const [matchDuration, setMatchDuration] = useState<number>(40);
   const [startTime, setStartTime] = useState<string>('10:00');
+  const [tournamentSystem, setTournamentSystem] = useState<string | null>(null);
+  const [rrTeamRowById, setRrTeamRowById] = useState<Map<number, number>>(new Map());
 
   const [planned, setPlanned] = useState<SchedulePlannedTimesResponse | null>(null);
   const [conflicts, setConflicts] = useState<ScheduleConflictsResponse | null>(null);
   const [pool, setPool] = useState<any[]>([]);
   const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
+  const [dragMatchId, setDragMatchId] = useState<number | null>(null);
+  const [dragSource, setDragSource] = useState<{ runIndex: number; courtIndex: number } | null>(null);
+  const [dragOverCell, setDragOverCell] = useState<{ runIndex: number; courtIndex: number } | null>(null);
+  const [dragOverUnassigned, setDragOverUnassigned] = useState<boolean>(false);
+
+  const [localConflictsSlotIds, setLocalConflictsSlotIds] = useState<Set<number> | null>(null);
 
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -40,6 +48,72 @@ export const SchedulePage: React.FC = () => {
     }
     return ids;
   }, [conflicts]);
+
+  const poolUnassigned = useMemo(() => pool.filter((m: any) => !m?.is_assigned), [pool]);
+  const poolAssigned = useMemo(() => pool.filter((m: any) => m?.is_assigned), [pool]);
+
+  const matchById = useMemo(() => {
+    const map = new Map<number, any>();
+    for (const m of pool || []) {
+      if (m?.id) map.set(Number(m.id), m);
+    }
+    return map;
+  }, [pool]);
+
+  useEffect(() => {
+    if (!schedule) {
+      setLocalConflictsSlotIds(null);
+      return;
+    }
+
+    const runIndexById = new Map<number, number>();
+    schedule.runs.forEach(r => runIndexById.set(r.id, r.index));
+
+    const slotsByRun = new Map<number, Array<{ slotId: number; matchId: number; playerIds: number[] }>>();
+
+    for (const s of schedule.slots || []) {
+      if (!s?.match || !s?.id) continue;
+      const m = matchById.get(Number(s.match));
+      if (!m) continue;
+      const runIndex = runIndexById.get(s.run);
+      if (!runIndex) continue;
+
+      const pids: number[] = [];
+      const t1p1 = m?.team_1?.player_1?.id;
+      const t1p2 = m?.team_1?.player_2?.id;
+      const t2p1 = m?.team_2?.player_1?.id;
+      const t2p2 = m?.team_2?.player_2?.id;
+      if (t1p1) pids.push(Number(t1p1));
+      if (t1p2) pids.push(Number(t1p2));
+      if (t2p1) pids.push(Number(t2p1));
+      if (t2p2) pids.push(Number(t2p2));
+
+      if (!pids.length) continue;
+      const arr = slotsByRun.get(runIndex) || [];
+      arr.push({ slotId: Number(s.id), matchId: Number(s.match), playerIds: pids });
+      slotsByRun.set(runIndex, arr);
+    }
+
+    const conflictIds = new Set<number>();
+    for (const [, entries] of slotsByRun) {
+      const counts = new Map<number, number>();
+      for (const e of entries) {
+        for (const pid of e.playerIds) counts.set(pid, (counts.get(pid) || 0) + 1);
+      }
+      const conflictPlayers = new Set<number>();
+      for (const [pid, cnt] of counts) {
+        if (cnt > 1) conflictPlayers.add(pid);
+      }
+      if (!conflictPlayers.size) continue;
+      for (const e of entries) {
+        if (e.playerIds.some(pid => conflictPlayers.has(pid))) {
+          conflictIds.add(e.slotId);
+        }
+      }
+    }
+
+    setLocalConflictsSlotIds(conflictIds);
+  }, [schedule, matchById]);
 
   const slotsByRunCourt = useMemo(() => {
     const map = new Map<string, any>();
@@ -59,17 +133,6 @@ export const SchedulePage: React.FC = () => {
     }
     return map;
   }, [schedule]);
-
-  const poolUnassigned = useMemo(() => pool.filter((m: any) => !m?.is_assigned), [pool]);
-  const poolAssigned = useMemo(() => pool.filter((m: any) => m?.is_assigned), [pool]);
-
-  const matchById = useMemo(() => {
-    const map = new Map<number, any>();
-    for (const m of pool || []) {
-      if (m?.id) map.set(Number(m.id), m);
-    }
-    return map;
-  }, [pool]);
 
   const slotIdByRunCourt = useMemo(() => {
     const map = new Map<string, number>();
@@ -99,6 +162,181 @@ export const SchedulePage: React.FC = () => {
     if (t1 && t2) return `${t1} vs ${t2}`;
     if (t1 || t2) return `${t1 || 'TBD'} vs ${t2 || 'TBD'}`;
     return `Матч #${matchId}`;
+  };
+
+  const matchMetaLabel = (m: any): string => {
+    if (!m) return '';
+    const gi = m?.group_index;
+    const group = gi !== null && gi !== undefined && gi !== '' ? `гр.${gi}` : '';
+
+    if (tournamentSystem === 'round_robin') {
+      const t1id = m?.team_1?.id;
+      const t2id = m?.team_2?.id;
+      const r1 = t1id ? rrTeamRowById.get(Number(t1id)) : undefined;
+      const r2 = t2id ? rrTeamRowById.get(Number(t2id)) : undefined;
+      const pair = r1 && r2 ? `${r1}-${r2}` : '';
+      return [group, pair].filter(Boolean).join(' • ');
+    }
+    if (tournamentSystem === 'king') {
+      const a = String(m?.team_1?.display_name || '').replace(/\s*\/\s*/g, '+');
+      const b = String(m?.team_2?.display_name || '').replace(/\s*\/\s*/g, '+');
+      const vs = a && b ? `${a} vs ${b}` : '';
+      return [group, vs].filter(Boolean).join(' • ');
+    }
+    if (tournamentSystem === 'knockout') {
+      return String(m?.round_name || '').trim() || `Раунд ${m?.round_index ?? ''}`.trim();
+    }
+    return group;
+  };
+
+  const handleClearSchedule = async () => {
+    if (!schedule || !canManage) return;
+    if (!window.confirm('Очистить расписание? Все назначенные матчи будут сняты.')) return;
+    setSaving(true);
+    try {
+      const cleared: ScheduleDTO = {
+        ...schedule,
+        slots: (schedule.slots || []).map(s => ({ ...s, match: null, slot_type: 'match' })),
+      };
+      const payload: any = buildSavePayloadFromSchedule(cleared);
+      const res = await scheduleApi.save(schedule.id, payload);
+      setSchedule(res.schedule);
+      await refreshSideData(res.schedule.id);
+      setSelectedMatchId(null);
+      clearDrag();
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || e?.message || 'Не удалось очистить расписание');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const assignMany = (changes: Array<{ runIndex: number; courtIndex: number; matchId: number | null }>) => {
+    if (!schedule) return;
+
+    const getPrevMatchId = (runIndex: number, courtIndex: number): number | null => {
+      const slot = slotsByRunCourt.get(`${runIndex}:${courtIndex}`);
+      return slot?.match ? Number(slot.match) : null;
+    };
+
+    const prevMap = new Map<string, number | null>();
+    for (const ch of changes) {
+      prevMap.set(`${ch.runIndex}:${ch.courtIndex}`, getPrevMatchId(ch.runIndex, ch.courtIndex));
+    }
+
+    setSchedule(prev => {
+      if (!prev) return prev;
+
+      // dedupe by (run,court) to prevent "ghost" matches when duplicates exist
+      const slotByKey = new Map<string, any>();
+      for (const s of prev.slots || []) {
+        slotByKey.set(`${s.run}:${s.court}`, s);
+      }
+
+      for (const ch of changes) {
+        const run = prev.runs.find(r => r.index === ch.runIndex);
+        const court = prev.courts.find(c => c.index === ch.courtIndex);
+        if (!run || !court) continue;
+        const key = `${run.id}:${court.id}`;
+        const existing = slotByKey.get(key);
+        if (existing) {
+          slotByKey.set(key, { ...existing, slot_type: 'match', match: ch.matchId });
+        } else {
+          slotByKey.set(key, {
+            id: -Date.now() + Math.floor(Math.random() * 1000),
+            run: run.id,
+            court: court.id,
+            slot_type: 'match',
+            match: ch.matchId,
+            text_title: null,
+            text_subtitle: null,
+            override_title: null,
+            override_subtitle: null,
+          });
+        }
+      }
+
+      return { ...prev, slots: Array.from(slotByKey.values()) };
+    });
+
+    setPool(prev => {
+      const makeAssigned = new Set<number>();
+      const makeUnassigned = new Set<number>();
+
+      for (const ch of changes) {
+        const prevMatch = prevMap.get(`${ch.runIndex}:${ch.courtIndex}`);
+        if (prevMatch) makeUnassigned.add(Number(prevMatch));
+        if (ch.matchId) makeAssigned.add(Number(ch.matchId));
+      }
+
+      for (const id of makeAssigned) {
+        if (makeUnassigned.has(id)) makeUnassigned.delete(id);
+      }
+
+      return prev.map(m => {
+        if (!m?.id) return m;
+        const mid = Number(m.id);
+        if (makeAssigned.has(mid)) return { ...m, is_assigned: true };
+        if (makeUnassigned.has(mid)) return { ...m, is_assigned: false };
+        return m;
+      });
+    });
+  };
+
+  const clearDrag = () => {
+    setDragMatchId(null);
+    setDragSource(null);
+    setDragOverCell(null);
+    setDragOverUnassigned(false);
+  };
+
+  const startDragFromPool = (matchId: number) => {
+    setDragMatchId(matchId);
+    setDragSource(null);
+  };
+
+  const startDragFromCell = (runIndex: number, courtIndex: number, matchId: number) => {
+    setDragMatchId(matchId);
+    setDragSource({ runIndex, courtIndex });
+  };
+
+  const dropOnCell = (runIndex: number, courtIndex: number) => {
+    if (!canManage) return;
+    if (!dragMatchId) return;
+
+    const targetSlot = slotsByRunCourt.get(`${runIndex}:${courtIndex}`);
+    const targetMatchId: number | null = targetSlot?.match ? Number(targetSlot.match) : null;
+
+    // если перетаскиваем из ячейки в саму себя
+    if (dragSource && dragSource.runIndex === runIndex && dragSource.courtIndex === courtIndex) {
+      clearDrag();
+      return;
+    }
+
+    if (dragSource) {
+      // move/swap
+      const changes: Array<{ runIndex: number; courtIndex: number; matchId: number | null }> = [
+        { runIndex, courtIndex, matchId: dragMatchId },
+        { runIndex: dragSource.runIndex, courtIndex: dragSource.courtIndex, matchId: targetMatchId },
+      ];
+      assignMany(changes);
+      clearDrag();
+      return;
+    }
+
+    // from pool -> replace target (displaced becomes unassigned)
+    assignMany([{ runIndex, courtIndex, matchId: dragMatchId }]);
+    clearDrag();
+  };
+
+  const dropToUnassigned = () => {
+    if (!canManage) return;
+    if (!dragMatchId) return;
+
+    if (dragSource) {
+      assignMany([{ runIndex: dragSource.runIndex, courtIndex: dragSource.courtIndex, matchId: null }]);
+    }
+    clearDrag();
   };
 
   const refreshSideData = async (scheduleId: number) => {
@@ -150,6 +388,113 @@ export const SchedulePage: React.FC = () => {
     };
   };
 
+  const formatHm = (v: string | null | undefined) => {
+    if (!v) return '';
+    const s = String(v);
+    return s.length >= 5 ? s.slice(0, 5) : s;
+  };
+
+  const runStartLabel = (runIndex: number) => {
+    if (!schedule) return '';
+    const r = schedule.runs.find(x => x.index === runIndex);
+    if (!r) return '';
+    const plannedTime = planned?.runs?.find(x => x.index === runIndex)?.planned_start_time;
+
+    if (r.start_mode === 'fixed') {
+      const t = formatHm(r.start_time) || formatHm(plannedTime);
+      return t ? t : 'Начало';
+    }
+    if (r.start_mode === 'not_earlier') {
+      const t = formatHm(r.not_earlier_time) || formatHm(plannedTime);
+      return t ? `Не ранее ${t}` : 'Не ранее';
+    }
+    return 'Затем';
+  };
+
+  const teamSurnames = (team: any): string[] => {
+    if (!team) return ['TBD'];
+    const raw = String(team.full_name || team.display_name || team.name || '').trim();
+    if (!raw) return ['TBD'];
+
+    // pairs often come like: "Surname1 Name1 / Surname2 Name2" or similar
+    const parts = raw
+      .split('/')
+      .map(x => x.trim())
+      .filter(Boolean);
+
+    const surnames = parts
+      .map(p => {
+        const first = p.split(' ').map(x => x.trim()).filter(Boolean)[0];
+        return first || 'TBD';
+      })
+      .filter(Boolean);
+
+    return surnames.length ? surnames.slice(0, 2) : ['TBD'];
+  };
+
+  const renderMatchCompact = (m: any, variant: 'backlog' | 'schedule') => {
+    const s1 = teamSurnames(m?.team_1);
+    const s2 = teamSurnames(m?.team_2);
+    const isDoubles = s1.length > 1 || s2.length > 1;
+
+    const surnameStyle: React.CSSProperties = {
+      fontSize: 16,
+      fontWeight: 400,
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      textAlign: 'center',
+      width: '100%',
+    };
+
+    if (variant === 'backlog') {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, lineHeight: 1.15, width: '100%' }}>
+          <div style={{ ...surnameStyle, textAlign: 'left' }}>{s1.join(' / ')}</div>
+          <div style={{ ...surnameStyle, textAlign: 'left' }}>{s2.join(' / ')}</div>
+        </div>
+      );
+    }
+
+    const scheduleMeta = matchMetaLabel(m);
+
+    // schedule
+    if (!isDoubles) {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, lineHeight: 1.15, width: '100%', alignItems: 'center' }}>
+          {scheduleMeta ? (
+            <div style={{ fontSize: 11, opacity: 0.75, textAlign: 'right', width: '100%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {scheduleMeta}
+            </div>
+          ) : null}
+          <div style={surnameStyle}>{s1[0]}</div>
+          <div style={{ fontSize: 12, fontWeight: 800, textAlign: 'center' }}>против</div>
+          <div style={surnameStyle}>{s2[0]}</div>
+        </div>
+      );
+    }
+
+    const a1 = s1[0] || 'TBD';
+    const a2 = s1[1] || 'TBD';
+    const b1 = s2[0] || 'TBD';
+    const b2 = s2[1] || 'TBD';
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, lineHeight: 1.15, width: '100%', alignItems: 'center' }}>
+        {scheduleMeta ? (
+          <div style={{ fontSize: 11, opacity: 0.75, textAlign: 'right', width: '100%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {scheduleMeta}
+          </div>
+        ) : null}
+        <div style={surnameStyle}>{a1}</div>
+        <div style={surnameStyle}>{a2}</div>
+        <div style={{ fontSize: 12, fontWeight: 800, textAlign: 'center' }}>против</div>
+        <div style={surnameStyle}>{b1}</div>
+        <div style={surnameStyle}>{b2}</div>
+      </div>
+    );
+  };
+
   const autoAssignAndSave = async (sch: ScheduleDTO) => {
     const mp = await scheduleApi.matchesPool(sch.id);
     const matches = mp.matches || [];
@@ -189,7 +534,18 @@ export const SchedulePage: React.FC = () => {
     }
 
     const payload: any = buildSavePayloadFromSchedule(sch);
-    payload.slots = [...(payload.slots || []), ...newSlots];
+
+    // merge slots by (run_index, court_index) to avoid duplicates (can cause 500 due to unique constraints)
+    const slotByKey = new Map<string, any>();
+    for (const s of payload.slots || []) {
+      const k = `${s.run_index}:${s.court_index}`;
+      slotByKey.set(k, s);
+    }
+    for (const s of newSlots) {
+      const k = `${s.run_index}:${s.court_index}`;
+      slotByKey.set(k, s);
+    }
+    payload.slots = Array.from(slotByKey.values());
 
     const res = await scheduleApi.save(sch.id, payload);
     setSchedule(res.schedule);
@@ -207,6 +563,20 @@ export const SchedulePage: React.FC = () => {
     setError(null);
     try {
       const t = await tournamentApi.getById(tournamentId);
+      if (t?.system) setTournamentSystem(String(t.system));
+
+      // For RR label like "1-2" we need row_index of teams (same logic as in TournamentDetailPage)
+      const nextMap = new Map<number, number>();
+      const parts: any[] = (t as any)?.participants || [];
+      for (const p of parts) {
+        const teamId = p?.team?.id;
+        const rowIndex = p?.row_index;
+        if (teamId && rowIndex) {
+          nextMap.set(Number(teamId), Number(rowIndex));
+        }
+      }
+      setRrTeamRowById(nextMap);
+
       if (t?.start_time) setStartTime(t.start_time as any);
       if (t?.date && typeof t.date === 'string') {
         // date stays server side, we only use start_time in generation
@@ -448,17 +818,20 @@ export const SchedulePage: React.FC = () => {
       {schedule && (
         <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 12, alignItems: 'start' }}>
           <div className="card">
-            <div style={{ fontWeight: 700, marginBottom: 10 }}>Backlog матчей</div>
+            <div style={{ fontWeight: 700, marginBottom: 10 }}>Матчи для назначения</div>
             <div className="text-sm" style={{ marginBottom: 10, opacity: 0.8 }}>
-              Выбери матч, затем кликни по ячейке запуска/корта.
+              Можно перетаскивать мышью в ячейки расписания или назначать кликом.
             </div>
 
-            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
               <button className="btn" onClick={() => setSelectedMatchId(null)}>
                 Снять выбор
               </button>
               <button className="btn" onClick={handleAutoFill} disabled={!canManage || saving}>
-                Автозаполнить
+                Авто
+              </button>
+              <button className="btn" onClick={handleClearSchedule} disabled={!canManage || saving}>
+                Очистить
               </button>
               <div className="text-sm" style={{ alignSelf: 'center', opacity: 0.75 }}>
                 Выбран: {selectedMatchId ? `#${selectedMatchId}` : '—'}
@@ -466,15 +839,49 @@ export const SchedulePage: React.FC = () => {
             </div>
 
             <div style={{ maxHeight: 520, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div style={{ fontWeight: 600 }}>Не назначены ({poolUnassigned.length})</div>
+              <div
+                style={{
+                  fontWeight: 600,
+                  padding: '6px 8px',
+                  borderRadius: 8,
+                  border: '1px dashed #d1d5db',
+                  background: dragOverUnassigned ? '#f3f4f6' : undefined,
+                }}
+                onDragOver={e => {
+                  if (!canManage) return;
+                  e.preventDefault();
+                  setDragOverUnassigned(true);
+                }}
+                onDragLeave={() => setDragOverUnassigned(false)}
+                onDrop={e => {
+                  if (!canManage) return;
+                  e.preventDefault();
+                  dropToUnassigned();
+                }}
+              >
+                Не назначены ({poolUnassigned.length})
+              </div>
               {poolUnassigned.slice(0, 200).map((m: any) => {
                 const isSelected = selectedMatchId === m.id;
+                const meta = matchMetaLabel(m) || `#${m.id}`;
                 return (
-                  <button
+                  <div
                     key={m.id}
                     className="btn"
+                    draggable={canManage}
+                    onDragStart={e => {
+                      if (!canManage) return;
+                      startDragFromPool(Number(m.id));
+                    }}
+                    onDragEnd={() => clearDrag()}
                     style={{
+                      display: 'flex',
+                      gap: 8,
+                      alignItems: 'center',
                       textAlign: 'left',
+                      cursor: canManage ? 'grab' : 'default',
+                      padding: '6px 10px',
+                      minHeight: 44,
                       background: isSelected ? '#111827' : undefined,
                       color: isSelected ? '#fff' : undefined,
                     }}
@@ -483,8 +890,23 @@ export const SchedulePage: React.FC = () => {
                     <span style={{ display: 'inline-block', width: 18 }}>
                       <span style={{ color: '#dc3545', fontWeight: 700 }}>●</span>
                     </span>
-                    #{m.id} {m?.team_1?.full_name || m?.team_1?.display_name || 'TBD'} vs {m?.team_2?.full_name || m?.team_2?.display_name || 'TBD'}
-                  </button>
+                    <span
+                      style={{
+                        width: 160,
+                        fontSize: 11,
+                        opacity: 0.8,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        lineHeight: 1.15,
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2 as any,
+                        WebkitBoxOrient: 'vertical' as any,
+                      }}
+                    >
+                      {meta}
+                    </span>
+                    {renderMatchCompact(m, 'backlog')}
+                  </div>
                 );
               })}
 
@@ -494,12 +916,26 @@ export const SchedulePage: React.FC = () => {
                   <span style={{ display: 'inline-block', width: 18 }}>
                     <span style={{ color: '#28a745', fontWeight: 700 }}>●</span>
                   </span>
-                  #{m.id} {m?.team_1?.full_name || m?.team_1?.display_name || 'TBD'} vs {m?.team_2?.full_name || m?.team_2?.display_name || 'TBD'}
+                  <span
+                    style={{
+                      width: 160,
+                      fontSize: 11,
+                      opacity: 0.8,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      lineHeight: 1.15,
+                      display: '-webkit-box',
+                      WebkitLineClamp: 2 as any,
+                      WebkitBoxOrient: 'vertical' as any,
+                    }}
+                  >
+                    {matchMetaLabel(m) || `#${m.id}`}
+                  </span>
+                  {m?.team_1?.full_name || m?.team_1?.display_name || 'TBD'} / {m?.team_2?.full_name || m?.team_2?.display_name || 'TBD'}
                 </div>
               ))}
             </div>
           </div>
-
           <div className="card" style={{ overflowX: 'auto' }}>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
             <div>
@@ -532,7 +968,12 @@ export const SchedulePage: React.FC = () => {
               <tr>
                 <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #eee', minWidth: 140 }}>Запуск</th>
                 {schedule.courts.sort((a,b)=>a.index-b.index).map(c => (
-                  <th key={c.id} style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #f2f2f2', borderLeft: '1px solid #e5e7eb' }}>{c.name}</th>
+                  <th key={c.id} style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #f2f2f2', borderLeft: '1px solid #e5e7eb' }}>
+                    <div style={{ fontWeight: 600 }}>{c.name}</div>
+                    {c.first_start_time && (
+                      <div className="text-sm" style={{ opacity: 0.75 }}>Начало {formatHm(c.first_start_time)}</div>
+                    )}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -547,8 +988,11 @@ export const SchedulePage: React.FC = () => {
                     </td>
                     {schedule.courts.sort((a,b)=>a.index-b.index).map(c => {
                       const slot = slotsByRunCourt.get(`${r.index}:${c.index}`);
-                      const isConflict = slot?.id ? conflictsSlotIds.has(slot.id) : false;
+                      const conflictSet = localConflictsSlotIds || conflictsSlotIds;
+                      const isConflict = slot?.id ? conflictSet.has(slot.id) : false;
                       const hasMatch = !!slot?.match;
+                      const cellMatchId: number | null = slot?.match ? Number(slot.match) : null;
+                      const isDragOver = dragOverCell?.runIndex === r.index && dragOverCell?.courtIndex === c.index;
                       return (
                         <td
                           key={c.id}
@@ -556,8 +1000,26 @@ export const SchedulePage: React.FC = () => {
                             padding: 8,
                             borderBottom: '1px solid #f2f2f2',
                             borderLeft: '1px solid #e5e7eb',
-                            background: isConflict ? '#FEE2E2' : undefined,
-                            verticalAlign: 'top'
+                            background: isConflict ? '#FEE2E2' : isDragOver ? '#eef2ff' : undefined,
+                            verticalAlign: 'middle',
+                            textAlign: 'center',
+                          }}
+                          onDragOver={e => {
+                            if (!canManage) return;
+                            e.preventDefault();
+                            setDragOverCell({ runIndex: r.index, courtIndex: c.index });
+                            setDragOverUnassigned(false);
+                          }}
+                          onDragLeave={() => {
+                            setDragOverCell(prev => {
+                              if (prev?.runIndex === r.index && prev?.courtIndex === c.index) return null;
+                              return prev;
+                            });
+                          }}
+                          onDrop={e => {
+                            if (!canManage) return;
+                            e.preventDefault();
+                            dropOnCell(r.index, c.index);
                           }}
                           onClick={() => {
                             if (!canManage) return;
@@ -568,8 +1030,40 @@ export const SchedulePage: React.FC = () => {
                             }
                           }}
                         >
-                          <div style={{ fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {slot?.override_title || slot?.text_title || (slot?.match ? getMatchTitle(slot.match) : '') || ''}
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                            <div className="text-sm" style={{ opacity: 0.75 }}>
+                              {runStartLabel(r.index)}
+                            </div>
+                            <div
+                            draggable={canManage && !!cellMatchId}
+                            onDragStart={e => {
+                              if (!canManage) return;
+                              if (!cellMatchId) return;
+                              startDragFromCell(r.index, c.index, cellMatchId);
+                              try {
+                                e.dataTransfer.setData('text/plain', String(cellMatchId));
+                                e.dataTransfer.effectAllowed = 'move';
+                              } catch {
+                                // noop
+                              }
+                            }}
+                            onDragEnd={() => clearDrag()}
+                            style={{
+                              cursor: canManage && !!cellMatchId ? 'grab' : 'default',
+                              fontWeight: 600,
+                              width: '100%',
+                              display: 'flex',
+                              justifyContent: 'center',
+                            }}
+                          >
+                            {slot?.override_title
+                              ? slot.override_title
+                              : slot?.slot_type === 'text'
+                                ? slot?.text_title || ''
+                                : slot?.match
+                                  ? renderMatchCompact(matchById.get(Number(slot.match)) || matchById.get(Number(cellMatchId)), 'schedule')
+                                  : ''}
+                          </div>
                           </div>
                         </td>
                       );
