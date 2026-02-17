@@ -448,12 +448,20 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 )
 
             for ri in range(1, runs_count + 1):
-                ScheduleRun.objects.create(
-                    schedule=schedule,
-                    index=ri,
-                    start_mode=ScheduleRun.StartMode.FIXED,
-                    start_time=start_time_obj,
-                )
+                if ri == 1:
+                    ScheduleRun.objects.create(
+                        schedule=schedule,
+                        index=ri,
+                        start_mode=ScheduleRun.StartMode.FIXED,
+                        start_time=start_time_obj,
+                    )
+                else:
+                    ScheduleRun.objects.create(
+                        schedule=schedule,
+                        index=ri,
+                        start_mode=ScheduleRun.StartMode.THEN,
+                        start_time=None,
+                    )
 
         return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data}, status=status.HTTP_201_CREATED)
 

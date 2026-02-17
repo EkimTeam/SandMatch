@@ -87,8 +87,12 @@ class ScheduleViewSet(viewsets.ModelViewSet):
             if isinstance(v, time):
                 return v
             if isinstance(v, str):
-                hh, mm = v.split(":")
-                return time(int(hh), int(mm))
+                parts = v.split(":")
+                if len(parts) >= 2:
+                    hh = parts[0]
+                    mm = parts[1]
+                    return time(int(hh), int(mm))
+                return None
             return None
 
         courts_in = payload.get("courts") or []

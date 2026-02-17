@@ -71,6 +71,7 @@ export interface Tournament {
   organizer_name?: string;
   can_delete?: boolean;
   date?: string;
+  start_time?: string | null;
   get_system_display?: string;
   get_participant_mode_display?: string;
   has_zero_rating_players?: boolean;
@@ -85,6 +86,72 @@ export interface TournamentAnnouncementSettingsDTO {
   send_24h_before: boolean;
   send_2h_before: boolean;
   send_on_roster_change: boolean;
+}
+
+export interface ScheduleCourtDTO {
+  id: number;
+  index: number;
+  name: string;
+  first_start_time: string | null;
+}
+
+export interface ScheduleRunDTO {
+  id: number;
+  index: number;
+  start_mode: 'fixed' | 'then' | 'not_earlier';
+  start_time: string | null;
+  not_earlier_time: string | null;
+}
+
+export interface ScheduleSlotDTO {
+  id: number;
+  run: number;
+  court: number;
+  slot_type: 'match' | 'text';
+  match: number | null;
+  text_title: string | null;
+  text_subtitle: string | null;
+  override_title: string | null;
+  override_subtitle: string | null;
+}
+
+export interface ScheduleGlobalBreakDTO {
+  id: number;
+  position: number;
+  time: string;
+  text: string;
+}
+
+export interface ScheduleScopeDTO {
+  tournament: number;
+}
+
+export interface ScheduleDTO {
+  id: number;
+  date: string;
+  match_duration_minutes: number;
+  created_by: number | null;
+  created_at: string;
+  updated_at: string;
+  courts: ScheduleCourtDTO[];
+  runs: ScheduleRunDTO[];
+  slots: ScheduleSlotDTO[];
+  global_breaks: ScheduleGlobalBreakDTO[];
+  scopes: ScheduleScopeDTO[];
+}
+
+export interface SchedulePlannedTimesResponse {
+  ok: boolean;
+  match_duration_minutes: number;
+  runs: Array<{ index: number; planned_start_time: string }>;
+}
+
+export interface ScheduleConflictsResponse {
+  ok: boolean;
+  runs: Array<{
+    run_index: number;
+    players: Array<{ player_id: number; occurrences: Array<{ court_index: number; match_id: number; slot_id: number }> }>;
+  }>;
 }
 
 export interface Ruleset {
@@ -415,6 +482,19 @@ export const tournamentApi = {
     const response = await api.get<Tournament>(`/tournaments/${id}/`);
     return response.data;
   },
+
+  getSchedule: async (tournamentId: number): Promise<{ ok: boolean; schedule: ScheduleDTO | null }> => {
+    const { data } = await api.get(`/tournaments/${tournamentId}/schedule/`);
+    return data;
+  },
+
+  generateSchedule: async (
+    tournamentId: number,
+    payload: { date?: string; courts_count: number; match_duration_minutes?: number; start_time?: string; runs_count?: number },
+  ): Promise<{ ok: boolean; schedule: ScheduleDTO } | { ok: boolean; error: string; detail?: string }> => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/schedule/generate/`, payload);
+    return data;
+  },
   // Получить список регламентов
   getRulesets: async (system?: 'round_robin' | 'knockout' | 'king'): Promise<{ id: number; name: string }[]> => {
     const qs = system ? `?system=${encodeURIComponent(system)}` : '';
@@ -723,6 +803,61 @@ export const tournamentApi = {
   ): Promise<{ ok: boolean; updated: number }> => {
     const { data } = await api.post(`/tournaments/${tournamentId}/apply_initial_ratings/`, { items });
     return data;
+  },
+};
+
+export const scheduleApi = {
+  matchesPool: async (scheduleId: number): Promise<{ ok: boolean; matches: any[] }> => {
+    const { data } = await api.get(`/schedules/${scheduleId}/matches_pool/`);
+    return data;
+  },
+  liveState: async (
+    scheduleId: number,
+  ): Promise<{
+    ok: boolean;
+    matches: Array<{ id: number; status: string; started_at: string | null; finished_at: string | null }>;
+  }> => {
+    const { data } = await api.get(`/schedules/${scheduleId}/live_state/`);
+    return data;
+  },
+  plannedTimes: async (scheduleId: number): Promise<SchedulePlannedTimesResponse> => {
+    const { data } = await api.get(`/schedules/${scheduleId}/planned_times/`);
+    return data;
+  },
+  conflicts: async (scheduleId: number): Promise<ScheduleConflictsResponse> => {
+    const { data } = await api.get(`/schedules/${scheduleId}/conflicts/`);
+    return data;
+  },
+  save: async (
+    scheduleId: number,
+    payload: {
+      match_duration_minutes?: number;
+      courts: Array<{ index: number; name: string; first_start_time?: string | null }>;
+      runs: Array<{
+        index: number;
+        start_mode: 'fixed' | 'then' | 'not_earlier';
+        start_time?: string | null;
+        not_earlier_time?: string | null;
+      }>;
+      slots: Array<{
+        run_index: number;
+        court_index: number;
+        slot_type: 'match' | 'text';
+        match_id?: number | null;
+        text_title?: string | null;
+        text_subtitle?: string | null;
+        override_title?: string | null;
+        override_subtitle?: string | null;
+      }>;
+      global_breaks: Array<{ position: number; time: string; text: string }>;
+    },
+  ): Promise<{ ok: boolean; schedule: ScheduleDTO }> => {
+    const { data } = await api.post(`/schedules/${scheduleId}/save/`, payload);
+    return data;
+  },
+  exportPdf: async (scheduleId: number): Promise<Blob> => {
+    const resp = await api.get(`/schedules/${scheduleId}/export/pdf/`, { responseType: 'blob' });
+    return resp.data;
   },
 };
 
