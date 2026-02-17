@@ -357,7 +357,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         Payload (минимальный):
         - date: YYYY-MM-DD (опционально; по умолчанию tournament.date)
         - courts_count: int (обязательно)
-        - runs_count: int (обязательно)
+        - runs_count: int (опционально; по умолчанию ceil(матчи_в_пуле / courts_count), минимум 1)
         - match_duration_minutes: int (опционально; по умолчанию 40)
         - start_time: HH:MM (опционально; по умолчанию tournament.start_time или 10:00)
         """
@@ -378,7 +378,6 @@ class TournamentViewSet(viewsets.ModelViewSet):
 
         try:
             courts_count = int(courts_count)
-            runs_count = int(runs_count)
             match_duration_minutes = int(match_duration_minutes)
         except Exception:
             return Response(
@@ -386,17 +385,40 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if runs_count is not None:
+            try:
+                runs_count = int(runs_count)
+            except Exception:
+                return Response(
+                    {"ok": False, "error": "bad_params", "detail": "runs_count должен быть числом"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         if not date_value:
             return Response(
                 {"ok": False, "error": "no_date", "detail": "Не указана дата расписания"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if courts_count <= 0 or runs_count <= 0:
+        if courts_count <= 0:
             return Response(
-                {"ok": False, "error": "bad_counts", "detail": "courts_count и runs_count должны быть > 0"},
+                {"ok": False, "error": "bad_counts", "detail": "courts_count должен быть > 0"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        if runs_count is not None and runs_count <= 0:
+            return Response(
+                {"ok": False, "error": "bad_counts", "detail": "runs_count должен быть > 0"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Автоподсчет runs_count: ceil(матчи_в_пуле / courts_count), минимум 1
+        if runs_count is None:
+            import math
+
+            pool_qs = Match.objects.filter(tournament=tournament).exclude(stage=Match.Stage.PLACEMENT)
+            pool_count = pool_qs.count()
+            runs_count = max(1, int(math.ceil(pool_count / courts_count)))
 
         from datetime import time
 
@@ -422,7 +444,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     schedule=schedule,
                     index=ci,
                     name=f"Корт {ci}",
-                    first_start_time=start_time_obj if ci == 1 else None,
+                    first_start_time=start_time_obj,
                 )
 
             for ri in range(1, runs_count + 1):
