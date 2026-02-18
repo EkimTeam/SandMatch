@@ -37,6 +37,9 @@ export const SchedulePage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
 
+  const [isDirty, setIsDirty] = useState(false);
+  const [lastSavedSchedule, setLastSavedSchedule] = useState<ScheduleDTO | null>(null);
+
   const conflictsSlotIds = useMemo(() => {
     const ids = new Set<number>();
     for (const run of conflicts?.runs || []) {
@@ -88,7 +91,7 @@ export const SchedulePage: React.FC = () => {
       if (t2p1) pids.push(Number(t2p1));
       if (t2p2) pids.push(Number(t2p2));
 
-      if (!pids.length) continue;
+      if (!pids.length && tournamentSystem !== 'knockout') continue;
       const arr = slotsByRun.get(runIndex) || [];
       arr.push({ slotId: Number(s.id), matchId: Number(s.match), playerIds: pids });
       slotsByRun.set(runIndex, arr);
@@ -112,8 +115,59 @@ export const SchedulePage: React.FC = () => {
       }
     }
 
+    if (tournamentSystem === 'knockout') {
+      const matchByIdLocal = matchById;
+
+      const getBracketId = (m: any): string => {
+        const b = m?.bracket;
+        if (b == null) return '';
+        if (typeof b === 'number' || typeof b === 'string') return String(b);
+        const bid = (b as any)?.id;
+        return bid != null ? String(bid) : '';
+      };
+
+      const getPrereqKeys = (m: any): string[] => {
+        const bracketId = getBracketId(m);
+        const r = Number(m?.round_index ?? NaN);
+        const o = Number(m?.order_in_round ?? NaN);
+        if (!bracketId || !Number.isFinite(r) || !Number.isFinite(o)) return [];
+        if (m?.is_third_place) {
+          const pr = r - 2;
+          if (pr < 0) return [];
+          return [`${bracketId}:${pr}:1`, `${bracketId}:${pr}:2`];
+        }
+        if (r <= 0) return [];
+        return [`${bracketId}:${r - 1}:${2 * o - 1}`, `${bracketId}:${r - 1}:${2 * o}`];
+      };
+
+      for (const [, entries] of slotsByRun) {
+        const byKey = new Map<string, { slotId: number; matchId: number }>();
+        for (const e of entries) {
+          const m = matchByIdLocal.get(Number(e.matchId));
+          const bracketId = getBracketId(m);
+          const r = Number(m?.round_index ?? NaN);
+          const o = Number(m?.order_in_round ?? NaN);
+          if (!bracketId || !Number.isFinite(r) || !Number.isFinite(o)) continue;
+          byKey.set(`${bracketId}:${r}:${o}`, { slotId: e.slotId, matchId: e.matchId });
+        }
+
+        for (const e of entries) {
+          const m = matchByIdLocal.get(Number(e.matchId));
+          if (!m) continue;
+          const prereqKeys = getPrereqKeys(m);
+          for (const k of prereqKeys) {
+            const src = byKey.get(k);
+            if (src) {
+              conflictIds.add(e.slotId);
+              conflictIds.add(src.slotId);
+            }
+          }
+        }
+      }
+    }
+
     setLocalConflictsSlotIds(conflictIds);
-  }, [schedule, matchById]);
+  }, [schedule, matchById, tournamentSystem]);
 
   const slotsByRunCourt = useMemo(() => {
     const map = new Map<string, any>();
@@ -201,6 +255,8 @@ export const SchedulePage: React.FC = () => {
       const payload: any = buildSavePayloadFromSchedule(cleared);
       const res = await scheduleApi.save(schedule.id, payload);
       setSchedule(res.schedule);
+      setLastSavedSchedule(res.schedule);
+      setIsDirty(false);
       await refreshSideData(res.schedule.id);
       setSelectedMatchId(null);
       clearDrag();
@@ -258,6 +314,8 @@ export const SchedulePage: React.FC = () => {
 
       return { ...prev, slots: Array.from(slotByKey.values()) };
     });
+
+    setIsDirty(true);
 
     setPool(prev => {
       const makeAssigned = new Set<number>();
@@ -498,57 +556,269 @@ export const SchedulePage: React.FC = () => {
   const autoAssignAndSave = async (sch: ScheduleDTO) => {
     const mp = await scheduleApi.matchesPool(sch.id);
     const matches = mp.matches || [];
-    const unassigned = matches.filter((m: any) => !m?.is_assigned);
+    const sortedRuns = (sch.runs || []).slice().sort((a, b) => a.index - b.index);
+    const sortedCourts = (sch.courts || []).slice().sort((a, b) => a.index - b.index);
 
-    const courts = [...sch.courts].sort((a, b) => a.index - b.index);
-    const runs = [...sch.runs].sort((a, b) => a.index - b.index);
+    const matchByIdFromPool = new Map<number, any>();
+    for (const m of matches) {
+      if (m?.id) matchByIdFromPool.set(Number(m.id), m);
+    }
 
-    const newSlots: any[] = [];
-    let ptr = 0;
+    const matchQueue: Array<{ m: any; preferredCourt?: number | null }> = [];
+    const already = new Set<number>();
 
-    for (const r of runs) {
-      for (const c of courts) {
-        const key = `${r.index}:${c.index}`;
-        const existingSlotId = slotIdByRunCourt.get(key);
-        const existing = existingSlotId ? sch.slots.find(s => s.id === existingSlotId) : undefined;
-        const alreadyHasMatch = !!existing?.match;
-        if (alreadyHasMatch) {
-          continue;
-        }
+    // 1) Сначала берем уже назначенные матчи в порядке (run -> court), чтобы "поздние" уезжали вниз.
+    const runIndexById = new Map<number, number>();
+    for (const r of sortedRuns) runIndexById.set(r.id, r.index);
+    const courtIndexById = new Map<number, number>();
+    for (const c of sortedCourts) courtIndexById.set(c.id, c.index);
 
-        const next = unassigned[ptr];
-        if (!next?.id) break;
-        ptr += 1;
+    const scheduledSlots = (sch.slots || [])
+      .filter(s => s?.slot_type === 'match' && s?.match)
+      .map(s => ({
+        runIndex: runIndexById.get(s.run) || 0,
+        courtIndex: courtIndexById.get(s.court) || 0,
+        matchId: Number(s.match),
+      }))
+      .filter(x => x.runIndex > 0 && x.courtIndex > 0 && Number.isFinite(x.matchId))
+      .sort((a, b) => (a.runIndex - b.runIndex) || (a.courtIndex - b.courtIndex));
 
-        newSlots.push({
-          run_index: r.index,
-          court_index: c.index,
-          slot_type: 'match',
-          match_id: next.id,
-          text_title: null,
-          text_subtitle: null,
-          override_title: null,
-          override_subtitle: null,
-        });
+    for (const s of scheduledSlots) {
+      if (already.has(s.matchId)) continue;
+      const mm = matchByIdFromPool.get(s.matchId);
+      if (!mm) continue;
+      already.add(s.matchId);
+      matchQueue.push({ m: mm, preferredCourt: s.courtIndex });
+    }
+
+    // 2) Затем добиваем остальными матчами (не назначенными или отсутствующими в слотах)
+    for (const mm of matches) {
+      const mid = Number(mm?.id);
+      if (!mid || already.has(mid)) continue;
+      already.add(mid);
+      matchQueue.push({ m: mm, preferredCourt: null });
+    }
+
+    // Стартуем с "чистого" расписания: все ячейки пустые, а матчи раскладываем заново.
+    const existing = new Map<string, number | null>();
+    for (const r of sortedRuns) {
+      for (const c of sortedCourts) {
+        existing.set(`${r.index}:${c.index}`, null);
       }
     }
 
-    const payload: any = buildSavePayloadFromSchedule(sch);
+    const matchPlayerIds = (m: any): number[] => {
+      const pids: number[] = [];
+      const t1p1 = m?.team_1?.player_1?.id;
+      const t1p2 = m?.team_1?.player_2?.id;
+      const t2p1 = m?.team_2?.player_1?.id;
+      const t2p2 = m?.team_2?.player_2?.id;
+      if (t1p1) pids.push(Number(t1p1));
+      if (t1p2) pids.push(Number(t1p2));
+      if (t2p1) pids.push(Number(t2p1));
+      if (t2p2) pids.push(Number(t2p2));
+      return pids;
+    };
 
-    // merge slots by (run_index, court_index) to avoid duplicates (can cause 500 due to unique constraints)
+    const getBracketId = (m: any): string => {
+      const b = m?.bracket;
+      if (b == null) return '';
+      if (typeof b === 'number' || typeof b === 'string') return String(b);
+      const bid = (b as any)?.id;
+      return bid != null ? String(bid) : '';
+    };
+
+    const koMatchKey = (m: any): string => {
+      const b = getBracketId(m);
+      const r = m?.round_index;
+      const o = m?.order_in_round;
+      if (!b || r == null || o == null) return '';
+      return `${b}:${Number(r)}:${Number(o)}`;
+    };
+
+    const koPrereqKeys = (m: any): string[] => {
+      const b = getBracketId(m);
+      const r = Number(m?.round_index ?? NaN);
+      const o = Number(m?.order_in_round ?? NaN);
+      if (!b || !Number.isFinite(r) || !Number.isFinite(o)) return [];
+      if (m?.is_third_place) {
+        const pr = r - 2;
+        if (pr < 0) return [];
+        return [`${b}:${pr}:1`, `${b}:${pr}:2`];
+      }
+      if (r <= 0) return [];
+      return [`${b}:${r - 1}:${2 * o - 1}`, `${b}:${r - 1}:${2 * o}`];
+    };
+
+    const runStateByIndex = new Map<number, { players: Set<number>; koKeys: Set<string> }>();
+    for (const r of sortedRuns) {
+      runStateByIndex.set(r.index, { players: new Set<number>(), koKeys: new Set<string>() });
+    }
+
+    const ensureRun = (runIndex: number) => {
+      if (runStateByIndex.has(runIndex)) return;
+      runStateByIndex.set(runIndex, { players: new Set<number>(), koKeys: new Set<string>() });
+      if (!sortedRuns.find(r => r.index === runIndex)) {
+        sortedRuns.push({
+          id: -Date.now() + Math.floor(Math.random() * 1000),
+          index: runIndex,
+          start_mode: 'then',
+          start_time: null,
+          not_earlier_time: null,
+        } as any);
+        sortedRuns.sort((a, b) => a.index - b.index);
+      }
+      for (const c of sortedCourts) {
+        if (!existing.has(`${runIndex}:${c.index}`)) existing.set(`${runIndex}:${c.index}`, null);
+      }
+    };
+
+    const canPlaceInRun = (m: any, runIndex: number) => {
+      const st = runStateByIndex.get(runIndex) || { players: new Set<number>(), koKeys: new Set<string>() };
+      const pids = matchPlayerIds(m);
+      if (pids.some(pid => st.players.has(pid))) return false;
+
+      if (tournamentSystem === 'knockout') {
+        const key = koMatchKey(m);
+        const prereqs = koPrereqKeys(m);
+        if (key && st.koKeys.has(key)) return false;
+        for (const pk of prereqs) {
+          if (st.koKeys.has(pk)) return false;
+        }
+        for (const placedKey of st.koKeys) {
+          const parts = placedKey.split(':');
+          if (parts.length !== 3) continue;
+          const placed = matches.find((x: any) => koMatchKey(x) === placedKey);
+          if (!placed) continue;
+          const placedPrereqs = koPrereqKeys(placed);
+          if (key && placedPrereqs.includes(key)) return false;
+        }
+      }
+
+      return true;
+    };
+
+    const placeInto = (m: any, runIndex: number, courtIndex: number) => {
+      ensureRun(runIndex);
+      const key = `${runIndex}:${courtIndex}`;
+      existing.set(key, Number(m.id));
+      const st = runStateByIndex.get(runIndex);
+      if (st) {
+        for (const pid of matchPlayerIds(m)) st.players.add(pid);
+        if (tournamentSystem === 'knockout') {
+          const k = koMatchKey(m);
+          if (k) st.koKeys.add(k);
+        }
+      }
+    };
+
+    let cursorRun = sortedRuns[0]?.index || 1;
+    let cursorCourtPos = 0;
+
+    const nextCell = () => {
+      cursorCourtPos += 1;
+      if (cursorCourtPos >= sortedCourts.length) {
+        cursorCourtPos = 0;
+        cursorRun += 1;
+      }
+    };
+
+    for (const item of matchQueue) {
+      const m = item.m;
+      const preferredCourt = Number(item.preferredCourt) || sortedCourts[cursorCourtPos]?.index || 1;
+      const currentRun = cursorRun;
+      const currentKey = `${currentRun}:${preferredCourt}`;
+
+      if (!existing.has(currentKey)) ensureRun(currentRun);
+      const occupied = existing.get(currentKey);
+
+      const tryRun = (runIndex: number): boolean => {
+        ensureRun(runIndex);
+        const startIdx = sortedCourts.findIndex(c => c.index === preferredCourt);
+        const order = startIdx >= 0 ? [...sortedCourts.slice(startIdx), ...sortedCourts.slice(0, startIdx)] : sortedCourts;
+        for (const c of order) {
+          const k = `${runIndex}:${c.index}`;
+          if (existing.get(k)) continue;
+          if (!canPlaceInRun(m, runIndex)) continue;
+          placeInto(m, runIndex, c.index);
+          return true;
+        }
+        return false;
+      };
+
+      if (!occupied && canPlaceInRun(m, currentRun)) {
+        placeInto(m, currentRun, preferredCourt);
+        nextCell();
+        continue;
+      }
+
+      let placed = false;
+      for (let ri = currentRun + 1; ri <= currentRun + 200; ri++) {
+        if (tryRun(ri)) {
+          placed = true;
+          break;
+        }
+      }
+
+      nextCell();
+      if (!placed) {
+        continue;
+      }
+    }
+
+    // Уплотняем влево внутри каждого запуска: если в запуске есть матчи на правых кортах,
+    // то заполняем сначала левые (без изменения набора матчей в запуске).
+    const allRunIndices = Array.from(new Set(Array.from(existing.keys()).map(k => Number(k.split(':')[0])).filter(n => Number.isFinite(n) && n > 0)));
+    const maxRunIndexObserved = allRunIndices.length ? Math.max(...allRunIndices) : 1;
+    for (let ri = 1; ri <= maxRunIndexObserved; ri++) {
+      const mids: number[] = [];
+      for (const c of sortedCourts) {
+        const mid = existing.get(`${ri}:${c.index}`);
+        if (mid) mids.push(Number(mid));
+      }
+      for (let i = 0; i < sortedCourts.length; i++) {
+        const c = sortedCourts[i];
+        existing.set(`${ri}:${c.index}`, i < mids.length ? mids[i] : null);
+      }
+    }
+
+    const payload: any = {
+      ...buildSavePayloadFromSchedule({ ...sch, runs: sortedRuns } as any),
+    };
+
     const slotByKey = new Map<string, any>();
     for (const s of payload.slots || []) {
-      const k = `${s.run_index}:${s.court_index}`;
-      slotByKey.set(k, s);
+      slotByKey.set(`${s.run_index}:${s.court_index}`, s);
     }
-    for (const s of newSlots) {
-      const k = `${s.run_index}:${s.court_index}`;
-      slotByKey.set(k, s);
+
+    const maxRunIndex = Math.max(...Array.from(existing.keys()).map(k => Number(k.split(':')[0])).filter(n => Number.isFinite(n)), 1);
+    const finalRuns = sortedRuns
+      .slice()
+      .sort((a, b) => a.index - b.index)
+      .filter(r => r.index <= maxRunIndex);
+    payload.runs = finalRuns.map((r: any) => ({
+      index: r.index,
+      start_mode: r.start_mode,
+      start_time: r.start_time,
+      not_earlier_time: r.not_earlier_time,
+    }));
+
+    for (let ri = 1; ri <= maxRunIndex; ri++) {
+      for (const c of sortedCourts) {
+        const mid = existing.get(`${ri}:${c.index}`);
+        const k = `${ri}:${c.index}`;
+        if (mid) {
+          slotByKey.set(k, { run_index: ri, court_index: c.index, slot_type: 'match', match_id: mid });
+        }
+      }
     }
+
     payload.slots = Array.from(slotByKey.values());
 
     const res = await scheduleApi.save(sch.id, payload);
     setSchedule(res.schedule);
+    setLastSavedSchedule(res.schedule);
+    setIsDirty(false);
     await refreshSideData(res.schedule.id);
   };
 
@@ -585,6 +855,8 @@ export const SchedulePage: React.FC = () => {
       const res = await tournamentApi.getSchedule(tournamentId);
       const sch = res?.schedule || null;
       setSchedule(sch);
+      setLastSavedSchedule(sch);
+      setIsDirty(false);
       if (sch?.match_duration_minutes) setMatchDuration(sch.match_duration_minutes);
       if (sch?.courts?.length) setCourtsCount(sch.courts.length);
       const st = sch?.courts?.sort((a, b) => a.index - b.index)?.[0]?.first_start_time || sch?.runs?.sort((a, b) => a.index - b.index)?.[0]?.start_time;
@@ -655,6 +927,8 @@ export const SchedulePage: React.FC = () => {
       const payload = buildSavePayloadFromSchedule(next);
       const res = await scheduleApi.save(schedule.id, payload as any);
       setSchedule(res.schedule);
+      setLastSavedSchedule(res.schedule);
+      setIsDirty(false);
       await refreshSideData(res.schedule.id);
     } catch (e: any) {
       alert(e?.response?.data?.detail || e?.message || 'Не удалось применить настройки');
@@ -712,6 +986,8 @@ export const SchedulePage: React.FC = () => {
       };
     });
 
+    setIsDirty(true);
+
     setPool(prev => {
       // оптимистично обновим индикатор в backlog
       const next = prev.map(m => {
@@ -736,9 +1012,25 @@ export const SchedulePage: React.FC = () => {
 
       const res = await scheduleApi.save(schedule.id, payload as any);
       setSchedule(res.schedule);
+      setLastSavedSchedule(res.schedule);
+      setIsDirty(false);
       await refreshSideData(res.schedule.id);
     } catch (e: any) {
       alert(e?.response?.data?.detail || e?.message || 'Не удалось сохранить');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDiscardChanges = async () => {
+    if (!schedule) return;
+    if (!lastSavedSchedule) return;
+    setSaving(true);
+    try {
+      const restored = JSON.parse(JSON.stringify(lastSavedSchedule)) as ScheduleDTO;
+      setSchedule(restored);
+      setIsDirty(false);
+      await refreshSideData(restored.id);
     } finally {
       setSaving(false);
     }
@@ -1073,6 +1365,34 @@ export const SchedulePage: React.FC = () => {
               })}
             </tbody>
           </table>
+          </div>
+        </div>
+      )}
+
+      {schedule && isDirty && (
+        <div
+          style={{
+            position: 'fixed',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 50,
+            background: '#fff3cd',
+            borderTop: '1px solid #ffeeba',
+            padding: '10px 16px',
+          }}
+          data-export-exclude="true"
+        >
+          <div style={{ maxWidth: 1400, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ fontWeight: 700 }}>Есть несохранённые изменения</div>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button className="btn" onClick={handleSave} disabled={saving || !canManage}>
+                Сохранить
+              </button>
+              <button className="btn" onClick={handleDiscardChanges} disabled={saving}>
+                Отменить изменения
+              </button>
+            </div>
           </div>
         </div>
       )}

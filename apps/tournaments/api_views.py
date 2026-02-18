@@ -365,7 +365,11 @@ class TournamentViewSet(viewsets.ModelViewSet):
         tournament: Tournament = self.get_object()
         if tournament.status != Tournament.Status.ACTIVE:
             return Response(
-                {"ok": False, "error": "only_active", "detail": "Расписание можно создавать только для active"},
+                {
+                    "ok": False,
+                    "error": "only_active",
+                    "detail": "Расписание можно создавать только для active",
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

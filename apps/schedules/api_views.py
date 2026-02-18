@@ -8,12 +8,6 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.pdfgen.canvas import Canvas
-
 from apps.matches.models import Match
 from apps.tournaments.serializers import MatchSerializer
 from apps.tournaments.models import Tournament
@@ -253,6 +247,22 @@ class ScheduleViewSet(viewsets.ModelViewSet):
     def export_pdf(self, request, pk=None):
         schedule: Schedule = self.get_object()
         self._ensure_can_manage_schedule(request, schedule)
+
+        try:
+            from reportlab.lib import colors
+            from reportlab.lib.pagesizes import A4, landscape
+            from reportlab.pdfbase import pdfmetrics
+            from reportlab.pdfbase.ttfonts import TTFont
+            from reportlab.pdfgen.canvas import Canvas
+        except Exception:
+            return Response(
+                {
+                    "ok": False,
+                    "error": "pdf_export_unavailable",
+                    "detail": "PDF export is unavailable on this server (missing dependency: reportlab)",
+                },
+                status=status.HTTP_501_NOT_IMPLEMENTED,
+            )
 
         # Подготовим данные (все runs/courts + mapping слотов)
         courts = list(schedule.courts.all().order_by("index"))
