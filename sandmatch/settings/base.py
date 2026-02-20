@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     "apps.teams",
     "apps.tournaments",
     "apps.matches",
+    "apps.schedules",
     "apps.btr",
     "apps.venues",
     "apps.telegram_bot",

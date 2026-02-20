@@ -20,6 +20,7 @@ import { PasswordResetConfirmPage } from './pages/PasswordResetConfirmPage';
 import { ForbiddenPage } from './pages/ForbiddenPage';
 import { UserRolesPage } from './pages/UserRolesPage';
 import { AdminUserLinksPage } from './pages/AdminUserLinksPage';
+import { SchedulePage } from './pages/SchedulePage';
 import ProfilePage from './pages/ProfilePage';
 import PrivacyPolicyPage from './pages/PrivacyPolicyPage';
 import { getAccessToken } from './services/auth';
@@ -90,6 +91,7 @@ function App() {
                     Страница регистрации турнира доступна всем, включая анонимов. */}
                 <Route path="/tournaments/:id/round_robin" element={<TournamentDetailPage />} />
                 <Route path="/tournaments/:id" element={<TournamentDetailPage />} />
+                <Route path="/tournaments/:id/schedule" element={<SchedulePage />} />
                 <Route path="/tournaments/:id/registration" element={<TournamentRegistrationPage />} />
                 <Route path="/tournaments/:id/knockout" element={<KnockoutPage />} />
                 <Route path="/tournaments/:id/king" element={<KingPage />} />
