@@ -198,18 +198,22 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         if not tournament_ids:
             return Response({"ok": True, "matches": []})
 
-        # Пул матчей: все матчи турниров/стадий из scope, кроме placement
-        pool_qs = (
-            Match.objects.filter(tournament_id__in=tournament_ids)
-            .exclude(stage=Match.Stage.PLACEMENT)
-            .exclude(status=Match.Status.COMPLETED)
-            .select_related("tournament", "team_1", "team_2", "winner")
-            .prefetch_related("sets")
-            .order_by("tournament_id", "stage", "round_index", "order_in_round", "id")
-        )
-
         assigned_ids = set(
             schedule.slots.exclude(match_id__isnull=True).values_list("match_id", flat=True)
+        )
+
+        # Пул матчей:
+        # - все НЕ завершенные матчи турниров/стадий из scope (кроме placement)
+        # - плюс завершенные матчи, если они уже назначены в расписание (для таймлайна/просмотра счёта)
+        base_qs = Match.objects.filter(tournament_id__in=tournament_ids).exclude(stage=Match.Stage.PLACEMENT)
+        pool_qs = (
+            base_qs.exclude(status=Match.Status.COMPLETED)
+            | base_qs.filter(id__in=assigned_ids, status=Match.Status.COMPLETED)
+        )
+        pool_qs = (
+            pool_qs.select_related("tournament", "team_1", "team_2", "winner")
+            .prefetch_related("sets")
+            .order_by("tournament_id", "stage", "round_index", "order_in_round", "id")
         )
 
         results: list[dict[str, Any]] = []
