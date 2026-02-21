@@ -252,6 +252,199 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         schedule: Schedule = self.get_object()
         self._ensure_can_manage_schedule(request, schedule)
 
+        # Prefer HTML/CSS -> PDF rendering via headless Chromium (maximally identical to browser).
+        # If Playwright/Chromium is unavailable on the server, fall back to legacy ReportLab renderer.
+        try:
+            from playwright.sync_api import sync_playwright
+
+            courts = list(schedule.courts.all().order_by("index"))
+            runs = list(schedule.runs.all().order_by("index"))
+            slots_qs = schedule.slots.select_related(
+                "run",
+                "court",
+                "match",
+                "match__tournament",
+                "match__team_1",
+                "match__team_2",
+            )
+            slots_map: dict[tuple[int, int], Any] = {}
+            for s in slots_qs:
+                slots_map[(s.run_id, s.court_id)] = s
+
+            tournament_names = []
+            for scope in schedule.scopes.select_related("tournament").all():
+                if scope.tournament and scope.tournament.name:
+                    tournament_names.append(str(scope.tournament.name))
+            title = " + ".join(tournament_names) if tournament_names else "Расписание"
+
+            def esc(v: Any) -> str:
+                import html
+
+                return html.escape("" if v is None else str(v))
+
+            def team_label(team: Any) -> str:
+                if not team:
+                    return "TBD"
+                return (
+                    getattr(team, "display_name", None)
+                    or getattr(team, "name", None)
+                    or str(team)
+                )
+
+            def slot_class(slot: Any) -> str:
+                try:
+                    if slot and slot.match and slot.match.status == Match.Status.LIVE:
+                        return " cellLive"
+                    if slot and slot.match and slot.match.status == Match.Status.COMPLETED:
+                        return " cellCompleted"
+                except Exception:
+                    pass
+                return ""
+
+            def slot_html(slot: Any) -> str:
+                if not slot:
+                    return ""
+                if getattr(slot, "slot_type", None) == "text":
+                    return f'<div class="cellText">{esc(getattr(slot, "text_title", "") or "")}</div>'
+                if getattr(slot, "slot_type", None) == "match" and getattr(slot, "match_id", None):
+                    if getattr(slot, "override_title", None):
+                        return f'<div class="cellText">{esc(slot.override_title)}</div>'
+                    m = getattr(slot, "match", None)
+                    if not m:
+                        return f'<div class="cellText">Матч #{esc(slot.match_id)}</div>'
+                    t1 = team_label(getattr(m, "team_1", None))
+                    t2 = team_label(getattr(m, "team_2", None))
+                    return (
+                        '<div class="teams">'
+                        f'<div class="team">{esc(t1)}</div>'
+                        '<div class="vs">против</div>'
+                        f'<div class="team">{esc(t2)}</div>'
+                        "</div>"
+                    )
+                return ""
+
+            court_headers = "".join(
+                [
+                    "<th>"
+                    f"<div class=\"courtName\">{esc(c.name or f'Корт {c.index}')}</div>"
+                    + (
+                        f"<div class=\"courtStart\">Начало {esc(c.first_start_time.strftime('%H:%M'))}</div>"
+                        if getattr(c, "first_start_time", None)
+                        else ""
+                    )
+                    + "</th>"
+                    for c in courts
+                ]
+            )
+
+            body_rows: list[str] = []
+            for r in runs:
+                left = (
+                    f"<td class=\"runCol\">"
+                    f"<div class=\"runTitle\">Запуск {esc(r.index)}</div>"
+                    + (
+                        f"<div class=\"runPlan\">План: {esc(r.start_time.strftime('%H:%M'))}</div>"
+                        if getattr(r, "start_time", None)
+                        else ""
+                    )
+                    + "</td>"
+                )
+                cells = []
+                for c in courts:
+                    slot = slots_map.get((r.id, c.id))
+                    cells.append(f"<td class=\"cell{slot_class(slot)}\">{slot_html(slot)}</td>")
+                body_rows.append("<tr>" + left + "".join(cells) + "</tr>")
+
+            html_doc = f"""<!doctype html>
+<html lang=\"ru\">
+<head>
+  <meta charset=\"utf-8\" />
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+  <title>{esc(title)}</title>
+  <style>
+    @page {{ size: A4 landscape; margin: 12mm; }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, 'Noto Sans', 'DejaVu Sans', sans-serif;
+      color: #111827;
+    }}
+    .pageHeader {{ display:flex; align-items:flex-start; justify-content:space-between; margin-bottom: 10px; }}
+    .pageHeader .h1 {{ font-size: 18px; font-weight: 700; line-height: 1.2; }}
+    .pageHeader .h2 {{ font-size: 12px; color: #374151; margin-top: 4px; }}
+    .pageHeader .date {{ font-size: 12px; color: #111827; }}
+
+    table {{ width: 100%; border-collapse: collapse; table-layout: fixed; }}
+    thead th {{
+      background: #F3F4F6;
+      border-bottom: 1px solid #D1D5DB;
+      padding: 10px 10px;
+      text-align: left;
+      vertical-align: bottom;
+    }}
+    thead th:first-child {{ width: 160px; }}
+    tbody td {{
+      border-bottom: 1px solid #E5E7EB;
+      border-right: 1px solid #E5E7EB;
+      padding: 10px;
+      vertical-align: middle;
+    }}
+    tbody td:last-child {{ border-right: 0; }}
+    tbody tr td:first-child {{ border-right: 1px solid #D1D5DB; }}
+
+    .courtName {{ font-weight: 700; }}
+    .courtStart {{ font-size: 12px; color: #6B7280; margin-top: 2px; }}
+    .runCol .runTitle {{ font-weight: 700; }}
+    .runCol .runPlan {{ font-size: 12px; color: #6B7280; margin-top: 2px; }}
+
+    .cell {{ text-align: center; }}
+    .teams {{ display:flex; flex-direction:column; align-items:center; justify-content:center; min-height: 78px; }}
+    .team {{ font-size: 18px; line-height: 1.15; }}
+    .vs {{ font-weight: 700; font-size: 14px; margin: 6px 0; }}
+    .cellText {{ font-size: 14px; line-height: 1.2; }}
+
+    .cellLive {{ background: #D1FAE5; }}
+    .cellCompleted {{ background: #E5E7EB; }}
+  </style>
+</head>
+<body>
+  <div class=\"pageHeader\">
+    <div>
+      <div class=\"h1\">Расписание</div>
+      <div class=\"h2\">{esc(title)}</div>
+    </div>
+    <div class=\"date\">{esc(schedule.date)}</div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Запуск</th>
+        {court_headers}
+      </tr>
+    </thead>
+    <tbody>
+      {''.join(body_rows)}
+    </tbody>
+  </table>
+</body>
+</html>"""
+
+            with sync_playwright() as p:
+                browser = p.chromium.launch()
+                page = browser.new_page(viewport={"width": 1400, "height": 900})
+                page.set_content(html_doc, wait_until="load")
+                page.emulate_media(media="screen")
+                pdf_bytes = page.pdf(format="A4", landscape=True, print_background=True)
+                browser.close()
+
+            from django.http import HttpResponse
+
+            resp = HttpResponse(pdf_bytes, content_type="application/pdf")
+            resp["Content-Disposition"] = f'attachment; filename="schedule_{schedule.id}.pdf"'
+            return resp
+        except Exception:
+            pass
+
         try:
             from reportlab.lib import colors
             from reportlab.lib.pagesizes import A4, landscape
@@ -263,7 +456,7 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                 {
                     "ok": False,
                     "error": "pdf_export_unavailable",
-                    "detail": "PDF export is unavailable on this server (missing dependency: reportlab)",
+                    "detail": "PDF export is unavailable on this server (missing dependency: reportlab or playwright)",
                 },
                 status=status.HTTP_501_NOT_IMPLEMENTED,
             )
@@ -292,12 +485,22 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         page_size = landscape(A4)
         c = Canvas(buf, pagesize=page_size)
 
-        # Регистрируем шрифт с кириллицей (DejaVuSans). Если не найден, используем стандартный.
+        # Регистрируем шрифт с кириллицей. Если не найден, используем стандартный.
         font_name = "Helvetica"
         try:
-            # Для Debian/Ubuntu в контейнере часто доступен этот путь
-            pdfmetrics.registerFont(TTFont("DejaVuSans", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"))
-            font_name = "DejaVuSans"
+            import os
+
+            candidates = [
+                ("DejaVuSans", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+                ("Arial", r"C:\\Windows\\Fonts\\arial.ttf"),
+                ("Arial", r"C:\\Windows\\Fonts\\ARIAL.TTF"),
+            ]
+
+            for name, path in candidates:
+                if path and os.path.exists(path):
+                    pdfmetrics.registerFont(TTFont(name, path))
+                    font_name = name
+                    break
         except Exception:
             pass
 
@@ -306,8 +509,8 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         margin_y = 24
 
         header_h = 48
-        col_header_h = 28
-        run_row_h = 30
+        col_header_h = 34
+        run_row_h = 110
         break_row_h = 24
 
         # Доступная высота под таблицу (без шапки)
@@ -355,7 +558,16 @@ class ScheduleViewSet(viewsets.ModelViewSet):
             for idx, court in enumerate(courts_subset):
                 cx = x0 + run_col_w + idx * col_w
                 name = court.name or f"Корт {court.index}"
-                c.drawString(cx + 6, y0 - 18, name[:24])
+                c.drawString(cx + 6, y0 - 16, name[:24])
+                try:
+                    if getattr(court, "first_start_time", None):
+                        c.setFont(font_name, 9)
+                        c.setFillColor(colors.HexColor("#4B5563"))
+                        c.drawString(cx + 6, y0 - 29, f"Начало {court.first_start_time.strftime('%H:%M')}")
+                        c.setFillColor(colors.black)
+                        c.setFont(font_name, 10)
+                except Exception:
+                    pass
 
             c.setStrokeColor(colors.HexColor("#D1D5DB"))
             c.line(x0, y0 - col_header_h, x0 + run_col_w + col_w * len(courts_subset), y0 - col_header_h)
@@ -374,7 +586,7 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                     return f"Матч #{slot.match_id}"
                 t1 = getattr(m.team_1, "display_name", None) or getattr(m.team_1, "name", None) or str(m.team_1) if m.team_1 else "TBD"
                 t2 = getattr(m.team_2, "display_name", None) or getattr(m.team_2, "name", None) or str(m.team_2) if m.team_2 else "TBD"
-                return f"{t1} vs {t2}"[:40]
+                return f"{t1}\nпротив\n{t2}"
             return ""
 
         def slot_status_color(slot: Any):
@@ -395,7 +607,13 @@ class ScheduleViewSet(viewsets.ModelViewSet):
             time_str = ""
             if run_obj.start_time:
                 time_str = run_obj.start_time.strftime("%H:%M")
-            c.drawString(x0 + 6, y_top - 20, (label + (f" • {time_str}" if time_str else ""))[:24])
+            c.drawString(x0 + 6, y_top - 18, (label)[:24])
+            if time_str:
+                c.setFont(font_name, 9)
+                c.setFillColor(colors.HexColor("#4B5563"))
+                c.drawString(x0 + 6, y_top - 34, f"План: {time_str}")
+                c.setFillColor(colors.black)
+                c.setFont(font_name, 10)
 
             # ячейки
             for idx, court in enumerate(courts_subset):
@@ -408,10 +626,18 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                     c.rect(cx, y_top - run_row_h, col_w, run_row_h, fill=1, stroke=0)
 
                 c.setFillColor(colors.black)
-                c.setFont(font_name, 9)
                 txt = slot_text(slot)
                 if txt:
-                    c.drawString(cx + 4, y_top - 18, txt)
+                    lines = [ln.strip() for ln in str(txt).split("\n") if ln.strip()]
+                    # вертикальное размещение ближе к центру ячейки
+                    c.setFont(font_name, 10)
+                    start_y = y_top - 42
+                    line_h = 14
+                    for i, ln in enumerate(lines[:5]):
+                        # грубое центрирование по ширине
+                        w = pdfmetrics.stringWidth(ln, font_name, 10)
+                        tx = cx + max(4, (col_w - w) / 2.0)
+                        c.drawString(tx, start_y - i * line_h, ln[:60])
 
             # линии сетки
             c.setStrokeColor(colors.HexColor("#E5E7EB"))

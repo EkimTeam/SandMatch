@@ -28,3 +28,4 @@ Pillow~=10.2
 
 # PDF export (server-side)
 reportlab~=4.2
+playwright~=1.42
