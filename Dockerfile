@@ -19,6 +19,16 @@ WORKDIR /app
 COPY requirements.txt /app/
 RUN pip install -r requirements.txt
 
+# Playwright/Chromium + Cyrillic fonts for correct HTML/CSS -> PDF rendering
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+    fontconfig \
+    fonts-dejavu-core \
+    fonts-noto-core \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN python -m playwright install --with-deps chromium
+
 # Copy project sources
 COPY . /app
 
