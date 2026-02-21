@@ -40,6 +40,10 @@ export const SchedulePage: React.FC = () => {
   const [isDirty, setIsDirty] = useState(false);
   const [lastSavedSchedule, setLastSavedSchedule] = useState<ScheduleDTO | null>(null);
 
+  const [viewMode, setViewMode] = useState<'grid' | 'timeline'>('grid');
+  const [showFact, setShowFact] = useState<boolean>(true);
+  const [liveState, setLiveState] = useState<Map<number, { status: string; started_at: string | null; finished_at: string | null }>>(new Map());
+
   const conflictsSlotIds = useMemo(() => {
     const ids = new Set<number>();
     for (const run of conflicts?.runs || []) {
@@ -243,6 +247,54 @@ export const SchedulePage: React.FC = () => {
     return group;
   };
 
+  const renderMatchTiny = (m: any) => {
+    const s1 = teamSurnames(m?.team_1);
+    const s2 = teamSurnames(m?.team_2);
+    const a = s1.length ? s1.join(' / ') : 'TBD';
+    const b = s2.length ? s2.join(' / ') : 'TBD';
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 1, lineHeight: 1.05 }}>
+        <div style={{ fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a}</div>
+        <div style={{ fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b}</div>
+      </div>
+    );
+  };
+
+  const matchScoreLabel = (m: any): string => {
+    const sets = Array.isArray(m?.sets) ? m.sets : null;
+    if (!sets || !sets.length) {
+      const score = String(m?.score || '').trim();
+      if (score) return score;
+      return '';
+    }
+
+    const parts: string[] = [];
+    for (const s of sets) {
+      if (!s) continue;
+      const g1 = s.games_1;
+      const g2 = s.games_2;
+      if (g1 == null || g2 == null) continue;
+
+      let setLabel = `${g1}:${g2}`;
+
+      const loserTb = (() => {
+        if (s.tb_loser_points != null) return Number(s.tb_loser_points);
+        const tb1 = s.tb_1;
+        const tb2 = s.tb_2;
+        if (tb1 == null || tb2 == null) return null;
+        return g1 > g2 ? Number(tb2) : Number(tb1);
+      })();
+
+      if (loserTb != null && !Number.isNaN(loserTb)) {
+        setLabel = `${setLabel}(${loserTb})`;
+      }
+
+      parts.push(setLabel);
+    }
+
+    return parts.join(' ');
+  };
+
   const handleClearSchedule = async () => {
     if (!schedule || !canManage) return;
     if (!window.confirm('Очистить расписание? Все назначенные матчи будут сняты.')) return;
@@ -407,6 +459,173 @@ export const SchedulePage: React.FC = () => {
     setConflicts(cf);
     setPool(mp.matches || []);
   };
+
+  useEffect(() => {
+    if (!schedule?.id) {
+      setLiveState(new Map());
+      return;
+    }
+    if (viewMode !== 'timeline') return;
+
+    let stopped = false;
+    let timer: any = null;
+
+    const tick = async () => {
+      if (stopped) return;
+      try {
+        const data = await scheduleApi.liveState(schedule.id);
+        if (stopped) return;
+        const map = new Map<number, any>();
+        for (const m of data?.matches || []) {
+          if (!m?.id) continue;
+          map.set(Number(m.id), {
+            status: String(m.status || ''),
+            started_at: m.started_at ?? null,
+            finished_at: m.finished_at ?? null,
+          });
+        }
+        setLiveState(map);
+      } catch {
+        // noop
+      } finally {
+        if (!stopped) timer = setTimeout(tick, 12000);
+      }
+    };
+
+    tick();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [schedule?.id, viewMode]);
+
+  const parseHmToDate = (dateStr: string, hm: string): Date | null => {
+    if (!dateStr || !hm) return null;
+    const t = hm.length >= 5 ? hm.slice(0, 5) : hm;
+    const iso = `${dateStr}T${t}:00`;
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+
+  const timelineData = useMemo(() => {
+    if (!schedule) return null;
+    const slotMs = 15 * 60 * 1000;
+    const ceilToSlot = (ms: number) => Math.ceil(ms / slotMs) * slotMs;
+    const plannedByRun = new Map<number, string>();
+    for (const r of planned?.runs || []) {
+      if (!r?.index) continue;
+      if (r.planned_start_time) plannedByRun.set(Number(r.index), String(r.planned_start_time));
+    }
+
+    const courts = (schedule.courts || []).slice().sort((a, b) => a.index - b.index);
+    const runs = (schedule.runs || []).slice().sort((a, b) => a.index - b.index);
+    const slots = schedule.slots || [];
+
+    const runIndexById = new Map<number, number>();
+    runs.forEach(r => runIndexById.set(r.id, r.index));
+    const courtIndexById = new Map<number, number>();
+    courts.forEach(c => courtIndexById.set(c.id, c.index));
+
+    const slotsByCourtIndex = new Map<number, Array<{ runIndex: number; matchId: number }>>();
+    for (const s of slots) {
+      if (!s?.match || s?.slot_type !== 'match') continue;
+      const ri = runIndexById.get(s.run);
+      const ci = courtIndexById.get(s.court);
+      if (!ri || !ci) continue;
+      const arr = slotsByCourtIndex.get(ci) || [];
+      arr.push({ runIndex: ri, matchId: Number(s.match) });
+      slotsByCourtIndex.set(ci, arr);
+    }
+
+    for (const [ci, arr] of slotsByCourtIndex) {
+      arr.sort((a, b) => a.runIndex - b.runIndex);
+      slotsByCourtIndex.set(ci, arr);
+    }
+
+    const durationMin = matchDuration || schedule.match_duration_minutes || 40;
+    const durationMs = durationMin * 60 * 1000;
+    const durationSlotsMs = Math.ceil(durationMs / slotMs) * slotMs;
+
+    const perCourt: Array<{
+      courtIndex: number;
+      courtName: string;
+      items: Array<{
+        matchId: number;
+        planStart: Date;
+        renderStart: Date;
+        renderEnd: Date;
+        status?: string;
+        started_at?: string | null;
+      }>;
+    }> = [];
+
+    let globalMin: number | null = null;
+    let globalMax: number | null = null;
+
+    for (const c of courts) {
+      const ci = c.index;
+      const entries = slotsByCourtIndex.get(ci) || [];
+      let prevEndMs: number | null = null;
+      const items: any[] = [];
+
+      for (const e of entries) {
+        const hm = plannedByRun.get(e.runIndex);
+        const plan = hm ? parseHmToDate(schedule.date, hm) : null;
+        if (!plan) continue;
+
+        const live = liveState.get(Number(e.matchId));
+        const actual = showFact && live?.started_at ? new Date(String(live.started_at)) : null;
+        const actualMs = actual && !Number.isNaN(actual.getTime()) ? actual.getTime() : null;
+
+        const planMs = plan.getTime();
+        const baseMs = actualMs != null ? Math.max(planMs, actualMs) : planMs;
+        const rawStartMs: number = prevEndMs != null ? Math.max(baseMs, prevEndMs) : baseMs;
+        const renderStartMs: number = showFact ? ceilToSlot(rawStartMs) : rawStartMs;
+        const renderEndMs: number = showFact ? (renderStartMs + durationSlotsMs) : (renderStartMs + durationMs);
+        prevEndMs = renderEndMs;
+
+        if (globalMin == null || renderStartMs < globalMin) globalMin = renderStartMs;
+        if (globalMax == null || renderEndMs > globalMax) globalMax = renderEndMs;
+
+        items.push({
+          matchId: Number(e.matchId),
+          planStart: new Date(planMs),
+          renderStart: new Date(renderStartMs),
+          renderEnd: new Date(renderEndMs),
+          status: live?.status,
+          started_at: live?.started_at ?? null,
+        });
+      }
+
+      perCourt.push({ courtIndex: ci, courtName: c.name, items });
+    }
+
+    if (globalMin == null || globalMax == null) {
+      const fallbackHm = plannedByRun.get(1) || startTime;
+      const d0 = parseHmToDate(schedule.date, fallbackHm || '10:00');
+      if (d0) {
+        globalMin = d0.getTime();
+        globalMax = d0.getTime() + 6 * 60 * 60 * 1000;
+      } else {
+        globalMin = Date.now();
+        globalMax = globalMin + 6 * 60 * 60 * 1000;
+      }
+    }
+
+    const roundTo15 = (ms: number) => Math.floor(ms / (15 * 60 * 1000)) * (15 * 60 * 1000);
+    const scheduleStartHm = plannedByRun.get(1) || startTime;
+    const scheduleStartDate = parseHmToDate(schedule.date, scheduleStartHm || '10:00');
+    const startMs = roundTo15((scheduleStartDate ? scheduleStartDate.getTime() : globalMin) as number);
+    const endMs = roundTo15(globalMax + 14 * 60 * 1000);
+
+    return {
+      startMs,
+      endMs,
+      courts,
+      perCourt,
+      durationMin,
+    };
+  }, [schedule, planned, liveState, showFact, matchDuration, startTime]);
 
   const buildSavePayloadFromSchedule = (sch: ScheduleDTO) => {
     return {
@@ -1072,8 +1291,31 @@ export const SchedulePage: React.FC = () => {
     <div className="container" style={{ maxWidth: 1400 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Расписание</h1>
+        {schedule && (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <button
+              className="btn"
+              onClick={() => setViewMode('grid')}
+              disabled={viewMode === 'grid'}
+            >
+              Сетка
+            </button>
+            <button
+              className="btn"
+              onClick={() => setViewMode('timeline')}
+              disabled={viewMode === 'timeline'}
+            >
+              Таймлайн
+            </button>
+            {viewMode === 'timeline' && (
+              <button className="btn" onClick={() => setShowFact(v => !v)}>
+                {showFact ? 'Факт: вкл' : 'Факт: выкл'}
+              </button>
+            )}
+          </div>
+        )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-          {schedule && (
+          {schedule && viewMode === 'grid' && (
             <>
               <button className="btn" disabled={saving || !canManage} onClick={handleSave}>Сохранить</button>
               <button className="btn" disabled={exporting} onClick={handleExportPdf}>Экспорт PDF</button>
@@ -1107,7 +1349,7 @@ export const SchedulePage: React.FC = () => {
         </div>
       )}
 
-      {schedule && (
+      {schedule && viewMode === 'grid' && (
         <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 12, alignItems: 'start' }}>
           <div className="card">
             <div style={{ fontWeight: 700, marginBottom: 10 }}>Матчи для назначения</div>
@@ -1365,6 +1607,145 @@ export const SchedulePage: React.FC = () => {
               })}
             </tbody>
           </table>
+          </div>
+        </div>
+      )}
+
+      {schedule && viewMode === 'timeline' && timelineData && (
+        <div className="card" style={{ overflowX: 'auto' }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+            <div style={{ minWidth: 90 }}>
+              <div style={{ fontWeight: 700, marginBottom: 8 }}>Время</div>
+              <div
+                style={{
+                  position: 'relative',
+                  height: Math.max(300, (timelineData.endMs - timelineData.startMs) / (15 * 60 * 1000) * 28),
+                }}
+              >
+                {Array.from(
+                  { length: Math.max(1, Math.ceil((timelineData.endMs - timelineData.startMs) / (15 * 60 * 1000))) },
+                  (_, i) => {
+                    const t = new Date(timelineData.startMs + i * 15 * 60 * 1000);
+                    const hh = String(t.getHours()).padStart(2, '0');
+                    const mm = String(t.getMinutes()).padStart(2, '0');
+                    const top = i * 28;
+                    return (
+                      <div
+                        key={i}
+                        style={{
+                          position: 'absolute',
+                          top,
+                          left: 0,
+                          right: 0,
+                          height: 28,
+                          borderTop: '1px solid #f3f4f6',
+                          fontSize: 11,
+                          opacity: 0.8,
+                        }}
+                      >
+                        {mm === '00' ? `${hh}:${mm}` : ''}
+                      </div>
+                    );
+                  }
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${timelineData.courts.length}, 220px)`, gap: 10 }}>
+              {timelineData.perCourt.map(col => {
+                const height = Math.max(300, (timelineData.endMs - timelineData.startMs) / (15 * 60 * 1000) * 28);
+                return (
+                  <div key={col.courtIndex}>
+                    <div style={{ fontWeight: 700, marginBottom: 8 }}>{col.courtName}</div>
+                    <div
+                      style={{
+                        position: 'relative',
+                        height,
+                        borderLeft: '1px solid #e5e7eb',
+                        borderRight: '1px solid #e5e7eb',
+                      }}
+                    >
+                      {Array.from(
+                        { length: Math.max(1, Math.ceil((timelineData.endMs - timelineData.startMs) / (15 * 60 * 1000))) },
+                        (_, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              position: 'absolute',
+                              top: i * 28,
+                              left: 0,
+                              right: 0,
+                              height: 28,
+                              borderTop: '1px solid #f3f4f6',
+                            }}
+                          />
+                        )
+                      )}
+
+                      {col.items.map(it => {
+                        const startMs = it.renderStart.getTime();
+                        const endMs = it.renderEnd.getTime();
+                        const slotMs = 15 * 60 * 1000;
+                        const top = ((startMs - timelineData.startMs) / slotMs) * 28;
+                        const h = Math.max(20, ((endMs - startMs) / (15 * 60 * 1000)) * 28);
+                        const m = matchById.get(Number(it.matchId));
+                        const planned = it.planStart;
+                        const planHm = `${String(planned.getHours()).padStart(2, '0')}:${String(planned.getMinutes()).padStart(2, '0')}`;
+                        const factHm = it.started_at
+                          ? (() => {
+                              const d = new Date(String(it.started_at));
+                              if (Number.isNaN(d.getTime())) return '';
+                              return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+                            })()
+                          : '';
+                        const st = String(it.status || '').toLowerCase();
+                        const bg = st === 'completed' ? '#d1fae5' : st === 'live' ? '#dbeafe' : '#fff';
+
+                        const statusLine = (() => {
+                          if (st === 'completed') {
+                            const sc = matchScoreLabel(m);
+                            return sc ? `завершен ${sc}` : 'завершен';
+                          }
+                          if (st === 'live') {
+                            return `начат ${factHm || planHm}`;
+                          }
+                          return `план ${planHm}`;
+                        })();
+
+                        return (
+                          <div
+                            key={it.matchId}
+                            style={{
+                              position: 'absolute',
+                              left: 6,
+                              right: 6,
+                              top,
+                              height: h,
+                              border: '1px solid #e5e7eb',
+                              borderRadius: 8,
+                              padding: 4,
+                              background: bg,
+                              overflow: 'hidden',
+                            }}
+                            title={getMatchTitle(it.matchId)}
+                          >
+                            <div style={{ fontSize: 10, opacity: 0.75, marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {statusLine}
+                            </div>
+                            <div style={{ fontSize: 10, opacity: 0.75, marginBottom: 2, textAlign: 'right', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {matchMetaLabel(m) || `#${it.matchId}`}
+                            </div>
+                            <div style={{ lineHeight: 1.05 }}>
+                              {renderMatchTiny(m || { id: it.matchId })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}
