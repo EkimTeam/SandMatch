@@ -319,6 +319,47 @@ export const SchedulePage: React.FC = () => {
     }
   };
 
+  const handleAddRun = async () => {
+    if (!schedule || !canManage) return;
+    setSaving(true);
+    try {
+      const res = await scheduleApi.addRun(schedule.id);
+      if (!(res as any)?.ok) {
+        alert((res as any)?.detail || (res as any)?.error || 'Не удалось добавить запуск');
+        return;
+      }
+      setSchedule(res.schedule);
+      setLastSavedSchedule(res.schedule);
+      setIsDirty(false);
+      await refreshSideData(res.schedule.id);
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || e?.message || 'Не удалось добавить запуск');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteRun = async (runId: number) => {
+    if (!schedule || !canManage) return;
+    if (!window.confirm('Удалить пустой запуск?')) return;
+    setSaving(true);
+    try {
+      const res = await scheduleApi.deleteRun(schedule.id, runId);
+      if (!(res as any)?.ok) {
+        alert((res as any)?.detail || (res as any)?.error || 'Не удалось удалить запуск');
+        return;
+      }
+      setSchedule(res.schedule);
+      setLastSavedSchedule(res.schedule);
+      setIsDirty(false);
+      await refreshSideData(res.schedule.id);
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || e?.message || 'Не удалось удалить запуск');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const assignMany = (changes: Array<{ runIndex: number; courtIndex: number; matchId: number | null }>) => {
     if (!schedule) return;
 
@@ -1491,6 +1532,9 @@ export const SchedulePage: React.FC = () => {
               <button className="btn" onClick={handleGenerate} disabled={!canManage || saving}>
                 Пересоздать и расставить
               </button>
+              <button className="btn" onClick={handleAddRun} disabled={!canManage || saving || !schedule}>
+                Добавить запуск
+              </button>
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 12, alignItems: 'center' }}>
               <div className="text-sm">Дата: <strong>{schedule.date}</strong></div>
@@ -1514,10 +1558,25 @@ export const SchedulePage: React.FC = () => {
             <tbody>
               {schedule.runs.sort((a,b)=>a.index-b.index).map(r => {
                 const plannedTime = planned?.runs?.find(x => x.index === r.index)?.planned_start_time;
+                const slotsForRun = (schedule.slots || []).filter(s => s.run === r.id);
+                const isEmptyRun = slotsForRun.every(s => {
+                  const hasMatch = !!s?.match;
+                  const hasText = !!(s?.text_title || s?.text_subtitle || s?.override_title || s?.override_subtitle);
+                  return !hasMatch && !hasText;
+                });
+                const maxRunIndex = Math.max(...(schedule.runs || []).map(x => x.index), 1);
+                const canDeleteThisRun = canManage && isEmptyRun && r.index === maxRunIndex;
                 return (
                   <tr key={r.id}>
                     <td style={{ padding: 8, borderBottom: '1px solid #f2f2f2', verticalAlign: 'top' }}>
-                      <div style={{ fontWeight: 600 }}>Запуск {r.index}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ fontWeight: 600 }}>Запуск {r.index}</div>
+                        {canDeleteThisRun && (
+                          <button className="btn" onClick={() => handleDeleteRun(r.id)} disabled={saving}>
+                            Удалить
+                          </button>
+                        )}
+                      </div>
                       <div className="text-sm" style={{ opacity: 0.8 }}>План: {plannedTime || '—'}</div>
                     </td>
                     {schedule.courts.sort((a,b)=>a.index-b.index).map(c => {
