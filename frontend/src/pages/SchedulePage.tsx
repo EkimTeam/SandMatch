@@ -32,6 +32,8 @@ export const SchedulePage: React.FC = () => {
   const [dragOverCell, setDragOverCell] = useState<{ runIndex: number; courtIndex: number } | null>(null);
   const [dragOverUnassigned, setDragOverUnassigned] = useState<boolean>(false);
 
+  const [pickedFromCell, setPickedFromCell] = useState<{ runIndex: number; courtIndex: number; matchId: number } | null>(null);
+
   const [localConflictsSlotIds, setLocalConflictsSlotIds] = useState<Set<number> | null>(null);
 
   const [saving, setSaving] = useState(false);
@@ -432,6 +434,36 @@ export const SchedulePage: React.FC = () => {
         return m;
       });
     });
+  };
+
+  const dropOrPickCell = (runIndex: number, courtIndex: number) => {
+    if (!canManage) return;
+    const slot = slotsByRunCourt.get(`${runIndex}:${courtIndex}`);
+    const hasMatch = !!slot?.match;
+    const cellMatchId: number | null = slot?.match ? Number(slot.match) : null;
+
+    // If we have something selected (from pool OR picked from another cell) -> drop here.
+    if (selectedMatchId) {
+      const placingId = Number(selectedMatchId);
+      if (pickedFromCell) {
+        // If target occupied, swap matches.
+        if (cellMatchId && cellMatchId !== placingId) {
+          applyAssign(pickedFromCell.runIndex, pickedFromCell.courtIndex, cellMatchId);
+        } else {
+          applyAssign(pickedFromCell.runIndex, pickedFromCell.courtIndex, null);
+        }
+        setPickedFromCell(null);
+      }
+      applyAssign(runIndex, courtIndex, placingId);
+      return;
+    }
+
+    // No selection: if tapped on a filled cell -> pick it up for move.
+    if (hasMatch && cellMatchId) {
+      setPickedFromCell({ runIndex, courtIndex, matchId: cellMatchId });
+      setSelectedMatchId(cellMatchId);
+      return;
+    }
   };
 
   const clearDrag = () => {
@@ -1399,7 +1431,10 @@ export const SchedulePage: React.FC = () => {
             </div>
 
             <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-              <button className="btn" onClick={() => setSelectedMatchId(null)}>
+              <button className="btn" onClick={() => {
+                setPickedFromCell(null);
+                setSelectedMatchId(null);
+              }}>
                 Снять выбор
               </button>
               <button className="btn" onClick={handleAutoFill} disabled={!canManage || saving}>
@@ -1460,7 +1495,10 @@ export const SchedulePage: React.FC = () => {
                       background: isSelected ? '#111827' : undefined,
                       color: isSelected ? '#fff' : undefined,
                     }}
-                    onClick={() => setSelectedMatchId(m.id)}
+                    onClick={() => {
+                      setPickedFromCell(null);
+                      setSelectedMatchId(m.id);
+                    }}
                   >
                     <span style={{ display: 'inline-block', width: 18 }}>
                       <span style={{ color: '#dc3545', fontWeight: 700 }}>●</span>
@@ -1572,7 +1610,16 @@ export const SchedulePage: React.FC = () => {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <div style={{ fontWeight: 600 }}>Запуск {r.index}</div>
                         {canDeleteThisRun && (
-                          <button className="btn" onClick={() => handleDeleteRun(r.id)} disabled={saving}>
+                          <button
+                            type="button"
+                            className="btn"
+                            onClick={e => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleDeleteRun(r.id);
+                            }}
+                            disabled={saving}
+                          >
                             Удалить
                           </button>
                         )}
@@ -1614,14 +1661,7 @@ export const SchedulePage: React.FC = () => {
                             e.preventDefault();
                             dropOnCell(r.index, c.index);
                           }}
-                          onClick={() => {
-                            if (!canManage) return;
-                            if (selectedMatchId) {
-                              applyAssign(r.index, c.index, selectedMatchId);
-                            } else if (hasMatch) {
-                              applyAssign(r.index, c.index, null);
-                            }
-                          }}
+                          onClick={() => dropOrPickCell(r.index, c.index)}
                         >
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                             <div className="text-sm" style={{ opacity: 0.75 }}>
