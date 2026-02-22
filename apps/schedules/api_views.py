@@ -258,6 +258,7 @@ class ScheduleViewSet(viewsets.ModelViewSet):
             from playwright.sync_api import sync_playwright
 
             courts = list(schedule.courts.all().order_by("index"))
+            dense_mode = len(courts) >= 9
             runs = list(schedule.runs.all().order_by("index"))
             slots_qs = schedule.slots.select_related(
                 "run",
@@ -271,6 +272,37 @@ class ScheduleViewSet(viewsets.ModelViewSet):
             for s in slots_qs:
                 slots_map[(s.run_id, s.court_id)] = s
 
+            # Precompute row indices for RR meta label: "гр.X • a-b"
+            rr_row_by_team: dict[tuple[int, int, int], int] = {}
+            try:
+                from apps.tournaments.models import TournamentEntry
+
+                t_ids: set[int] = set()
+                team_ids: set[int] = set()
+                for s in slots_qs:
+                    if getattr(s, "slot_type", None) != "match":
+                        continue
+                    m = getattr(s, "match", None)
+                    if not m or not getattr(m, "tournament_id", None):
+                        continue
+                    t_ids.add(int(m.tournament_id))
+                    if getattr(m, "team_1_id", None):
+                        team_ids.add(int(m.team_1_id))
+                    if getattr(m, "team_2_id", None):
+                        team_ids.add(int(m.team_2_id))
+
+                if t_ids and team_ids:
+                    qs = TournamentEntry.objects.filter(tournament_id__in=list(t_ids), team_id__in=list(team_ids)).only(
+                        "tournament_id", "team_id", "group_index", "row_index"
+                    )
+                    for e in qs:
+                        gi = int(e.group_index) if e.group_index is not None else 0
+                        if gi <= 0 or e.row_index is None:
+                            continue
+                        rr_row_by_team[(int(e.tournament_id), gi, int(e.team_id))] = int(e.row_index)
+            except Exception:
+                rr_row_by_team = {}
+
             tournament_names = []
             for scope in schedule.scopes.select_related("tournament").all():
                 if scope.tournament and scope.tournament.name:
@@ -282,14 +314,121 @@ class ScheduleViewSet(viewsets.ModelViewSet):
 
                 return html.escape("" if v is None else str(v))
 
-            def team_label(team: Any) -> str:
+            def _raw_team_label(team: Any) -> str:
                 if not team:
-                    return "TBD"
+                    return ""
                 return (
                     getattr(team, "display_name", None)
                     or getattr(team, "name", None)
                     or str(team)
                 )
+
+            def _split_players(label: str) -> list[tuple[str, str]]:
+                import re
+
+                s = (label or "").strip()
+                if not s or s.upper() == "TBD":
+                    return []
+
+                parts = [p.strip() for p in re.split(r"\s*/\s*", s) if p.strip()]
+                out: list[tuple[str, str]] = []
+                for p in parts:
+                    tokens = [t for t in p.split() if t]
+                    if not tokens:
+                        continue
+                    surname = tokens[0]
+                    initial = ""
+                    if len(tokens) >= 2 and tokens[1]:
+                        initial = tokens[1][0].upper()
+                    out.append((surname, initial))
+                return out
+
+            def _players_unique_key(surname: str, initial: str) -> str:
+                return f"{surname}|{initial}" if initial else surname
+
+            surname_to_keys: dict[str, set[str]] = {}
+            for s in slots_qs:
+                if getattr(s, "slot_type", None) != "match":
+                    continue
+                m = getattr(s, "match", None)
+                if not m:
+                    continue
+                for team in [getattr(m, "team_1", None), getattr(m, "team_2", None)]:
+                    raw = _raw_team_label(team)
+                    for (sn, ini) in _split_players(raw):
+                        surname_to_keys.setdefault(sn, set()).add(_players_unique_key(sn, ini))
+
+            def team_label(team: Any) -> str:
+                if not team:
+                    return "TBD"
+
+                raw = _raw_team_label(team)
+                if not raw:
+                    return "TBD"
+
+                players = _split_players(raw)
+                if not players:
+                    return raw
+
+                labels: list[str] = []
+                for (sn, ini) in players:
+                    if len(surname_to_keys.get(sn, set())) > 1 and ini:
+                        labels.append(f"{sn} {ini}.")
+                    else:
+                        labels.append(sn)
+                return "\n".join(labels)
+
+            def run_top_label(run_obj: Any) -> str:
+                try:
+                    mode = getattr(run_obj, "start_mode", "")
+                    if mode == "then":
+                        return "Затем"
+                    if mode == "not_earlier":
+                        t = getattr(run_obj, "not_earlier_time", None)
+                        if t:
+                            return f"не ранее {t.strftime('%H:%M')}"
+                        return "не ранее"
+                    t = getattr(run_obj, "start_time", None)
+                    if t:
+                        return t.strftime("%H:%M")
+                except Exception:
+                    pass
+                return ""
+
+            def match_meta_label(m: Any) -> str:
+                if not m:
+                    return ""
+
+                gi = getattr(m, "group_index", None)
+                group = f"гр.{gi}" if gi is not None else ""
+
+                try:
+                    system = getattr(getattr(m, "tournament", None), "system", "")
+                except Exception:
+                    system = ""
+
+                if system == "knockout":
+                    rn = str(getattr(m, "round_name", "") or "").strip()
+                    if rn:
+                        return rn
+                    ri = getattr(m, "round_index", None)
+                    return f"Раунд {ri}".strip() if ri is not None else ""
+
+                if system == "round_robin":
+                    try:
+                        gi_int = int(gi) if gi is not None else 0
+                        t_id = int(getattr(m, "tournament_id", 0) or 0)
+                        a_id = int(getattr(m, "team_1_id", 0) or 0)
+                        b_id = int(getattr(m, "team_2_id", 0) or 0)
+                        r1 = rr_row_by_team.get((t_id, gi_int, a_id))
+                        r2 = rr_row_by_team.get((t_id, gi_int, b_id))
+                        pair = f"{r1}-{r2}" if (r1 is not None and r2 is not None) else ""
+                        return " • ".join([p for p in [group, pair] if p])
+                    except Exception:
+                        return group
+
+                # king / other systems
+                return group
 
             def slot_class(slot: Any) -> str:
                 try:
@@ -301,7 +440,7 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                     pass
                 return ""
 
-            def slot_html(slot: Any) -> str:
+            def slot_html(run_obj: Any, slot: Any) -> str:
                 if not slot:
                     return ""
                 if getattr(slot, "slot_type", None) == "text":
@@ -312,13 +451,21 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                     m = getattr(slot, "match", None)
                     if not m:
                         return f'<div class="cellText">Матч #{esc(slot.match_id)}</div>'
+                    t0 = run_top_label(run_obj)
+                    meta = match_meta_label(m)
                     t1 = team_label(getattr(m, "team_1", None))
                     t2 = team_label(getattr(m, "team_2", None))
+                    t1_lines = [ln for ln in str(t1).split("\n") if ln]
+                    t2_lines = [ln for ln in str(t2).split("\n") if ln]
+                    t1_html = "".join([f'<div class="player">{esc(ln)}</div>' for ln in t1_lines])
+                    t2_html = "".join([f'<div class="player">{esc(ln)}</div>' for ln in t2_lines])
                     return (
-                        '<div class="teams">'
-                        f'<div class="team">{esc(t1)}</div>'
+                        '<div class="matchTile">'
+                        + (f'<div class="matchTop">{esc(t0)}</div>' if t0 else '')
+                        + (f'<div class="matchMeta">{esc(meta)}</div>' if meta else '')
+                        + f'<div class="teamBlock">{t1_html}</div>'
                         '<div class="vs">против</div>'
-                        f'<div class="team">{esc(t2)}</div>'
+                        f'<div class="teamBlock">{t2_html}</div>'
                         "</div>"
                     )
                 return ""
@@ -326,11 +473,10 @@ class ScheduleViewSet(viewsets.ModelViewSet):
             court_headers = "".join(
                 [
                     "<th>"
-                    f"<div class=\"courtName\">{esc(c.name or f'Корт {c.index}')}</div>"
                     + (
-                        f"<div class=\"courtStart\">Начало {esc(c.first_start_time.strftime('%H:%M'))}</div>"
-                        if getattr(c, "first_start_time", None)
-                        else ""
+                        f"<div class=\"courtName\">{esc((c.name or '').replace('Корт ', 'Корт') or f'Корт{c.index}')}</div>"
+                        if dense_mode
+                        else f"<div class=\"courtName\">{esc(c.name or f'Корт {c.index}')}</div>"
                     )
                     + "</th>"
                     for c in courts
@@ -352,7 +498,7 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                 cells = []
                 for c in courts:
                     slot = slots_map.get((r.id, c.id))
-                    cells.append(f"<td class=\"cell{slot_class(slot)}\">{slot_html(slot)}</td>")
+                    cells.append(f"<td class=\"cell{slot_class(slot)}\">{slot_html(r, slot)}</td>")
                 body_rows.append("<tr>" + left + "".join(cells) + "</tr>")
 
             html_doc = f"""<!doctype html>
@@ -362,55 +508,61 @@ class ScheduleViewSet(viewsets.ModelViewSet):
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
   <title>{esc(title)}</title>
   <style>
-    @page {{ size: A4 landscape; margin: 12mm; }}
+    @page {{ size: A4 portrait; margin: 10mm; }}
     * {{ box-sizing: border-box; }}
     body {{
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, 'Noto Sans', 'DejaVu Sans', sans-serif;
       color: #111827;
     }}
-    .pageHeader {{ display:flex; align-items:flex-start; justify-content:space-between; margin-bottom: 10px; }}
-    .pageHeader .h1 {{ font-size: 18px; font-weight: 700; line-height: 1.2; }}
-    .pageHeader .h2 {{ font-size: 12px; color: #374151; margin-top: 4px; }}
-    .pageHeader .date {{ font-size: 12px; color: #111827; }}
 
-    table {{ width: 100%; border-collapse: collapse; table-layout: fixed; }}
+    body.dense {{ font-size: 11px; }}
+    body.dense thead th {{ padding: 4px 4px; }}
+    body.dense tbody td {{ padding: 4px; }}
+    .pageHeader {{ display:flex; align-items:flex-start; justify-content:space-between; margin-bottom: 6px; }}
+    .pageHeader .h1 {{ font-size: 16px; font-weight: 700; line-height: 1.15; }}
+    .pageHeader .h2 {{ font-size: 11px; color: #374151; margin-top: 2px; }}
+    .pageHeader .date {{ font-size: 11px; color: #111827; }}
+
+    table {{ width: 100%; border-collapse: collapse; table-layout: {'auto' if dense_mode else 'fixed'}; }}
     thead th {{
       background: #F3F4F6;
       border-bottom: 1px solid #D1D5DB;
-      padding: 10px 10px;
+      padding: 6px 6px;
       text-align: left;
       vertical-align: bottom;
     }}
-    thead th:first-child {{ width: 160px; }}
+    thead th:first-child {{ width: {'72px' if dense_mode else '88px'}; }}
     tbody td {{
       border-bottom: 1px solid #E5E7EB;
       border-right: 1px solid #E5E7EB;
-      padding: 10px;
+      padding: 6px;
       vertical-align: middle;
     }}
     tbody td:last-child {{ border-right: 0; }}
     tbody tr td:first-child {{ border-right: 1px solid #D1D5DB; }}
 
     .courtName {{ font-weight: 700; }}
-    .courtStart {{ font-size: 12px; color: #6B7280; margin-top: 2px; }}
     .runCol .runTitle {{ font-weight: 700; }}
-    .runCol .runPlan {{ font-size: 12px; color: #6B7280; margin-top: 2px; }}
+    .runCol .runPlan {{ font-size: 10px; color: #6B7280; margin-top: 1px; }}
 
     .cell {{ text-align: center; }}
-    .teams {{ display:flex; flex-direction:column; align-items:center; justify-content:center; min-height: 78px; }}
-    .team {{ font-size: 18px; line-height: 1.15; }}
-    .vs {{ font-weight: 700; font-size: 14px; margin: 6px 0; }}
-    .cellText {{ font-size: 14px; line-height: 1.2; }}
+    .matchTile {{ display:flex; flex-direction:column; align-items:center; justify-content:flex-start; }}
+    .matchTop {{ font-size: 10px; color: #6B7280; margin-bottom: 2px; }}
+    .matchMeta {{ font-size: 10px; color: #374151; margin-bottom: 2px; width: 100%; text-align: right; }}
+    .teamBlock {{ display:flex; flex-direction:column; align-items:center; justify-content:flex-start; }}
+    .player {{ font-size: {'11px' if dense_mode else '12px'}; line-height: 1.12; }}
+    .vs {{ font-weight: 700; font-size: {'10px' if dense_mode else '11px'}; margin: 2px 0; }}
+    .cellText {{ font-size: {'11px' if dense_mode else '12px'}; line-height: 1.15; }}
 
     .cellLive {{ background: #D1FAE5; }}
     .cellCompleted {{ background: #E5E7EB; }}
   </style>
 </head>
-<body>
-  <div class=\"pageHeader\">
+<body class="{'dense' if dense_mode else ''}">
+  <div class="pageHeader">
     <div>
-      <div class=\"h1\">Расписание</div>
-      <div class=\"h2\">{esc(title)}</div>
+      <div class="h1">Расписание</div>
+      <div class="h2">{esc(title)}</div>
     </div>
     <div class=\"date\">{esc(schedule.date)}</div>
   </div>
@@ -431,10 +583,10 @@ class ScheduleViewSet(viewsets.ModelViewSet):
 
             with sync_playwright() as p:
                 browser = p.chromium.launch()
-                page = browser.new_page(viewport={"width": 1400, "height": 900})
+                page = browser.new_page(viewport={"width": 900, "height": 1400})
                 page.set_content(html_doc, wait_until="load")
                 page.emulate_media(media="screen")
-                pdf_bytes = page.pdf(format="A4", landscape=True, print_background=True)
+                pdf_bytes = page.pdf(format="A4", landscape=False, print_background=True)
                 browser.close()
 
             from django.http import HttpResponse
