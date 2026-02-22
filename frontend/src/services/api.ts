@@ -811,6 +811,14 @@ export const scheduleApi = {
     const { data } = await api.get(`/schedules/${scheduleId}/matches_pool/`);
     return data;
   },
+  addRun: async (scheduleId: number): Promise<{ ok: boolean; schedule: ScheduleDTO }> => {
+    const { data } = await api.post(`/schedules/${scheduleId}/runs/add/`);
+    return data;
+  },
+  deleteRun: async (scheduleId: number, runId: number): Promise<{ ok: boolean; schedule: ScheduleDTO; error?: string; detail?: string }> => {
+    const { data } = await api.post(`/schedules/${scheduleId}/runs/delete/`, { run_id: runId });
+    return data;
+  },
   liveState: async (
     scheduleId: number,
   ): Promise<{

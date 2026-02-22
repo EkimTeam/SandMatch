@@ -189,6 +189,81 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         schedule.refresh_from_db()
         return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
 
+    @action(detail=True, methods=["post"], url_path="runs/add", permission_classes=[IsAuthenticated])
+    def add_run(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        from .models import ScheduleRun
+
+        with transaction.atomic():
+            last = ScheduleRun.objects.filter(schedule=schedule).order_by("-index").first()
+            next_index = int(getattr(last, "index", 0) or 0) + 1
+            ScheduleRun.objects.create(
+                schedule=schedule,
+                index=next_index,
+                start_mode=ScheduleRun.StartMode.THEN,
+                start_time=None,
+                not_earlier_time=None,
+            )
+            schedule.save(update_fields=["updated_at"])
+
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
+
+    @action(detail=True, methods=["post"], url_path="runs/delete", permission_classes=[IsAuthenticated])
+    def delete_run(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        run_id = (request.data or {}).get("run_id")
+        try:
+            run_id = int(run_id)
+        except Exception:
+            return Response({"ok": False, "error": "bad_params", "detail": "run_id обязателен"}, status=status.HTTP_400_BAD_REQUEST)
+
+        from .models import ScheduleRun, ScheduleSlot
+
+        run = ScheduleRun.objects.filter(schedule=schedule, id=run_id).first()
+        if not run:
+            return Response({"ok": False, "error": "not_found", "detail": "Запуск не найден"}, status=status.HTTP_404_NOT_FOUND)
+
+        last = ScheduleRun.objects.filter(schedule=schedule).order_by("-index").first()
+        if last and int(last.index) != int(run.index):
+            return Response(
+                {"ok": False, "error": "not_last", "detail": "Можно удалить только последний запуск"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Run is considered non-empty if ANY slot in this run has a match or any text/override content.
+        run_slots = ScheduleSlot.objects.filter(schedule=schedule, run=run)
+        has_content = run_slots.exclude(match_id__isnull=True).exists() or run_slots.exclude(
+            text_title__isnull=True,
+            text_subtitle__isnull=True,
+            override_title__isnull=True,
+            override_subtitle__isnull=True,
+        ).exclude(
+            text_title="",
+            text_subtitle="",
+            override_title="",
+            override_subtitle="",
+        ).exists()
+
+        if has_content:
+            return Response(
+                {"ok": False, "error": "not_empty", "detail": "Нельзя удалить запуск: в нём есть данные"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            # delete slots first (CASCADE from run would also work, but be explicit)
+            run_slots.delete()
+            run.delete()
+            schedule.save(update_fields=["updated_at"])
+
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
+
     @action(detail=True, methods=["get"], url_path="matches_pool", permission_classes=[AllowAny])
     def matches_pool(self, request, pk=None):
         schedule: Schedule = self.get_object()
