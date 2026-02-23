@@ -24,6 +24,16 @@ export const SchedulePage: React.FC = () => {
     }
   }, [location.search]);
 
+  const isDraftPreviewMode = useMemo(() => {
+    if (!isDraftMode) return false;
+    try {
+      const sp = new URLSearchParams(location.search);
+      return sp.get('preview') === '1';
+    } catch {
+      return false;
+    }
+  }, [isDraftMode, location.search]);
+
   const canEdit = canManage;
 
   const [loading, setLoading] = useState(true);
@@ -37,6 +47,8 @@ export const SchedulePage: React.FC = () => {
   const [startTime, setStartTime] = useState<string>('10:00');
   const [tournamentSystem, setTournamentSystem] = useState<string | null>(null);
   const [rrTeamRowById, setRrTeamRowById] = useState<Map<number, number>>(new Map());
+  const [rrTeamByGroupRow, setRrTeamByGroupRow] = useState<Map<string, any>>(new Map());
+  const [rrPairByMatchId, setRrPairByMatchId] = useState<Map<number, [number, number]>>(new Map());
   const [kingLetterByGroupPlayerId, setKingLetterByGroupPlayerId] = useState<Map<string, string>>(new Map());
   const [surnameCounts, setSurnameCounts] = useState<Map<string, number>>(new Map());
 
@@ -400,6 +412,31 @@ export const SchedulePage: React.FC = () => {
 
   const renderMatchTiny = (m: any) => {
     if (isDraftMode) {
+      if (isDraftPreviewMode && tournamentSystem === 'round_robin') {
+        const gi = m?.group_index;
+        const group = gi != null && gi !== '' ? Number(gi) : NaN;
+        const pair = m?.id != null ? rrPairByMatchId.get(Number(m.id)) : undefined;
+        const aPos = pair ? Number(pair[0]) : NaN;
+        const bPos = pair ? Number(pair[1]) : NaN;
+
+        const ta = Number.isFinite(group) && Number.isFinite(aPos) ? rrTeamByGroupRow.get(`rr:${group}:${aPos}`) : null;
+        const tb = Number.isFinite(group) && Number.isFinite(bPos) ? rrTeamByGroupRow.get(`rr:${group}:${bPos}`) : null;
+
+        const s1 = teamSurnames(ta);
+        const s2 = teamSurnames(tb);
+        const a = s1.length ? s1.join(' / ') : 'TBD';
+        const b = s2.length ? s2.join(' / ') : 'TBD';
+
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 1, lineHeight: 1.05 }}>
+            <div style={{ fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {Number.isFinite(group) && pair ? `гр.${group} • ${aPos}-${bPos}` : matchMetaLabel(m) || (m?.id ? `Матч #${m.id}` : 'Матч')}
+            </div>
+            <div style={{ fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a}</div>
+            <div style={{ fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b}</div>
+          </div>
+        );
+      }
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 1, lineHeight: 1.05 }}>
           <div style={{ fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -1019,7 +1056,25 @@ export const SchedulePage: React.FC = () => {
   const teamSurnames = (team: any): string[] => {
     if (!team) return ['TBD'];
     const raw = String(team.full_name || team.display_name || team.name || '').trim();
-    if (!raw) return ['TBD'];
+    if (!raw) {
+      const surnames: string[] = [];
+
+      const maybePushLast = (pl: any) => {
+        const last = String(pl?.last_name || '').trim();
+        if (last) surnames.push(last);
+      };
+
+      if (Array.isArray(team.players) && team.players.length) {
+        team.players.forEach((pl: any) => maybePushLast(pl));
+      } else {
+        const p1 = typeof team.player_1 === 'object' ? team.player_1 : null;
+        const p2 = typeof team.player_2 === 'object' ? team.player_2 : null;
+        maybePushLast(p1);
+        maybePushLast(p2);
+      }
+
+      return surnames.length ? surnames.slice(0, 2) : ['TBD'];
+    }
 
     // pairs often come like: "Surname1 Name1 / Surname2 Name2" or similar
     const parts = raw
@@ -1039,7 +1094,46 @@ export const SchedulePage: React.FC = () => {
 
   const renderMatchCompact = (m: any, variant: 'backlog' | 'schedule') => {
     if (isDraftMode) {
-      const meta = matchMetaLabel(m) || (m?.id ? `Матч #${m.id}` : 'Матч');
+      const gi = m?.group_index;
+      const group = gi != null && gi !== '' ? Number(gi) : NaN;
+      const pair = isDraftPreviewMode && tournamentSystem === 'round_robin' && m?.id != null ? rrPairByMatchId.get(Number(m.id)) : undefined;
+      const aPos = pair ? Number(pair[0]) : NaN;
+      const bPos = pair ? Number(pair[1]) : NaN;
+      const meta = Number.isFinite(group) && pair ? `гр.${group} • ${aPos}-${bPos}` : matchMetaLabel(m) || (m?.id ? `Матч #${m.id}` : 'Матч');
+
+      if (isDraftPreviewMode && tournamentSystem === 'round_robin') {
+        const ta = Number.isFinite(group) && Number.isFinite(aPos) ? rrTeamByGroupRow.get(`rr:${group}:${aPos}`) : null;
+        const tb = Number.isFinite(group) && Number.isFinite(bPos) ? rrTeamByGroupRow.get(`rr:${group}:${bPos}`) : null;
+
+        const s1 = teamSurnames(ta);
+        const s2 = teamSurnames(tb);
+        const a = s1.length ? s1.join(' / ') : 'TBD';
+        const b = s2.length ? s2.join(' / ') : 'TBD';
+
+        if (variant === 'backlog') {
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, lineHeight: 1.15, width: '100%' }}>
+              <div style={{ fontSize: 11, fontWeight: 700 }}>{meta}</div>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>{a}</div>
+              <div style={{ fontSize: 12, fontWeight: 800, textAlign: 'left', opacity: 0.8 }}>против</div>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>{b}</div>
+            </div>
+          );
+        }
+
+        // schedule grid
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, lineHeight: 1.15, width: '100%', alignItems: 'center' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.75, textAlign: 'right', width: '100%', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {meta}
+            </div>
+            <div style={{ fontSize: 16, fontWeight: 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'center', width: '100%' }}>{a}</div>
+            <div style={{ fontSize: 12, fontWeight: 800, textAlign: 'center' }}>против</div>
+            <div style={{ fontSize: 16, fontWeight: 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'center', width: '100%' }}>{b}</div>
+          </div>
+        );
+      }
+
       if (variant === 'backlog') {
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2, lineHeight: 1.1 }}>
@@ -1399,6 +1493,7 @@ export const SchedulePage: React.FC = () => {
 
       // For RR label like "1-2" we need row_index of teams (same logic as in TournamentDetailPage)
       const nextMap = new Map<number, number>();
+      const nextByGroupRow = new Map<string, any>();
       const nextKing = new Map<string, string>();
       const nextSurnameCounts = new Map<string, number>();
       const parts: any[] = (t as any)?.participants || [];
@@ -1409,9 +1504,15 @@ export const SchedulePage: React.FC = () => {
           nextMap.set(Number(teamId), Number(rowIndex));
         }
 
-        const gi = p?.group_index;
-        const g = gi != null && gi !== '' ? Number(gi) : NaN;
-        const r = rowIndex != null ? Number(rowIndex) : NaN;
+        const giRaw = p?.group_index;
+        const gi = giRaw != null && giRaw !== '' ? Number(giRaw) : NaN;
+        const ri = rowIndex != null && rowIndex !== '' ? Number(rowIndex) : NaN;
+        if (Number.isFinite(gi) && Number.isFinite(ri) && p?.team) {
+          nextByGroupRow.set(`rr:${gi}:${ri}`, p.team);
+        }
+
+        const g = gi;
+        const r = ri;
         if (Number.isFinite(g) && Number.isFinite(r)) {
           const letter = String.fromCharCode(64 + r); // 1->A
           const team: any = p?.team || {};
@@ -1442,6 +1543,7 @@ export const SchedulePage: React.FC = () => {
         }
       }
       setRrTeamRowById(nextMap);
+      setRrTeamByGroupRow(nextByGroupRow);
       setKingLetterByGroupPlayerId(nextKing);
       setSurnameCounts(nextSurnameCounts);
 
@@ -1480,6 +1582,70 @@ export const SchedulePage: React.FC = () => {
   }, [tournamentId, isDraftMode]);
 
   useEffect(() => {
+    let canceled = false;
+
+    const run = async () => {
+      if (!isDraftPreviewMode || tournamentSystem !== 'round_robin' || !Number.isFinite(tournamentId)) {
+        setRrPairByMatchId(new Map());
+        return;
+      }
+
+      try {
+        const gs: any = await tournamentApi.getGroupSchedule(tournamentId);
+        if (canceled) return;
+        const groups = gs?.groups || {};
+        const matchMap = new Map<number, [number, number]>();
+
+        const poolLocal: any[] = Array.isArray(pool) ? pool : [];
+        const byGroupRound = new Map<string, any[]>();
+        for (const mm of poolLocal) {
+          const g = mm?.group_index;
+          const r = mm?.round_index;
+          const giN = g != null && g !== '' ? Number(g) : NaN;
+          const riN = r != null && r !== '' ? Number(r) : NaN;
+          if (!Number.isFinite(giN) || !Number.isFinite(riN)) continue;
+          if (!mm?.id) continue;
+          const k = `${giN}:${riN}`;
+          const arr = byGroupRound.get(k) || [];
+          arr.push(mm);
+          byGroupRound.set(k, arr);
+        }
+
+        for (const [gKey, rounds] of Object.entries<any>(groups)) {
+          const giN = Number(gKey);
+          if (!Number.isFinite(giN)) continue;
+          const roundsArr: any[] = Array.isArray(rounds) ? rounds : [];
+          for (let ri = 0; ri < roundsArr.length; ri++) {
+            const pairs: any[] = Array.isArray(roundsArr[ri]) ? roundsArr[ri] : [];
+            const k = `${giN}:${ri + 1}`;
+            const matchesInRound = (byGroupRound.get(k) || [])
+              .slice()
+              .sort((a, b) => (Number(a?.order_in_round || 0) - Number(b?.order_in_round || 0)));
+            for (let pi = 0; pi < pairs.length; pi++) {
+              const mm = matchesInRound[pi];
+              const p = pairs[pi];
+              if (!mm?.id || !Array.isArray(p) || p.length < 2) continue;
+              const aPos = Number(p[0]);
+              const bPos = Number(p[1]);
+              if (!Number.isFinite(aPos) || !Number.isFinite(bPos)) continue;
+              matchMap.set(Number(mm.id), [aPos, bPos]);
+            }
+          }
+        }
+
+        if (!canceled) setRrPairByMatchId(matchMap);
+      } catch {
+        if (!canceled) setRrPairByMatchId(new Map());
+      }
+    };
+
+    run();
+    return () => {
+      canceled = true;
+    };
+  }, [isDraftPreviewMode, tournamentSystem, tournamentId, pool]);
+
+  useEffect(() => {
     setCourtsCountText(String(courtsCount || 1));
   }, [courtsCount]);
 
@@ -1508,7 +1674,15 @@ export const SchedulePage: React.FC = () => {
       }
       setSchedule(res.schedule);
       await refreshSideData(res.schedule.id);
-      await autoAssignAndSave(res.schedule);
+      if (isDraftMode) {
+        const cleared: ScheduleDTO = {
+          ...res.schedule,
+          slots: (res.schedule.slots || []).map((s: any) => ({ ...s, match: null, slot_type: 'match' })),
+        };
+        await autoAssignAndSave(cleared);
+      } else {
+        await autoAssignAndSave(res.schedule);
+      }
     } finally {
       setSaving(false);
     }
