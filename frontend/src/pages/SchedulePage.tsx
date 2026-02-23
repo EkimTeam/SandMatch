@@ -35,6 +35,8 @@ export const SchedulePage: React.FC = () => {
   const [startTime, setStartTime] = useState<string>('10:00');
   const [tournamentSystem, setTournamentSystem] = useState<string | null>(null);
   const [rrTeamRowById, setRrTeamRowById] = useState<Map<number, number>>(new Map());
+  const [kingLetterByGroupPlayerId, setKingLetterByGroupPlayerId] = useState<Map<string, string>>(new Map());
+  const [surnameCounts, setSurnameCounts] = useState<Map<string, number>>(new Map());
 
   const [planned, setPlanned] = useState<SchedulePlannedTimesResponse | null>(null);
   const [conflicts, setConflicts] = useState<ScheduleConflictsResponse | null>(null);
@@ -108,6 +110,24 @@ export const SchedulePage: React.FC = () => {
       return [`rr:${group}:${a}`, `rr:${group}:${b}`];
     };
 
+    const parseKingLetterKeys = (m: any): string[] => {
+      const gi = m?.group_index;
+      const group = gi != null && gi !== '' ? Number(gi) : NaN;
+      if (!Number.isFinite(group)) return [];
+
+      // Prefer team display names like "A+B".
+      const aRaw = String(m?.team_1?.display_name || m?.team_1?.full_name || '').trim();
+      const bRaw = String(m?.team_2?.display_name || m?.team_2?.full_name || '').trim();
+      const combined = [aRaw, bRaw].filter(Boolean).join(' vs ');
+      const text = combined || String(m?.round_name || '').trim();
+
+      // Extract letters A..Z from "A+B vs C+D".
+      const mLetters = text.match(/([A-Z])\s*\+\s*([A-Z]).*?([A-Z])\s*\+\s*([A-Z])/i);
+      if (!mLetters) return [];
+      const letters = [mLetters[1], mLetters[2], mLetters[3], mLetters[4]].map(x => String(x).toUpperCase());
+      return letters.map(l => `k:${group}:${l}`);
+    };
+
     for (const s of schedule.slots || []) {
       if (!s?.match || !s?.id) continue;
       const m = matchById.get(Number(s.match));
@@ -128,6 +148,10 @@ export const SchedulePage: React.FC = () => {
 
       if (!keys.length && tournamentSystem === 'round_robin' && isDraftMode) {
         keys.push(...parseRrVirtualKeys(m));
+      }
+
+      if (!keys.length && tournamentSystem === 'king' && isDraftMode) {
+        keys.push(...parseKingLetterKeys(m));
       }
 
       if (!keys.length && tournamentSystem !== 'knockout') continue;
@@ -250,9 +274,63 @@ export const SchedulePage: React.FC = () => {
     const m = matchById.get(matchId);
     if (!m) return `Матч #${matchId}`;
     if (isDraftMode) return matchMetaLabel(m) || `Матч #${matchId}`;
+    if (tournamentSystem === 'king') return matchMetaLabel(m) || `Матч #${matchId}`;
     const a = m?.team_1?.full_name || m?.team_1?.display_name || 'TBD';
     const b = m?.team_2?.full_name || m?.team_2?.display_name || 'TBD';
     return `${matchMetaLabel(m) || `#${matchId}`} — ${a} / ${b}`;
+  };
+
+  const kingTeamLetters = (team: any, groupIndex: any): string => {
+    if (!team) return '';
+    const gi = groupIndex != null && groupIndex !== '' ? Number(groupIndex) : NaN;
+
+    const playerIds: number[] = [];
+    if (Array.isArray(team.players)) {
+      for (const p of team.players) {
+        if (p?.id != null) playerIds.push(Number(p.id));
+      }
+    } else {
+      const p1 = typeof team.player_1 === 'object' ? team.player_1?.id : team.player_1;
+      const p2 = typeof team.player_2 === 'object' ? team.player_2?.id : team.player_2;
+      if (p1 != null) playerIds.push(Number(p1));
+      if (p2 != null) playerIds.push(Number(p2));
+    }
+
+    if (!Number.isFinite(gi) || !playerIds.length) return '';
+    const letters = playerIds
+      .map(pid => kingLetterByGroupPlayerId.get(`${gi}:${pid}`))
+      .filter(Boolean) as string[];
+    if (!letters.length) return '';
+
+    // Ensure stable order A+B
+    const uniq = Array.from(new Set(letters)).sort((a, b) => a.localeCompare(b));
+    return uniq.join('+');
+  };
+
+  const kingPlayerLabel = (player: any): string => {
+    if (!player) return 'TBD';
+    const last = String(player.last_name || '').trim();
+    const first = String(player.first_name || '').trim();
+    const base = last || String(player.display_name || '').trim();
+    if (!base) return 'TBD';
+    const cnt = surnameCounts.get(base) || 0;
+    if (cnt > 1 && first) return `${base} ${first.slice(0, 1)}`;
+    return base;
+  };
+
+  const kingTeamPlayerLabels = (team: any): string[] => {
+    if (!team) return ['TBD'];
+    const players: any[] = [];
+    if (Array.isArray(team.players) && team.players.length) {
+      players.push(...team.players);
+    } else {
+      const p1 = team.player_1;
+      const p2 = team.player_2;
+      if (p1) players.push(p1);
+      if (p2) players.push(p2);
+    }
+    const labels = players.map(kingPlayerLabel).filter(Boolean);
+    return labels.length ? labels.slice(0, 2) : ['TBD'];
   };
 
   const matchMetaLabel = (m: any): string => {
@@ -276,11 +354,32 @@ export const SchedulePage: React.FC = () => {
     }
     if (tournamentSystem === 'king') {
       if (isDraftMode) {
-        const mid = m?.id != null ? `Матч ${m.id}` : '';
-        return [group, mid].filter(Boolean).join(' • ');
+        const aLetters = kingTeamLetters(m?.team_1, m?.group_index);
+        const bLetters = kingTeamLetters(m?.team_2, m?.group_index);
+        if (aLetters && bLetters) {
+          return [group, `${aLetters} vs ${bLetters}`].filter(Boolean).join(' • ');
+        }
+
+        const normalizePair = (s: string): string => {
+          return String(s || '')
+            .replace(/\s+/g, '')
+            .replace(/\//g, '+')
+            .toUpperCase();
+        };
+
+        const aRaw = m?.team_1?.display_name || m?.team_1?.full_name || '';
+        const bRaw = m?.team_2?.display_name || m?.team_2?.full_name || '';
+        const a = normalizePair(aRaw);
+        const b = normalizePair(bRaw);
+        const vs = a && b ? `${a} vs ${b}` : '';
+
+        // Fallback: sometimes backend may encode meta into round_name.
+        const rn = String(m?.round_name || '').trim();
+        const meta = vs || rn || (m?.id != null ? `Матч ${m.id}` : '');
+        return [group, meta].filter(Boolean).join(' • ');
       }
-      const a = String(m?.team_1?.display_name || '').replace(/\s*\/\s*/g, '+');
-      const b = String(m?.team_2?.display_name || '').replace(/\s*\/\s*/g, '+');
+      const a = kingTeamLetters(m?.team_1, m?.group_index);
+      const b = kingTeamLetters(m?.team_2, m?.group_index);
       const vs = a && b ? `${a} vs ${b}` : '';
       return [group, vs].filter(Boolean).join(' • ');
     }
@@ -300,8 +399,8 @@ export const SchedulePage: React.FC = () => {
         </div>
       );
     }
-    const s1 = teamSurnames(m?.team_1);
-    const s2 = teamSurnames(m?.team_2);
+    const s1 = tournamentSystem === 'king' ? kingTeamPlayerLabels(m?.team_1) : teamSurnames(m?.team_1);
+    const s2 = tournamentSystem === 'king' ? kingTeamPlayerLabels(m?.team_2) : teamSurnames(m?.team_2);
     const a = s1.length ? s1.join(' / ') : 'TBD';
     const b = s2.length ? s2.join(' / ') : 'TBD';
     return (
@@ -848,8 +947,8 @@ export const SchedulePage: React.FC = () => {
         </div>
       );
     }
-    const s1 = teamSurnames(m?.team_1);
-    const s2 = teamSurnames(m?.team_2);
+    const s1 = tournamentSystem === 'king' ? kingTeamPlayerLabels(m?.team_1) : teamSurnames(m?.team_1);
+    const s2 = tournamentSystem === 'king' ? kingTeamPlayerLabels(m?.team_2) : teamSurnames(m?.team_2);
     const isDoubles = s1.length > 1 || s2.length > 1;
 
     const surnameStyle: React.CSSProperties = {
@@ -1194,6 +1293,8 @@ export const SchedulePage: React.FC = () => {
 
       // For RR label like "1-2" we need row_index of teams (same logic as in TournamentDetailPage)
       const nextMap = new Map<number, number>();
+      const nextKing = new Map<string, string>();
+      const nextSurnameCounts = new Map<string, number>();
       const parts: any[] = (t as any)?.participants || [];
       for (const p of parts) {
         const teamId = p?.team?.id;
@@ -1201,8 +1302,42 @@ export const SchedulePage: React.FC = () => {
         if (teamId && rowIndex) {
           nextMap.set(Number(teamId), Number(rowIndex));
         }
+
+        const gi = p?.group_index;
+        const g = gi != null && gi !== '' ? Number(gi) : NaN;
+        const r = rowIndex != null ? Number(rowIndex) : NaN;
+        if (Number.isFinite(g) && Number.isFinite(r)) {
+          const letter = String.fromCharCode(64 + r); // 1->A
+          const team: any = p?.team || {};
+          const playerIds: number[] = [];
+          if (Array.isArray(team.players)) {
+            team.players.forEach((pl: any) => {
+              if (pl?.id != null) playerIds.push(Number(pl.id));
+              const last = String(pl?.last_name || '').trim();
+              if (last) nextSurnameCounts.set(last, (nextSurnameCounts.get(last) || 0) + 1);
+            });
+          } else {
+            const p1 = typeof team.player_1 === 'object' ? team.player_1?.id : team.player_1;
+            const p2 = typeof team.player_2 === 'object' ? team.player_2?.id : team.player_2;
+            if (p1 != null) playerIds.push(Number(p1));
+            if (p2 != null) playerIds.push(Number(p2));
+
+            const o1 = typeof team.player_1 === 'object' ? team.player_1 : null;
+            const o2 = typeof team.player_2 === 'object' ? team.player_2 : null;
+            const last1 = String(o1?.last_name || '').trim();
+            const last2 = String(o2?.last_name || '').trim();
+            if (last1) nextSurnameCounts.set(last1, (nextSurnameCounts.get(last1) || 0) + 1);
+            if (last2) nextSurnameCounts.set(last2, (nextSurnameCounts.get(last2) || 0) + 1);
+          }
+          for (const pid of playerIds) {
+            if (!Number.isFinite(pid)) continue;
+            nextKing.set(`${g}:${pid}`, letter);
+          }
+        }
       }
       setRrTeamRowById(nextMap);
+      setKingLetterByGroupPlayerId(nextKing);
+      setSurnameCounts(nextSurnameCounts);
 
       if (t?.start_time) setStartTime(formatHm(t.start_time as any));
       if (t?.date && typeof t.date === 'string') {
@@ -1651,8 +1786,12 @@ export const SchedulePage: React.FC = () => {
                   >
                     {matchMetaLabel(m) || `#${m.id}`}
                   </span>
-                  {isDraftMode
-                    ? ''
+                  {isDraftMode ? '' : tournamentSystem === 'king'
+                    ? (() => {
+                        const a = kingTeamPlayerLabels(m?.team_1);
+                        const b = kingTeamPlayerLabels(m?.team_2);
+                        return `${a.join(' / ')} / ${b.join(' / ')}`;
+                      })()
                     : `${m?.team_1?.full_name || m?.team_1?.display_name || 'TBD'} / ${m?.team_2?.full_name || m?.team_2?.display_name || 'TBD'}`}
                 </div>
               ))}
