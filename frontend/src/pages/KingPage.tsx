@@ -1930,6 +1930,11 @@ export const KingPage: React.FC = () => {
               Расписание
             </button>
           )}
+          {canManageTournament && t.status === 'created' && (
+            <button className="btn" onClick={() => nav(`/tournaments/${t.id}/schedule?draft=1`)} disabled={saving}>
+              Черновик расписания
+            </button>
+          )}
           {canManageTournament && t.status === 'active' && (
             <button className="btn" onClick={completeTournament} disabled={saving}>Завершить турнир</button>
           )}

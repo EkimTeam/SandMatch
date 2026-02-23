@@ -15,10 +15,11 @@ from apps.accounts.permissions import (
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db.models import Q
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
+from django.utils.decorators import method_decorator
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
-from django.utils.decorators import method_decorator
 from django.db import transaction
 import logging
 from typing import Optional
@@ -344,6 +345,216 @@ class TournamentViewSet(viewsets.ModelViewSet):
             return Response({"ok": True, "schedule": None})
 
         return Response({"ok": True, "schedule": ScheduleSerializer(selected).data})
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["get"], url_path="schedule/draft", permission_classes=[AllowAny])
+    def schedule_draft(self, request, pk=None):
+        """Получить черновик расписания для турнира.
+
+        Черновик существует только один и маркируется Schedule.is_draft=True.
+        """
+
+        tournament: Tournament = self.get_object()
+        self._ensure_can_view_tournament(request, tournament)
+
+        qs = Schedule.objects.filter(scopes__tournament=tournament, is_draft=True).distinct().order_by("-created_at")
+        selected = qs.first()
+        if not selected:
+            return Response({"ok": True, "schedule": None})
+        return Response({"ok": True, "schedule": ScheduleSerializer(selected).data})
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="schedule/draft/generate", permission_classes=[IsAuthenticated])
+    def schedule_draft_generate(self, request, pk=None):
+        """Создать/пересоздать черновик расписания (только для created).
+
+        Черновик генерируется на основе реальных матчей турнира.
+
+        Если матчи ещё не созданы (частый кейс для status=created),
+        то для круговой системы создаём "пустые" матчи (без team_1/team_2),
+        но с корректными group_index/round_index/order_in_round согласно planned_participants и groups_count.
+        """
+
+        tournament: Tournament = self.get_object()
+        if tournament.status != Tournament.Status.CREATED:
+            return Response(
+                {"ok": False, "error": "only_created", "detail": "Черновик можно создавать только для created"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        payload = request.data or {}
+        date_value = payload.get("date") or tournament.date
+        courts_count = payload.get("courts_count")
+        runs_count = payload.get("runs_count")
+        match_duration_minutes = payload.get("match_duration_minutes") or 40
+        start_time_value = payload.get("start_time") or getattr(tournament, "start_time", None) or "10:00"
+
+        try:
+            courts_count = int(courts_count)
+            match_duration_minutes = int(match_duration_minutes)
+        except Exception:
+            return Response(
+                {"ok": False, "error": "bad_params", "detail": "courts_count/match_duration_minutes должны быть числами"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if runs_count is not None:
+            try:
+                runs_count = int(runs_count)
+            except Exception:
+                return Response(
+                    {"ok": False, "error": "bad_params", "detail": "runs_count должен быть числом"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        if not date_value:
+            return Response({"ok": False, "error": "no_date", "detail": "Не указана дата"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if courts_count <= 0:
+            return Response({"ok": False, "error": "bad_counts", "detail": "courts_count должен быть > 0"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if runs_count is not None and runs_count <= 0:
+            return Response({"ok": False, "error": "bad_counts", "detail": "runs_count должен быть > 0"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # --- Ensure we have matches to schedule (for created tournaments they may not exist yet) ---
+        pool_qs = Match.objects.filter(tournament=tournament).exclude(stage=Match.Stage.PLACEMENT)
+
+        if not pool_qs.exists() and tournament.system == Tournament.System.ROUND_ROBIN:
+            # Create empty RR matches based on planned settings.
+            planned_n = getattr(tournament, "planned_participants", None) or 0
+            groups_count = getattr(tournament, "groups_count", None) or 1
+            try:
+                planned_n = int(planned_n or 0)
+            except Exception:
+                planned_n = 0
+            try:
+                groups_count = max(1, int(groups_count or 1))
+            except Exception:
+                groups_count = 1
+
+            # Split planned participants across groups (first groups get +1 remainder)
+            base = planned_n // groups_count if groups_count else planned_n
+            rem = planned_n % groups_count if groups_count else 0
+
+            to_create: list[Match] = []
+            for gi in range(1, groups_count + 1):
+                size = base + (1 if (gi - 1) < rem else 0)
+                if size < 2:
+                    continue
+
+                # We reuse the RR algorithm, but with virtual positions 1..size
+                from apps.tournaments.services.round_robin import _berger_pairings
+
+                rounds = _berger_pairings(list(range(1, size + 1)))
+                for tour_idx, pairs in enumerate(rounds, start=1):
+                    base_order = (tour_idx - 1) * 100
+                    for pair_idx, _pair in enumerate(pairs, start=1):
+                        try:
+                            a_pos, b_pos = _pair
+                            pair_label = f"{int(a_pos)}-{int(b_pos)}"
+                        except Exception:
+                            pair_label = ""
+                        to_create.append(
+                            Match(
+                                tournament=tournament,
+                                stage=Match.Stage.GROUP,
+                                group_index=gi,
+                                round_index=tour_idx,
+                                round_name=f"гр.{gi} • {pair_label}".strip(" •"),
+                                order_in_round=base_order + pair_idx,
+                                status=Match.Status.SCHEDULED,
+                            )
+                        )
+
+            if to_create:
+                Match.objects.bulk_create(to_create)
+
+            pool_qs = Match.objects.filter(tournament=tournament).exclude(stage=Match.Stage.PLACEMENT)
+
+        pool_count = pool_qs.count()
+
+        if runs_count is None:
+            import math
+
+            runs_count = max(1, int(math.ceil(pool_count / courts_count))) if pool_count > 0 else 2
+
+        from datetime import time
+        from apps.schedules.models import ScheduleCourt, ScheduleRun, ScheduleScope, ScheduleSlot
+
+        try:
+            if isinstance(start_time_value, str):
+                hh, mm = start_time_value.split(":")
+                start_time_obj = time(int(hh), int(mm))
+            else:
+                start_time_obj = start_time_value
+        except Exception:
+            start_time_obj = time(10, 0)
+
+        with transaction.atomic():
+            # delete existing draft (only one allowed)
+            Schedule.objects.filter(scopes__tournament=tournament, is_draft=True).delete()
+
+            schedule = Schedule.objects.create(
+                date=date_value,
+                match_duration_minutes=match_duration_minutes,
+                created_by=request.user,
+                is_draft=True,
+            )
+            ScheduleScope.objects.create(schedule=schedule, tournament=tournament)
+
+            for ci in range(1, courts_count + 1):
+                ScheduleCourt.objects.create(
+                    schedule=schedule,
+                    index=ci,
+                    name=f"Корт {ci}",
+                    first_start_time=start_time_obj,
+                )
+
+            runs = []
+            for ri in range(1, runs_count + 1):
+                if ri == 1:
+                    r = ScheduleRun.objects.create(
+                        schedule=schedule,
+                        index=ri,
+                        start_mode=ScheduleRun.StartMode.FIXED,
+                        start_time=start_time_obj,
+                    )
+                else:
+                    r = ScheduleRun.objects.create(
+                        schedule=schedule,
+                        index=ri,
+                        start_mode=ScheduleRun.StartMode.THEN,
+                        start_time=None,
+                    )
+                runs.append(r)
+
+            courts = list(schedule.courts.all().order_by("index"))
+
+            # Create match slots (empty cells are match slots with match_id=NULL).
+            matches = list(
+                pool_qs.order_by(
+                    "stage",
+                    "group_index",
+                    "round_index",
+                    "order_in_round",
+                    "id",
+                )
+            )
+            mi = 0
+            for r in runs:
+                for c in courts:
+                    match_id = matches[mi].id if mi < len(matches) else None
+                    if match_id is not None:
+                        mi += 1
+                    ScheduleSlot.objects.create(
+                        schedule=schedule,
+                        run=r,
+                        court=c,
+                        slot_type=ScheduleSlot.SlotType.MATCH,
+                        match_id=match_id,
+                    )
+
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data}, status=status.HTTP_201_CREATED)
 
     @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="schedule/generate", permission_classes=[IsAuthenticated])

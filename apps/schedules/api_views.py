@@ -56,6 +56,11 @@ class ScheduleViewSet(viewsets.ModelViewSet):
             return [IsAuthenticated()]
         return super().get_permissions()
 
+    def destroy(self, request, *args, **kwargs):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+        return super().destroy(request, *args, **kwargs)
+
     @action(detail=True, methods=["post"], url_path="save", permission_classes=[IsAuthenticated])
     def save(self, request, pk=None):
         """Сохранить расписание одним запросом.

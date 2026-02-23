@@ -8,6 +8,7 @@ from apps.tournaments.models import Tournament
 class Schedule(models.Model):
     date = models.DateField()
     match_duration_minutes = models.PositiveSmallIntegerField(default=40)
+    is_draft = models.BooleanField(default=False)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
