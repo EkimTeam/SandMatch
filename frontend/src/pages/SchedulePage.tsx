@@ -32,11 +32,15 @@ export const SchedulePage: React.FC = () => {
 
   const [courtsCount, setCourtsCount] = useState<number>(6);
   const [matchDuration, setMatchDuration] = useState<number>(40);
+  const [courtsCountText, setCourtsCountText] = useState<string>('6');
+  const [matchDurationText, setMatchDurationText] = useState<string>('40');
   const [startTime, setStartTime] = useState<string>('10:00');
   const [tournamentSystem, setTournamentSystem] = useState<string | null>(null);
   const [rrTeamRowById, setRrTeamRowById] = useState<Map<number, number>>(new Map());
   const [kingLetterByGroupPlayerId, setKingLetterByGroupPlayerId] = useState<Map<string, string>>(new Map());
   const [surnameCounts, setSurnameCounts] = useState<Map<string, number>>(new Map());
+
+  const [isBacklogCollapsed, setIsBacklogCollapsed] = useState<boolean>(false);
 
   const [planned, setPlanned] = useState<SchedulePlannedTimesResponse | null>(null);
   const [conflicts, setConflicts] = useState<ScheduleConflictsResponse | null>(null);
@@ -1373,6 +1377,14 @@ export const SchedulePage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tournamentId, isDraftMode]);
 
+  useEffect(() => {
+    setCourtsCountText(String(courtsCount || 1));
+  }, [courtsCount]);
+
+  useEffect(() => {
+    setMatchDurationText(String(matchDuration || 10));
+  }, [matchDuration]);
+
   const handleGenerate = async () => {
     if (!canManage) return;
     setSaving(true);
@@ -1647,11 +1659,53 @@ export const SchedulePage: React.FC = () => {
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
               <div>
                 <div className="text-sm" style={{ marginBottom: 4 }}>Корты</div>
-                <input className="input" type="number" min={1} value={courtsCount} onChange={e => setCourtsCount(Number(e.target.value))} />
+                <input
+                  className="input"
+                  type="number"
+                  min={1}
+                  step={1}
+                  inputMode="numeric"
+                  value={courtsCountText}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setCourtsCountText(v);
+                    if (v === '') return;
+                    const n = parseInt(v, 10);
+                    if (Number.isFinite(n)) setCourtsCount(n);
+                  }}
+                  onBlur={() => {
+                    const raw = courtsCountText;
+                    const n = raw === '' ? courtsCount : parseInt(raw, 10);
+                    const next = Number.isFinite(n) ? Math.max(1, n) : Math.max(1, courtsCount);
+                    setCourtsCount(next);
+                    setCourtsCountText(String(next));
+                  }}
+                />
               </div>
               <div>
                 <div className="text-sm" style={{ marginBottom: 4 }}>Длительность матча, мин</div>
-                <input className="input" type="number" min={10} value={matchDuration} onChange={e => setMatchDuration(Number(e.target.value))} />
+                <input
+                  className="input"
+                  type="number"
+                  min={10}
+                  step={1}
+                  inputMode="numeric"
+                  value={matchDurationText}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setMatchDurationText(v);
+                    if (v === '') return;
+                    const n = parseInt(v, 10);
+                    if (Number.isFinite(n)) setMatchDuration(n);
+                  }}
+                  onBlur={() => {
+                    const raw = matchDurationText;
+                    const n = raw === '' ? matchDuration : parseInt(raw, 10);
+                    const next = Number.isFinite(n) ? Math.max(10, n) : Math.max(10, matchDuration);
+                    setMatchDuration(next);
+                    setMatchDurationText(String(next));
+                  }}
+                />
               </div>
               <div>
                 <div className="text-sm" style={{ marginBottom: 4 }}>Старт</div>
@@ -1664,9 +1718,47 @@ export const SchedulePage: React.FC = () => {
       )}
 
       {schedule && viewMode === 'grid' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 12, alignItems: 'start' }}>
-          <div className="card">
-            <div style={{ fontWeight: 700, marginBottom: 10 }}>Матчи для назначения</div>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: isBacklogCollapsed ? '28px 1fr' : '320px 1fr',
+            gap: 12,
+            alignItems: 'start',
+          }}
+        >
+          {isBacklogCollapsed ? (
+            <div
+              className="card"
+              style={{
+                padding: 0,
+                width: 28,
+                display: 'flex',
+                alignItems: 'stretch',
+                justifyContent: 'stretch',
+              }}
+            >
+              <button
+                className="btn"
+                style={{
+                  width: 28,
+                  padding: 0,
+                  borderRadius: 8,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                onClick={() => setIsBacklogCollapsed(false)}
+                title="Развернуть"
+              >
+                {'>'}
+              </button>
+            </div>
+          ) : (
+            <div className="card">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
+                <div style={{ fontWeight: 700 }}>Матчи для назначения</div>
+                <button className="btn" onClick={() => setIsBacklogCollapsed(true)} title="Свернуть">{'<'}</button>
+              </div>
             <div className="text-sm" style={{ marginBottom: 10, opacity: 0.8 }}>
               Можно перетаскивать мышью в ячейки расписания или назначать кликом.
             </div>
@@ -1796,16 +1888,61 @@ export const SchedulePage: React.FC = () => {
                 </div>
               ))}
             </div>
-          </div>
+            </div>
+          )}
           <div className="card" style={{ overflowX: 'auto' }}>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
             <div>
               <div className="text-sm" style={{ marginBottom: 4 }}>Длительность матча, мин</div>
-              <input className="input" type="number" min={10} value={matchDuration} onChange={e => setMatchDuration(Number(e.target.value))} disabled={!canManage} />
+              <input
+                className="input"
+                type="number"
+                min={10}
+                step={1}
+                inputMode="numeric"
+                value={matchDurationText}
+                onChange={e => {
+                  const v = e.target.value;
+                  setMatchDurationText(v);
+                  if (v === '') return;
+                  const n = parseInt(v, 10);
+                  if (Number.isFinite(n)) setMatchDuration(n);
+                }}
+                onBlur={() => {
+                  const raw = matchDurationText;
+                  const n = raw === '' ? matchDuration : parseInt(raw, 10);
+                  const next = Number.isFinite(n) ? Math.max(10, n) : Math.max(10, matchDuration);
+                  setMatchDuration(next);
+                  setMatchDurationText(String(next));
+                }}
+                disabled={!canManage}
+              />
             </div>
             <div>
               <div className="text-sm" style={{ marginBottom: 4 }}>Кортов</div>
-              <input className="input" type="number" min={1} value={courtsCount} onChange={e => setCourtsCount(Number(e.target.value))} disabled={!canManage} />
+              <input
+                className="input"
+                type="number"
+                min={1}
+                step={1}
+                inputMode="numeric"
+                value={courtsCountText}
+                onChange={e => {
+                  const v = e.target.value;
+                  setCourtsCountText(v);
+                  if (v === '') return;
+                  const n = parseInt(v, 10);
+                  if (Number.isFinite(n)) setCourtsCount(n);
+                }}
+                onBlur={() => {
+                  const raw = courtsCountText;
+                  const n = raw === '' ? courtsCount : parseInt(raw, 10);
+                  const next = Number.isFinite(n) ? Math.max(1, n) : Math.max(1, courtsCount);
+                  setCourtsCount(next);
+                  setCourtsCountText(String(next));
+                }}
+                disabled={!canManage}
+              />
             </div>
             <div>
               <div className="text-sm" style={{ marginBottom: 4 }}>Начало</div>
