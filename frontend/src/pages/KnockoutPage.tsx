@@ -1693,6 +1693,11 @@ export const KnockoutPage: React.FC = () => {
         {canManageStructure && tMeta?.status === 'created' && (
           <button className="btn" disabled={saving} onClick={handleEditSettings}>Поменять настройки турнира</button>
         )}
+        {canManageStructure && tMeta?.status === 'created' && (
+          <button className="btn" disabled={saving || !tMeta} onClick={() => navigate(`/tournaments/${tMeta.id}/schedule?draft=1`)}>
+            Черновик расписания
+          </button>
+        )}
         {canManageStructure && tMeta?.status === 'active' && (
           <button className="btn" disabled={saving || !tMeta} onClick={() => navigate(`/tournaments/${tMeta.id}/schedule`)}>
             Расписание

@@ -1,17 +1,30 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
+
 import { scheduleApi, ScheduleConflictsResponse, ScheduleDTO, SchedulePlannedTimesResponse, tournamentApi } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
 export const SchedulePage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
 
   const tournamentId = id ? Number(id) : NaN;
 
   const role = user?.role;
   const canManage = role === 'ADMIN' || role === 'ORGANIZER';
+
+  const isDraftMode = useMemo(() => {
+    try {
+      const sp = new URLSearchParams(location.search);
+      return sp.get('draft') === '1';
+    } catch {
+      return false;
+    }
+  }, [location.search]);
+
+  const canEdit = canManage;
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -78,7 +91,22 @@ export const SchedulePage: React.FC = () => {
     const runIndexById = new Map<number, number>();
     schedule.runs.forEach(r => runIndexById.set(r.id, r.index));
 
-    const slotsByRun = new Map<number, Array<{ slotId: number; matchId: number; playerIds: number[] }>>();
+    const slotsByRun = new Map<number, Array<{ slotId: number; matchId: number; playerIds: string[] }>>();
+
+    const parseRrVirtualKeys = (m: any): string[] => {
+      const gi = m?.group_index;
+      const group = gi != null && gi !== '' ? Number(gi) : NaN;
+      if (!Number.isFinite(group)) return [];
+
+      // Backend encodes virtual positions into round_name like "гр.1 • 2-3".
+      const rn = String(m?.round_name || '').trim();
+      const mPair = rn.match(/(\d+)\s*[-–]\s*(\d+)/);
+      if (!mPair) return [];
+      const a = Number(mPair[1]);
+      const b = Number(mPair[2]);
+      if (!Number.isFinite(a) || !Number.isFinite(b)) return [];
+      return [`rr:${group}:${a}`, `rr:${group}:${b}`];
+    };
 
     for (const s of schedule.slots || []) {
       if (!s?.match || !s?.id) continue;
@@ -87,29 +115,34 @@ export const SchedulePage: React.FC = () => {
       const runIndex = runIndexById.get(s.run);
       if (!runIndex) continue;
 
-      const pids: number[] = [];
+      const keys: string[] = [];
+
       const t1p1 = m?.team_1?.player_1?.id;
       const t1p2 = m?.team_1?.player_2?.id;
       const t2p1 = m?.team_2?.player_1?.id;
       const t2p2 = m?.team_2?.player_2?.id;
-      if (t1p1) pids.push(Number(t1p1));
-      if (t1p2) pids.push(Number(t1p2));
-      if (t2p1) pids.push(Number(t2p1));
-      if (t2p2) pids.push(Number(t2p2));
+      if (t1p1) keys.push(`p:${Number(t1p1)}`);
+      if (t1p2) keys.push(`p:${Number(t1p2)}`);
+      if (t2p1) keys.push(`p:${Number(t2p1)}`);
+      if (t2p2) keys.push(`p:${Number(t2p2)}`);
 
-      if (!pids.length && tournamentSystem !== 'knockout') continue;
+      if (!keys.length && tournamentSystem === 'round_robin' && isDraftMode) {
+        keys.push(...parseRrVirtualKeys(m));
+      }
+
+      if (!keys.length && tournamentSystem !== 'knockout') continue;
       const arr = slotsByRun.get(runIndex) || [];
-      arr.push({ slotId: Number(s.id), matchId: Number(s.match), playerIds: pids });
+      arr.push({ slotId: Number(s.id), matchId: Number(s.match), playerIds: keys });
       slotsByRun.set(runIndex, arr);
     }
 
     const conflictIds = new Set<number>();
     for (const [, entries] of slotsByRun) {
-      const counts = new Map<number, number>();
+      const counts = new Map<string, number>();
       for (const e of entries) {
         for (const pid of e.playerIds) counts.set(pid, (counts.get(pid) || 0) + 1);
       }
-      const conflictPlayers = new Set<number>();
+      const conflictPlayers = new Set<string>();
       for (const [pid, cnt] of counts) {
         if (cnt > 1) conflictPlayers.add(pid);
       }
@@ -213,15 +246,13 @@ export const SchedulePage: React.FC = () => {
     return map;
   }, [schedule]);
 
-  const getMatchTitle = (matchId: number | null | undefined): string => {
-    if (!matchId) return '';
-    const m = matchById.get(Number(matchId));
+  const getMatchTitle = (matchId: number) => {
+    const m = matchById.get(matchId);
     if (!m) return `Матч #${matchId}`;
-    const t1 = m?.team_1?.full_name || m?.team_1?.display_name || m?.team_1?.name;
-    const t2 = m?.team_2?.full_name || m?.team_2?.display_name || m?.team_2?.name;
-    if (t1 && t2) return `${t1} vs ${t2}`;
-    if (t1 || t2) return `${t1 || 'TBD'} vs ${t2 || 'TBD'}`;
-    return `Матч #${matchId}`;
+    if (isDraftMode) return matchMetaLabel(m) || `Матч #${matchId}`;
+    const a = m?.team_1?.full_name || m?.team_1?.display_name || 'TBD';
+    const b = m?.team_2?.full_name || m?.team_2?.display_name || 'TBD';
+    return `${matchMetaLabel(m) || `#${matchId}`} — ${a} / ${b}`;
   };
 
   const matchMetaLabel = (m: any): string => {
@@ -235,9 +266,19 @@ export const SchedulePage: React.FC = () => {
       const r1 = t1id ? rrTeamRowById.get(Number(t1id)) : undefined;
       const r2 = t2id ? rrTeamRowById.get(Number(t2id)) : undefined;
       const pair = r1 && r2 ? `${r1}-${r2}` : '';
-      return [group, pair].filter(Boolean).join(' • ');
+      if (pair) return [group, pair].filter(Boolean).join(' • ');
+
+      // Draft RR matches may have no team ids. In this case backend encodes virtual pairing
+      // into round_name like "гр.1 • 2-3".
+      const rn = String(m?.round_name || '').trim();
+      if (isDraftMode && rn) return rn;
+      return group;
     }
     if (tournamentSystem === 'king') {
+      if (isDraftMode) {
+        const mid = m?.id != null ? `Матч ${m.id}` : '';
+        return [group, mid].filter(Boolean).join(' • ');
+      }
       const a = String(m?.team_1?.display_name || '').replace(/\s*\/\s*/g, '+');
       const b = String(m?.team_2?.display_name || '').replace(/\s*\/\s*/g, '+');
       const vs = a && b ? `${a} vs ${b}` : '';
@@ -250,6 +291,15 @@ export const SchedulePage: React.FC = () => {
   };
 
   const renderMatchTiny = (m: any) => {
+    if (isDraftMode) {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 1, lineHeight: 1.05 }}>
+          <div style={{ fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {matchMetaLabel(m) || (m?.id ? `Матч #${m.id}` : 'Матч')}
+          </div>
+        </div>
+      );
+    }
     const s1 = teamSurnames(m?.team_1);
     const s2 = teamSurnames(m?.team_2);
     const a = s1.length ? s1.join(' / ') : 'TBD';
@@ -783,6 +833,21 @@ export const SchedulePage: React.FC = () => {
   };
 
   const renderMatchCompact = (m: any, variant: 'backlog' | 'schedule') => {
+    if (isDraftMode) {
+      const meta = matchMetaLabel(m) || (m?.id ? `Матч #${m.id}` : 'Матч');
+      if (variant === 'backlog') {
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, lineHeight: 1.1 }}>
+            <div style={{ fontSize: 11, fontWeight: 700 }}>{meta}</div>
+          </div>
+        );
+      }
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, lineHeight: 1.1 }}>
+          <div style={{ fontSize: 11, fontWeight: 700 }}>{meta}</div>
+        </div>
+      );
+    }
     const s1 = teamSurnames(m?.team_1);
     const s2 = teamSurnames(m?.team_2);
     const isDoubles = s1.length > 1 || s2.length > 1;
@@ -1139,12 +1204,12 @@ export const SchedulePage: React.FC = () => {
       }
       setRrTeamRowById(nextMap);
 
-      if (t?.start_time) setStartTime(t.start_time as any);
+      if (t?.start_time) setStartTime(formatHm(t.start_time as any));
       if (t?.date && typeof t.date === 'string') {
         // date stays server side, we only use start_time in generation
       }
 
-      const res = await tournamentApi.getSchedule(tournamentId);
+      const res = isDraftMode ? await tournamentApi.getDraftSchedule(tournamentId) : await tournamentApi.getSchedule(tournamentId);
       const sch = res?.schedule || null;
       setSchedule(sch);
       setLastSavedSchedule(sch);
@@ -1152,7 +1217,7 @@ export const SchedulePage: React.FC = () => {
       if (sch?.match_duration_minutes) setMatchDuration(sch.match_duration_minutes);
       if (sch?.courts?.length) setCourtsCount(sch.courts.length);
       const st = sch?.courts?.sort((a, b) => a.index - b.index)?.[0]?.first_start_time || sch?.runs?.sort((a, b) => a.index - b.index)?.[0]?.start_time;
-      if (st) setStartTime(st);
+      if (st) setStartTime(formatHm(st));
 
       if (sch?.id) {
         await refreshSideData(sch.id);
@@ -1171,17 +1236,23 @@ export const SchedulePage: React.FC = () => {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tournamentId]);
+  }, [tournamentId, isDraftMode]);
 
   const handleGenerate = async () => {
     if (!canManage) return;
     setSaving(true);
     try {
-      const res: any = await tournamentApi.generateSchedule(tournamentId, {
-        courts_count: courtsCount,
-        match_duration_minutes: matchDuration,
-        start_time: startTime,
-      });
+      const res: any = isDraftMode
+        ? await tournamentApi.generateDraftSchedule(tournamentId, {
+            courts_count: courtsCount,
+            match_duration_minutes: matchDuration,
+            start_time: startTime,
+          })
+        : await tournamentApi.generateSchedule(tournamentId, {
+            courts_count: courtsCount,
+            match_duration_minutes: matchDuration,
+            start_time: startTime,
+          });
       if (!res?.ok) {
         alert(res?.detail || res?.error || 'Не удалось создать расписание');
         return;
@@ -1340,11 +1411,32 @@ export const SchedulePage: React.FC = () => {
       document.body.appendChild(a);
       a.click();
       a.remove();
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
     } catch (e: any) {
       alert(e?.response?.data?.detail || e?.message || 'Не удалось экспортировать PDF');
     } finally {
       setExporting(false);
+    }
+  };
+
+  const handleDeleteSchedule = async () => {
+    if (!schedule || !canManage) return;
+    const label = isDraftMode ? 'черновик расписания' : 'расписание';
+    if (!window.confirm(`Удалить ${label}?`)) return;
+    setSaving(true);
+    try {
+      await scheduleApi.deleteSchedule(schedule.id);
+      setSchedule(null);
+      setLastSavedSchedule(null);
+      setPool([]);
+      setPlanned(null);
+      setConflicts(null);
+      setSelectedMatchId(null);
+      clearDrag();
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || e?.message || 'Не удалось удалить');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -1363,7 +1455,21 @@ export const SchedulePage: React.FC = () => {
   return (
     <div className="container" style={{ maxWidth: 1400 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Расписание</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }} data-export-exclude="true">
+          <button className="btn" onClick={() => nav(`/tournaments/${tournamentId}`)}>
+            Вернуться в турнир
+          </button>
+          {schedule && canManage && (
+            <button
+              className="btn"
+              onClick={handleDeleteSchedule}
+              disabled={saving}
+              style={{ background: '#dc3545', borderColor: '#dc3545' }}
+            >
+              {isDraftMode ? 'Удалить черновик' : 'Удалить расписание'}
+            </button>
+          )}
+        </div>
         {schedule && (
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <button
@@ -1399,7 +1505,7 @@ export const SchedulePage: React.FC = () => {
 
       {!schedule && (
         <div className="card">
-          <div style={{ marginBottom: 10, fontWeight: 600 }}>Расписание ещё не создано</div>
+          <div style={{ marginBottom: 10, fontWeight: 600 }}>{isDraftMode ? 'Черновик расписания ещё не создан' : 'Расписание ещё не создано'}</div>
           {!canManage ? (
             <div>Создание расписания доступно только организатору/админу.</div>
           ) : (
@@ -1416,7 +1522,7 @@ export const SchedulePage: React.FC = () => {
                 <div className="text-sm" style={{ marginBottom: 4 }}>Старт</div>
                 <input className="input" type="time" value={startTime} onChange={e => setStartTime(e.target.value)} />
               </div>
-              <button className="btn" disabled={saving} onClick={handleGenerate}>Создать</button>
+              <button className="btn" disabled={saving} onClick={handleGenerate}>{isDraftMode ? 'Создать черновик' : 'Создать'}</button>
             </div>
           )}
         </div>
@@ -1437,10 +1543,10 @@ export const SchedulePage: React.FC = () => {
               }}>
                 Снять выбор
               </button>
-              <button className="btn" onClick={handleAutoFill} disabled={!canManage || saving}>
+              <button className="btn" onClick={handleAutoFill} disabled={!canEdit || saving}>
                 Авто
               </button>
-              <button className="btn" onClick={handleClearSchedule} disabled={!canManage || saving}>
+              <button className="btn" onClick={handleClearSchedule} disabled={!canEdit || saving}>
                 Очистить
               </button>
               <div className="text-sm" style={{ alignSelf: 'center', opacity: 0.75 }}>
@@ -1458,13 +1564,13 @@ export const SchedulePage: React.FC = () => {
                   background: dragOverUnassigned ? '#f3f4f6' : undefined,
                 }}
                 onDragOver={e => {
-                  if (!canManage) return;
+                  if (!canEdit) return;
                   e.preventDefault();
                   setDragOverUnassigned(true);
                 }}
                 onDragLeave={() => setDragOverUnassigned(false)}
                 onDrop={e => {
-                  if (!canManage) return;
+                  if (!canEdit) return;
                   e.preventDefault();
                   dropToUnassigned();
                 }}
@@ -1478,9 +1584,9 @@ export const SchedulePage: React.FC = () => {
                   <div
                     key={m.id}
                     className="btn"
-                    draggable={canManage}
-                    onDragStart={e => {
-                      if (!canManage) return;
+                    draggable={canEdit}
+                    onDragStart={() => {
+                      if (!canEdit) return;
                       startDragFromPool(Number(m.id));
                     }}
                     onDragEnd={() => clearDrag()}
@@ -1489,13 +1595,14 @@ export const SchedulePage: React.FC = () => {
                       gap: 8,
                       alignItems: 'center',
                       textAlign: 'left',
-                      cursor: canManage ? 'grab' : 'default',
+                      cursor: canEdit ? 'grab' : 'default',
                       padding: '6px 10px',
                       minHeight: 44,
                       background: isSelected ? '#111827' : undefined,
                       color: isSelected ? '#fff' : undefined,
                     }}
                     onClick={() => {
+                      if (!canEdit) return;
                       setPickedFromCell(null);
                       setSelectedMatchId(m.id);
                     }}
@@ -1544,7 +1651,9 @@ export const SchedulePage: React.FC = () => {
                   >
                     {matchMetaLabel(m) || `#${m.id}`}
                   </span>
-                  {m?.team_1?.full_name || m?.team_1?.display_name || 'TBD'} / {m?.team_2?.full_name || m?.team_2?.display_name || 'TBD'}
+                  {isDraftMode
+                    ? ''
+                    : `${m?.team_1?.full_name || m?.team_1?.display_name || 'TBD'} / ${m?.team_2?.full_name || m?.team_2?.display_name || 'TBD'}`}
                 </div>
               ))}
             </div>
@@ -1564,15 +1673,17 @@ export const SchedulePage: React.FC = () => {
               <input className="input" type="time" value={startTime} onChange={e => setStartTime(e.target.value)} disabled={!canManage} />
             </div>
             <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
-              <button className="btn" onClick={handleApplySettings} disabled={!canManage || saving}>
-                Применить настройки
-              </button>
               <button className="btn" onClick={handleGenerate} disabled={!canManage || saving}>
-                Пересоздать и расставить
+                {isDraftMode ? 'Пересоздать черновик' : 'Пересоздать и расставить'}
               </button>
-              <button className="btn" onClick={handleAddRun} disabled={!canManage || saving || !schedule}>
-                Добавить запуск
-              </button>
+              <>
+                <button className="btn" onClick={handleApplySettings} disabled={!canEdit || saving}>
+                  Применить настройки
+                </button>
+                <button className="btn" onClick={handleAddRun} disabled={!canEdit || saving || !schedule}>
+                  Добавить запуск
+                </button>
+              </>
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 12, alignItems: 'center' }}>
               <div className="text-sm">Дата: <strong>{schedule.date}</strong></div>
@@ -1603,7 +1714,7 @@ export const SchedulePage: React.FC = () => {
                   return !hasMatch && !hasText;
                 });
                 const maxRunIndex = Math.max(...(schedule.runs || []).map(x => x.index), 1);
-                const canDeleteThisRun = canManage && isEmptyRun && r.index === maxRunIndex;
+                const canDeleteThisRun = canEdit && isEmptyRun && r.index === maxRunIndex;
                 return (
                   <tr key={r.id}>
                     <td style={{ padding: 8, borderBottom: '1px solid #f2f2f2', verticalAlign: 'top' }}>
@@ -1645,7 +1756,7 @@ export const SchedulePage: React.FC = () => {
                             textAlign: 'center',
                           }}
                           onDragOver={e => {
-                            if (!canManage) return;
+                            if (!canEdit) return;
                             e.preventDefault();
                             setDragOverCell({ runIndex: r.index, courtIndex: c.index });
                             setDragOverUnassigned(false);
@@ -1657,20 +1768,23 @@ export const SchedulePage: React.FC = () => {
                             });
                           }}
                           onDrop={e => {
-                            if (!canManage) return;
+                            if (!canEdit) return;
                             e.preventDefault();
                             dropOnCell(r.index, c.index);
                           }}
-                          onClick={() => dropOrPickCell(r.index, c.index)}
+                          onClick={() => {
+                            if (!canEdit) return;
+                            dropOrPickCell(r.index, c.index);
+                          }}
                         >
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                             <div className="text-sm" style={{ opacity: 0.75 }}>
                               {runStartLabel(r.index)}
                             </div>
                             <div
-                            draggable={canManage && !!cellMatchId}
+                            draggable={canEdit && !!cellMatchId}
                             onDragStart={e => {
-                              if (!canManage) return;
+                              if (!canEdit) return;
                               if (!cellMatchId) return;
                               startDragFromCell(r.index, c.index, cellMatchId);
                               try {
@@ -1682,7 +1796,7 @@ export const SchedulePage: React.FC = () => {
                             }}
                             onDragEnd={() => clearDrag()}
                             style={{
-                              cursor: canManage && !!cellMatchId ? 'grab' : 'default',
+                              cursor: canEdit && !!cellMatchId ? 'grab' : 'default',
                               fontWeight: 600,
                               width: '100%',
                               display: 'flex',

@@ -63,6 +63,7 @@ class ScheduleSerializer(serializers.ModelSerializer):
             "id",
             "date",
             "match_duration_minutes",
+            "is_draft",
             "created_by",
             "created_at",
             "updated_at",

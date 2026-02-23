@@ -3119,6 +3119,11 @@ export const TournamentDetailPage: React.FC = () => {
             Поменять настройки турнира
           </button>
         )}
+        {t && canManageTournament && t.status === 'created' && (
+          <button className="btn" onClick={() => nav(`/tournaments/${t.id}/schedule?draft=1`)} disabled={saving}>
+            Черновик расписания
+          </button>
+        )}
         {t && canManageTournament && t.status === 'active' && (
           <button className="btn" onClick={() => nav(`/tournaments/${t.id}/schedule`)} disabled={saving}>
             Расписание

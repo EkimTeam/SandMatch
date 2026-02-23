@@ -488,6 +488,19 @@ export const tournamentApi = {
     return data;
   },
 
+  getDraftSchedule: async (tournamentId: number): Promise<{ ok: boolean; schedule: ScheduleDTO | null }> => {
+    const { data } = await api.get(`/tournaments/${tournamentId}/schedule/draft/`);
+    return data;
+  },
+
+  generateDraftSchedule: async (
+    tournamentId: number,
+    payload: { date?: string; courts_count: number; match_duration_minutes?: number; start_time?: string; runs_count?: number },
+  ): Promise<{ ok: boolean; schedule: ScheduleDTO } | { ok: boolean; error: string; detail?: string }> => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/schedule/draft/generate/`, payload);
+    return data;
+  },
+
   generateSchedule: async (
     tournamentId: number,
     payload: { date?: string; courts_count: number; match_duration_minutes?: number; start_time?: string; runs_count?: number },
@@ -809,6 +822,10 @@ export const tournamentApi = {
 export const scheduleApi = {
   matchesPool: async (scheduleId: number): Promise<{ ok: boolean; matches: any[] }> => {
     const { data } = await api.get(`/schedules/${scheduleId}/matches_pool/`);
+    return data;
+  },
+  deleteSchedule: async (scheduleId: number): Promise<{ ok: boolean } | any> => {
+    const { data } = await api.delete(`/schedules/${scheduleId}/`);
     return data;
   },
   addRun: async (scheduleId: number): Promise<{ ok: boolean; schedule: ScheduleDTO }> => {
