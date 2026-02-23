@@ -116,6 +116,11 @@ export const TournamentDetailPage: React.FC = () => {
   const [t, setT] = useState<TournamentDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lockParticipants, setLockParticipants] = useState(false);
+  const [showStartTournamentModal, setShowStartTournamentModal] = useState(false);
+  const [checkingScheduleForStart, setCheckingScheduleForStart] = useState(false);
+  const [pendingStart, setPendingStart] = useState(false);
+  const [hasDraftSchedule, setHasDraftSchedule] = useState<boolean>(false);
+  const [creatingOfficialFromDraft, setCreatingOfficialFromDraft] = useState<boolean>(false);
   const [showTech, setShowTech] = useState<boolean[]>([]); // по группам
   const [showFullName, setShowFullName] = useState(false);
   const showNamesInitializedRef = useRef(false);
@@ -194,6 +199,109 @@ export const TournamentDetailPage: React.FC = () => {
       setSaving(false);
     }
   };
+
+  const pendingStartKey = useMemo(() => (t?.id ? `tournament:pendingStart:${t.id}` : ''), [t?.id]);
+
+  const readPendingStart = useCallback(() => {
+    if (!pendingStartKey) return false;
+    try {
+      return window.localStorage.getItem(pendingStartKey) === '1';
+    } catch {
+      return false;
+    }
+  }, [pendingStartKey]);
+
+  const writePendingStart = useCallback((v: boolean) => {
+    if (!pendingStartKey) return;
+    try {
+      if (v) window.localStorage.setItem(pendingStartKey, '1');
+      else window.localStorage.removeItem(pendingStartKey);
+    } catch {
+      // noop
+    }
+    setPendingStart(v);
+  }, [pendingStartKey]);
+
+  const startTournamentNow = useCallback(async () => {
+    if (!t) return;
+    try {
+      setSaving(true);
+      await tournamentApi.lockParticipants(t.id);
+      writePendingStart(false);
+      setDragDropState(prev => ({ ...prev, isSelectionLocked: true }));
+      await reload();
+    } catch (error) {
+      console.error('Failed to lock participants:', error);
+      alert('Не удалось начать турнир');
+    } finally {
+      setSaving(false);
+    }
+  }, [t, writePendingStart]);
+
+  const handleStartTournamentClick = useCallback(async () => {
+    if (!t || !canManageTournament) return;
+    setCheckingScheduleForStart(true);
+    try {
+      const sch = await tournamentApi.getSchedule(t.id);
+      const hasSchedule = !!sch?.schedule;
+      if (!hasSchedule) {
+        setShowStartTournamentModal(true);
+        return;
+      }
+      await startTournamentNow();
+    } catch (e: any) {
+      setShowStartTournamentModal(true);
+    } finally {
+      setCheckingScheduleForStart(false);
+    }
+  }, [t, canManageTournament, startTournamentNow]);
+
+  const goCreateScheduleForStart = useCallback(() => {
+    if (!t) return;
+    writePendingStart(true);
+    setShowStartTournamentModal(false);
+    nav(`/tournaments/${t.id}/schedule`);
+  }, [t, nav, writePendingStart]);
+
+  const useDraftToCreateScheduleForStart = useCallback(async () => {
+    if (!t) return;
+    setCreatingOfficialFromDraft(true);
+    try {
+      const res = await tournamentApi.createScheduleFromDraft(t.id);
+      if (!(res as any)?.ok) {
+        alert((res as any)?.detail || (res as any)?.error || 'Не удалось создать расписание из черновика');
+        return;
+      }
+      setShowStartTournamentModal(false);
+      await startTournamentNow();
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || e?.response?.data?.error || 'Не удалось создать расписание из черновика');
+    } finally {
+      setCreatingOfficialFromDraft(false);
+    }
+  }, [t, startTournamentNow]);
+
+  const handlePreviewScheduleClick = useCallback(async () => {
+    if (!t) return;
+    setCreatingOfficialFromDraft(true);
+    try {
+      const res = await tournamentApi.createScheduleFromDraft(t.id);
+      if (!(res as any)?.ok) {
+        alert((res as any)?.detail || (res as any)?.error || 'Не удалось зафиксировать расписание из черновика');
+        return;
+      }
+      nav(`/tournaments/${t.id}/schedule`);
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || e?.response?.data?.error || 'Не удалось зафиксировать расписание из черновика');
+    } finally {
+      setCreatingOfficialFromDraft(false);
+    }
+  }, [t, nav]);
+
+  const startWithoutSchedule = useCallback(async () => {
+    setShowStartTournamentModal(false);
+    await startTournamentNow();
+  }, [startTournamentNow]);
 
   const handleStageChanged = (stageId: number) => {
     if (!stageId || Number.isNaN(stageId) || stageId === idNum) return;
@@ -429,6 +537,14 @@ export const TournamentDetailPage: React.FC = () => {
       console.warn('Failed to load master data', e);
     }
   }, [idNum, canManageTournament]);
+
+  useEffect(() => {
+    if (!t?.id) {
+      setPendingStart(false);
+      return;
+    }
+    setPendingStart(readPendingStart());
+  }, [t?.id, readPendingStart]);
 
   const renderAnnouncementWithLinks = (text: string) => {
     if (!text) return null;
@@ -1513,6 +1629,28 @@ export const TournamentDetailPage: React.FC = () => {
     })();
   }, [fetchGroupSchedule]);
 
+  useEffect(() => {
+    let canceled = false;
+    const run = async () => {
+      if (!t || !canManageTournament || t.status !== 'created') {
+        setHasDraftSchedule(false);
+        return;
+      }
+      try {
+        const res = await tournamentApi.getDraftSchedule(t.id);
+        if (canceled) return;
+        setHasDraftSchedule(!!res?.schedule);
+      } catch {
+        if (canceled) return;
+        setHasDraftSchedule(false);
+      }
+    };
+    run();
+    return () => {
+      canceled = true;
+    };
+  }, [t, canManageTournament]);
+
   // Загрузка данных мастер-турнира при монтировании или изменении idNum
   useEffect(() => {
     if (idNum && !authLoading) {
@@ -2171,6 +2309,67 @@ export const TournamentDetailPage: React.FC = () => {
         </div>
       )}
 
+      {showStartTournamentModal && t && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => setShowStartTournamentModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: '#fff',
+              padding: 20,
+              maxWidth: 520,
+              width: '100%',
+              borderRadius: 8,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Начать турнир</div>
+            <div style={{ fontSize: 13, color: '#555', lineHeight: 1.4 }}>
+              Для этого турнира ещё нет официального расписания.
+              {hasDraftSchedule
+                ? ' Можно использовать черновик и зафиксировать расписание перед стартом.'
+                : ' Рекомендуется сначала создать расписание, чтобы избежать ситуации «турнир идёт, а расписания нет».'}
+            </div>
+
+            <div style={{ marginTop: 14, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {hasDraftSchedule && (
+                <button
+                  className="btn"
+                  style={{ background: '#28a745', borderColor: '#28a745' }}
+                  onClick={useDraftToCreateScheduleForStart}
+                  disabled={saving || creatingOfficialFromDraft}
+                >
+                  Использовать черновик (рекомендуется)
+                </button>
+              )}
+              <button
+                className="btn"
+                style={{ background: '#28a745', borderColor: '#28a745' }}
+                onClick={goCreateScheduleForStart}
+                disabled={saving || creatingOfficialFromDraft}
+              >
+                Создать расписание
+              </button>
+              <button className="btn" onClick={startWithoutSchedule} disabled={saving || creatingOfficialFromDraft}>
+                Начать без расписания
+              </button>
+              <button className="btn" onClick={() => setShowStartTournamentModal(false)} disabled={saving || creatingOfficialFromDraft}>
+                Отмена
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showAnnouncementSettingsModal && announcementSettings && (
         <div
           style={{
@@ -2514,34 +2713,55 @@ export const TournamentDetailPage: React.FC = () => {
               
               return (
                 <div style={{ marginTop: 16, padding: 16, background: '#f8f9fa', borderRadius: 8 }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: canLock ? 'pointer' : 'not-allowed', opacity: canLock ? 1 : 0.5 }}>
-                    <input
-                      type="checkbox"
-                      checked={dragDropState.isSelectionLocked}
-                      disabled={saving || !canLock}
-                      onChange={async (e) => {
-                        if (e.target.checked) {
-                          try {
-                            setSaving(true);
-                            await tournamentApi.lockParticipants(t.id);
-                            setDragDropState(prev => ({ ...prev, isSelectionLocked: true }));
-                            await reload();
-                          } catch (error) {
-                            console.error('Failed to lock participants:', error);
-                            alert('Не удалось зафиксировать участников');
-                          } finally {
-                            setSaving(false);
-                          }
-                        }
-                      }}
-                    />
-                    <span>Зафиксировать участников и сгенерировать расписание</span>
-                  </label>
-                  <p style={{ margin: '8px 0 0 0', fontSize: 13, color: '#666' }}>
-                    {canLock 
-                      ? 'После фиксации будет создано расписание матчей и турнир перейдет в статус "Идёт"'
-                      : 'Заполните все позиции в таблицах, чтобы зафиксировать участников'
-                    }
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', opacity: canLock ? 1 : 0.5 }}>
+                    {!pendingStart ? (
+                      <button
+                        className="btn"
+                        style={{ background: '#28a745', borderColor: '#28a745' }}
+                        onClick={handleStartTournamentClick}
+                        disabled={saving || !canLock || checkingScheduleForStart}
+                        title={!canLock ? 'Заполните все позиции в таблицах, чтобы начать турнир' : ''}
+                      >
+                        {checkingScheduleForStart ? 'Проверяем расписание…' : 'Начать турнир'}
+                      </button>
+                    ) : (
+                      <button
+                        className="btn"
+                        style={{ background: '#28a745', borderColor: '#28a745' }}
+                        onClick={startTournamentNow}
+                        disabled={saving || !canLock}
+                        title={!canLock ? 'Заполните все позиции в таблицах, чтобы начать турнир' : ''}
+                      >
+                        Подтвердить старт
+                      </button>
+                    )}
+
+                    {pendingStart && (
+                      <button
+                        className="btn"
+                        onClick={() => {
+                          writePendingStart(false);
+                        }}
+                        disabled={saving}
+                      >
+                        Отменить старт
+                      </button>
+                    )}
+
+                    <button
+                      className="btn"
+                      onClick={handlePreviewScheduleClick}
+                      disabled={saving || creatingOfficialFromDraft || !hasDraftSchedule}
+                    >
+                      Предпросмотр расписания
+                    </button>
+                  </div>
+                  <p style={{ margin: '10px 0 0 0', fontSize: 13, color: '#666' }}>
+                    {pendingStart
+                      ? 'Создайте/проверьте расписание, затем нажмите «Подтвердить старт». Пока турнир остаётся в статусе «Регистрация». '
+                      : canLock
+                        ? 'Перед стартом рекомендуется создать расписание. Если расписания нет — можно начать без него (с предупреждением).'
+                        : 'Заполните все позиции в таблицах, чтобы начать турнир.'}
                   </p>
                 </div>
               );

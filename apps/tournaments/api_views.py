@@ -62,7 +62,14 @@ from apps.tournaments.services.round_robin import (
 )
 from apps.tournaments.services.multi_stage_service import MultiStageService
 
-from apps.schedules.models import Schedule, ScheduleCourt, ScheduleRun, ScheduleScope
+from apps.schedules.models import (
+    Schedule,
+    ScheduleCourt,
+    ScheduleGlobalBreak,
+    ScheduleRun,
+    ScheduleScope,
+    ScheduleSlot,
+)
 from apps.schedules.serializers import ScheduleSerializer
 
 
@@ -334,7 +341,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         tournament: Tournament = self.get_object()
         self._ensure_can_view_tournament(request, tournament)
 
-        qs = Schedule.objects.filter(scopes__tournament=tournament).distinct().order_by("-created_at")
+        qs = Schedule.objects.filter(scopes__tournament=tournament, is_draft=False).distinct().order_by("-created_at")
         selected = None
         if tournament.date:
             selected = qs.filter(date=tournament.date).order_by("-created_at").first()
@@ -557,6 +564,107 @@ class TournamentViewSet(viewsets.ModelViewSet):
         return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data}, status=status.HTTP_201_CREATED)
 
     @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="schedule/from_draft", permission_classes=[IsAuthenticated])
+    def schedule_from_draft(self, request, pk=None):
+        """Создать/пересоздать официальное расписание из черновика.
+
+        Используется для UX "Предпросмотр расписания" и для старта турнира
+        при наличии черновика.
+
+        Поведение:
+        - если official уже существует (is_draft=False) — возвращаем его;
+        - иначе копируем сущности из draft (courts/runs/slots/global_breaks/scopes).
+        """
+
+        tournament: Tournament = self.get_object()
+        # права на управление турниром
+        self._ensure_can_manage_tournament(request, tournament)
+
+        official_qs = Schedule.objects.filter(scopes__tournament=tournament, is_draft=False).distinct().order_by("-created_at")
+        existing_official = official_qs.first()
+        if existing_official:
+            return Response({"ok": True, "schedule": ScheduleSerializer(existing_official).data})
+
+        draft = (
+            Schedule.objects.filter(scopes__tournament=tournament, is_draft=True)
+            .distinct()
+            .order_by("-created_at")
+            .first()
+        )
+        if not draft:
+            return Response(
+                {"ok": False, "error": "no_draft", "detail": "Черновик расписания не найден"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            schedule = Schedule.objects.create(
+                date=draft.date,
+                match_duration_minutes=draft.match_duration_minutes,
+                created_by=request.user,
+                is_draft=False,
+            )
+
+            # scopes: по факту будет один турнир, но копируем все на всякий случай
+            for scope in draft.scopes.all():
+                ScheduleScope.objects.create(schedule=schedule, tournament=scope.tournament)
+
+            # courts
+            court_by_index = {}
+            for c in draft.courts.all().order_by("index"):
+                nc = ScheduleCourt.objects.create(
+                    schedule=schedule,
+                    index=c.index,
+                    name=c.name,
+                    first_start_time=c.first_start_time,
+                )
+                court_by_index[int(c.index)] = nc
+
+            # runs
+            run_by_index = {}
+            for r in draft.runs.all().order_by("index"):
+                nr = ScheduleRun.objects.create(
+                    schedule=schedule,
+                    index=r.index,
+                    start_mode=r.start_mode,
+                    start_time=r.start_time,
+                    not_earlier_time=r.not_earlier_time,
+                )
+                run_by_index[int(r.index)] = nr
+
+            # global breaks
+            for b in draft.global_breaks.all().order_by("position"):
+                ScheduleGlobalBreak.objects.create(schedule=schedule, position=b.position, time=b.time, text=b.text)
+
+            # slots
+            for s in draft.slots.all().select_related("run", "court").order_by("run__index", "court__index"):
+                try:
+                    run_idx = int(getattr(s.run, "index", None) or 0)
+                    court_idx = int(getattr(s.court, "index", None) or 0)
+                except Exception:
+                    run_idx = 0
+                    court_idx = 0
+
+                run_obj = run_by_index.get(run_idx)
+                court_obj = court_by_index.get(court_idx)
+                if not run_obj or not court_obj:
+                    continue
+                ScheduleSlot.objects.create(
+                    schedule=schedule,
+                    run=run_obj,
+                    court=court_obj,
+                    slot_type=s.slot_type,
+                    match_id=s.match_id,
+                    text_title=s.text_title,
+                    text_subtitle=s.text_subtitle,
+                    override_title=s.override_title,
+                    override_subtitle=s.override_subtitle,
+                )
+
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data}, status=status.HTTP_201_CREATED)
+
+    @method_decorator(csrf_exempt)
     @action(detail=True, methods=["post"], url_path="schedule/generate", permission_classes=[IsAuthenticated])
     def schedule_generate(self, request, pk=None):
         """Создать/пересоздать расписание для турнира.
@@ -574,12 +682,12 @@ class TournamentViewSet(viewsets.ModelViewSet):
         """
 
         tournament: Tournament = self.get_object()
-        if tournament.status != Tournament.Status.ACTIVE:
+        if tournament.status not in (Tournament.Status.CREATED, Tournament.Status.ACTIVE):
             return Response(
                 {
                     "ok": False,
-                    "error": "only_active",
-                    "detail": "Расписание можно создавать только для active",
+                    "error": "only_created_or_active",
+                    "detail": "Расписание можно создавать только для created или active",
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
@@ -726,6 +834,24 @@ class TournamentViewSet(viewsets.ModelViewSet):
         self._ensure_can_view_tournament(request, tournament)
         serializer = self.get_serializer(tournament)
         return Response(serializer.data)
+
+    def _ensure_can_manage_tournament(self, request, tournament: Tournament) -> None:
+        """Проверка права на управление турниром.
+
+        Разрешено, если пользователь:
+        - ADMIN / staff / superuser
+        - или создатель турнира (IsTournamentCreatorOrAdmin)
+        """
+
+        user = getattr(request, "user", None)
+        if not user or not getattr(user, "is_authenticated", False):
+            raise PermissionDenied("Authentication required")
+
+        perm = IsTournamentCreatorOrAdmin()
+        if perm.has_object_permission(request, self, tournament):
+            return
+
+        raise PermissionDenied("You do not have permission to manage this tournament")
 
     def _ensure_can_manage_match(self, request, tournament: Tournament) -> None:
         """Проверка права на матчевые действия.

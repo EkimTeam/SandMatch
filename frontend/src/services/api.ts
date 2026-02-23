@@ -202,6 +202,13 @@ export interface KingScheduleResponse {
   };
 }
 
+export interface GroupScheduleResponse {
+  ok: boolean;
+  groups: {
+    [groupIndex: string]: Array<Array<[number, number]>>;
+  };
+}
+
 export interface SchedulePattern {
   id: number;
   name: string;
@@ -501,6 +508,11 @@ export const tournamentApi = {
     return data;
   },
 
+  createScheduleFromDraft: async (tournamentId: number): Promise<{ ok: boolean; schedule: ScheduleDTO | null; error?: string; detail?: string }> => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/schedule/from_draft/`, {});
+    return data;
+  },
+
   generateSchedule: async (
     tournamentId: number,
     payload: { date?: string; courts_count: number; match_duration_minutes?: number; start_time?: string; runs_count?: number },
@@ -574,6 +586,11 @@ export const tournamentApi = {
   // Получить статистику групп
   getGroupStats: async (id: number): Promise<any> => {
     const response = await api.get(`/tournaments/${id}/group_stats/`);
+    return response.data;
+  },
+
+  getGroupSchedule: async (id: number): Promise<GroupScheduleResponse> => {
+    const response = await api.get(`/tournaments/${id}/group_schedule/`);
     return response.data;
   },
 
