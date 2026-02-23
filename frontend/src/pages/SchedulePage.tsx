@@ -51,6 +51,11 @@ export const SchedulePage: React.FC = () => {
   const [dragOverCell, setDragOverCell] = useState<{ runIndex: number; courtIndex: number } | null>(null);
   const [dragOverUnassigned, setDragOverUnassigned] = useState<boolean>(false);
 
+  const [dragColumnIndex, setDragColumnIndex] = useState<number | null>(null);
+  const [dragOverColumnIndex, setDragOverColumnIndex] = useState<number | null>(null);
+  const [dragRowIndex, setDragRowIndex] = useState<number | null>(null);
+  const [dragOverRowIndex, setDragOverRowIndex] = useState<number | null>(null);
+
   const [pickedFromCell, setPickedFromCell] = useState<{ runIndex: number; courtIndex: number; matchId: number } | null>(null);
 
   const [localConflictsSlotIds, setLocalConflictsSlotIds] = useState<Set<number> | null>(null);
@@ -624,6 +629,103 @@ export const SchedulePage: React.FC = () => {
     setDragSource(null);
     setDragOverCell(null);
     setDragOverUnassigned(false);
+
+    setDragColumnIndex(null);
+    setDragOverColumnIndex(null);
+    setDragRowIndex(null);
+    setDragOverRowIndex(null);
+  };
+
+  const swapCellsMany = (pairs: Array<{ a: { runIndex: number; courtIndex: number }; b: { runIndex: number; courtIndex: number } }>) => {
+    if (!schedule) return;
+
+    const runIdByIndex = new Map<number, number>();
+    const courtIdByIndex = new Map<number, number>();
+    for (const r of schedule.runs || []) runIdByIndex.set(r.index, r.id);
+    for (const c of schedule.courts || []) courtIdByIndex.set(c.index, c.id);
+
+    setSchedule(prev => {
+      if (!prev) return prev;
+
+      const slotByKey = new Map<string, any>();
+      for (const s of prev.slots || []) {
+        slotByKey.set(`${s.run}:${s.court}`, s);
+      }
+
+      const ensureSlot = (runId: number, courtId: number): any => {
+        const key = `${runId}:${courtId}`;
+        const ex = slotByKey.get(key);
+        if (ex) return ex;
+        const created = {
+          id: -Date.now() + Math.floor(Math.random() * 1000),
+          run: runId,
+          court: courtId,
+          slot_type: 'match',
+          match: null,
+          text_title: null,
+          text_subtitle: null,
+          override_title: null,
+          override_subtitle: null,
+        };
+        slotByKey.set(key, created);
+        return created;
+      };
+
+      for (const p of pairs) {
+        const ra = runIdByIndex.get(p.a.runIndex);
+        const ca = courtIdByIndex.get(p.a.courtIndex);
+        const rb = runIdByIndex.get(p.b.runIndex);
+        const cb = courtIdByIndex.get(p.b.courtIndex);
+        if (!ra || !ca || !rb || !cb) continue;
+
+        const sa = ensureSlot(ra, ca);
+        const sb = ensureSlot(rb, cb);
+
+        const aPayload = {
+          slot_type: sa.slot_type,
+          match: sa.match ?? null,
+          text_title: sa.text_title ?? null,
+          text_subtitle: sa.text_subtitle ?? null,
+          override_title: sa.override_title ?? null,
+          override_subtitle: sa.override_subtitle ?? null,
+        };
+        const bPayload = {
+          slot_type: sb.slot_type,
+          match: sb.match ?? null,
+          text_title: sb.text_title ?? null,
+          text_subtitle: sb.text_subtitle ?? null,
+          override_title: sb.override_title ?? null,
+          override_subtitle: sb.override_subtitle ?? null,
+        };
+
+        slotByKey.set(`${ra}:${ca}`, { ...sa, ...bPayload });
+        slotByKey.set(`${rb}:${cb}`, { ...sb, ...aPayload });
+      }
+
+      return { ...prev, slots: Array.from(slotByKey.values()) };
+    });
+
+    setIsDirty(true);
+  };
+
+  const swapColumns = (courtIndexA: number, courtIndexB: number) => {
+    if (!schedule || courtIndexA === courtIndexB) return;
+    const runs = (schedule.runs || []).slice().sort((a, b) => a.index - b.index);
+    const pairs = runs.map(r => ({
+      a: { runIndex: r.index, courtIndex: courtIndexA },
+      b: { runIndex: r.index, courtIndex: courtIndexB },
+    }));
+    swapCellsMany(pairs);
+  };
+
+  const swapRows = (runIndexA: number, runIndexB: number) => {
+    if (!schedule || runIndexA === runIndexB) return;
+    const courts = (schedule.courts || []).slice().sort((a, b) => a.index - b.index);
+    const pairs = courts.map(c => ({
+      a: { runIndex: runIndexA, courtIndex: c.index },
+      b: { runIndex: runIndexB, courtIndex: c.index },
+    }));
+    swapCellsMany(pairs);
   };
 
   const startDragFromPool = (matchId: number) => {
@@ -1971,11 +2073,77 @@ export const SchedulePage: React.FC = () => {
               <tr>
                 <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #eee', minWidth: 140 }}>Запуск</th>
                 {schedule.courts.sort((a,b)=>a.index-b.index).map(c => (
-                  <th key={c.id} style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #f2f2f2', borderLeft: '1px solid #e5e7eb' }}>
-                    <div style={{ fontWeight: 600 }}>{c.name}</div>
-                    {c.first_start_time && (
-                      <div className="text-sm" style={{ opacity: 0.75 }}>Начало {formatHm(c.first_start_time)}</div>
-                    )}
+                  <th
+                    key={c.id}
+                    style={{
+                      textAlign: 'left',
+                      padding: 8,
+                      borderBottom: '1px solid #f2f2f2',
+                      borderLeft: '1px solid #e5e7eb',
+                      background: dragOverColumnIndex === c.index ? '#eef2ff' : undefined,
+                    }}
+                    onDragOver={e => {
+                      if (!canEdit) return;
+                      if (dragColumnIndex == null) return;
+                      e.preventDefault();
+                      setDragOverColumnIndex(c.index);
+                    }}
+                    onDragLeave={() => {
+                      setDragOverColumnIndex(prev => (prev === c.index ? null : prev));
+                    }}
+                    onDrop={e => {
+                      if (!canEdit) return;
+                      if (dragColumnIndex == null) return;
+                      e.preventDefault();
+                      const from = dragColumnIndex;
+                      const to = c.index;
+                      clearDrag();
+                      swapColumns(from, to);
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div
+                        draggable={canEdit}
+                        onDragStart={e => {
+                          if (!canEdit) return;
+                          setDragColumnIndex(c.index);
+                          setDragOverColumnIndex(null);
+                          try {
+                            e.dataTransfer.setData('text/plain', `col:${c.index}`);
+                            e.dataTransfer.effectAllowed = 'move';
+                          } catch {
+                            // noop
+                          }
+                        }}
+                        onDragEnd={() => clearDrag()}
+                        title="Перетащить столбец"
+                        style={{
+                          width: 18,
+                          height: 18,
+                          borderRadius: 4,
+                          border: '1px solid #e5e7eb',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          cursor: canEdit ? 'grab' : 'default',
+                          userSelect: 'none',
+                          fontSize: 12,
+                          opacity: 0.85,
+                        }}
+                        onClick={e => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }}
+                      >
+                        ::
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <div style={{ fontWeight: 600 }}>{c.name}</div>
+                        {c.first_start_time && (
+                          <div className="text-sm" style={{ opacity: 0.75 }}>Начало {formatHm(c.first_start_time)}</div>
+                        )}
+                      </div>
+                    </div>
                   </th>
                 ))}
               </tr>
@@ -1995,7 +2163,65 @@ export const SchedulePage: React.FC = () => {
                   <tr key={r.id}>
                     <td style={{ padding: 8, borderBottom: '1px solid #f2f2f2', verticalAlign: 'top' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <div style={{ fontWeight: 600 }}>Запуск {r.index}</div>
+                        <div
+                          draggable={canEdit}
+                          onDragStart={e => {
+                            if (!canEdit) return;
+                            setDragRowIndex(r.index);
+                            setDragOverRowIndex(null);
+                            try {
+                              e.dataTransfer.setData('text/plain', `row:${r.index}`);
+                              e.dataTransfer.effectAllowed = 'move';
+                            } catch {
+                              // noop
+                            }
+                          }}
+                          onDragEnd={() => clearDrag()}
+                          title="Перетащить строку"
+                          style={{
+                            width: 18,
+                            height: 18,
+                            borderRadius: 4,
+                            border: '1px solid #e5e7eb',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: canEdit ? 'grab' : 'default',
+                            userSelect: 'none',
+                            fontSize: 12,
+                            opacity: 0.85,
+                            background: dragOverRowIndex === r.index ? '#eef2ff' : undefined,
+                          }}
+                          onClick={e => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                          }}
+                        >
+                          ::
+                        </div>
+                        <div
+                          style={{ fontWeight: 600, background: dragOverRowIndex === r.index ? '#eef2ff' : undefined }}
+                          onDragOver={e => {
+                            if (!canEdit) return;
+                            if (dragRowIndex == null) return;
+                            e.preventDefault();
+                            setDragOverRowIndex(r.index);
+                          }}
+                          onDragLeave={() => {
+                            setDragOverRowIndex(prev => (prev === r.index ? null : prev));
+                          }}
+                          onDrop={e => {
+                            if (!canEdit) return;
+                            if (dragRowIndex == null) return;
+                            e.preventDefault();
+                            const from = dragRowIndex;
+                            const to = r.index;
+                            clearDrag();
+                            swapRows(from, to);
+                          }}
+                        >
+                          Запуск {r.index}
+                        </div>
                         {canDeleteThisRun && (
                           <button
                             type="button"
