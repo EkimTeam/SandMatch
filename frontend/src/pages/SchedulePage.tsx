@@ -78,6 +78,16 @@ export const SchedulePage: React.FC = () => {
   const [isDirty, setIsDirty] = useState(false);
   const [lastSavedSchedule, setLastSavedSchedule] = useState<ScheduleDTO | null>(null);
 
+  const [editingCourtIndex, setEditingCourtIndex] = useState<number | null>(null);
+  const [editingSlotStartLabel, setEditingSlotStartLabel] = useState<
+    | null
+    | {
+        slotId: number;
+        mode: 'then' | 'not_earlier';
+        time: string;
+      }
+  >(null);
+
   const [viewMode, setViewMode] = useState<'grid' | 'timeline'>('grid');
   const [showFact, setShowFact] = useState<boolean>(true);
   const [liveState, setLiveState] = useState<Map<number, { status: string; started_at: string | null; finished_at: string | null }>>(new Map());
@@ -104,6 +114,30 @@ export const SchedulePage: React.FC = () => {
     }
     return map;
   }, [pool]);
+
+  const updateCourtName = (courtIndex: number, name: string) => {
+    if (!schedule) return;
+    setSchedule(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        courts: (prev.courts || []).map(c => (c.index === courtIndex ? { ...c, name } : c)),
+      };
+    });
+    setIsDirty(true);
+  };
+
+  const updateSlotOverrideSubtitle = (slotId: number, override_subtitle: string | null) => {
+    if (!schedule) return;
+    setSchedule(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        slots: (prev.slots || []).map(s => (s.id === slotId ? { ...s, override_subtitle } : s)),
+      };
+    });
+    setIsDirty(true);
+  };
 
   useEffect(() => {
     if (!schedule) {
@@ -2246,14 +2280,15 @@ export const SchedulePage: React.FC = () => {
             <thead>
               <tr>
                 <th style={{ textAlign: 'left', padding: 8, borderBottom: '1px solid #eee', minWidth: 140 }}>Запуск</th>
-                {schedule.courts.sort((a,b)=>a.index-b.index).map(c => (
+                {(schedule.courts || []).slice().sort((a, b) => a.index - b.index).map(c => (
                   <th
                     key={c.id}
                     style={{
                       textAlign: 'left',
                       padding: 8,
-                      borderBottom: '1px solid #f2f2f2',
-                      borderLeft: '1px solid #e5e7eb',
+                      borderBottom: '1px solid #eee',
+                      minWidth: 170,
+                      verticalAlign: 'top',
                       background: dragOverColumnIndex === c.index ? '#eef2ff' : undefined,
                     }}
                     onDragOver={e => {
@@ -2311,8 +2346,40 @@ export const SchedulePage: React.FC = () => {
                       >
                         ::
                       </div>
-                      <div style={{ display: 'flex', flexDirection: 'column' }}>
-                        <div style={{ fontWeight: 600 }}>{c.name}</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {editingCourtIndex === c.index && canManage ? (
+                          <input
+                            className="input"
+                            value={c.name || ''}
+                            onChange={e => updateCourtName(c.index, e.target.value)}
+                            onBlur={() => setEditingCourtIndex(null)}
+                            autoFocus
+                          />
+                        ) : (
+                          <div
+                            style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+                            onDoubleClick={() => {
+                              if (!canManage) return;
+                              setEditingCourtIndex(c.index);
+                            }}
+                          >
+                            <div style={{ fontWeight: 600 }}>{c.name}</div>
+                            {canManage && (
+                              <button
+                                type="button"
+                                className="btn"
+                                style={{ padding: '2px 6px', fontSize: 12 }}
+                                onClick={e => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setEditingCourtIndex(c.index);
+                                }}
+                              >
+                                ✎
+                              </button>
+                            )}
+                          </div>
+                        )}
                         {c.first_start_time && (
                           <div className="text-sm" style={{ opacity: 0.75 }}>Начало {formatHm(c.first_start_time)}</div>
                         )}
@@ -2322,8 +2389,9 @@ export const SchedulePage: React.FC = () => {
                 ))}
               </tr>
             </thead>
+
             <tbody>
-              {schedule.runs.sort((a,b)=>a.index-b.index).map(r => {
+              {(schedule.runs || []).slice().sort((a, b) => a.index - b.index).map(r => {
                 const plannedTime = planned?.runs?.find(x => x.index === r.index)?.planned_start_time;
                 const slotsForRun = (schedule.slots || []).filter(s => s.run === r.id);
                 const isEmptyRun = slotsForRun.every(s => {
@@ -2411,9 +2479,9 @@ export const SchedulePage: React.FC = () => {
                           </button>
                         )}
                       </div>
-                      <div className="text-sm" style={{ opacity: 0.8 }}>План: {plannedTime || '—'}</div>
+                      <div className="text-sm" style={{ opacity: 0.8, marginTop: 4 }}>План: {plannedTime || '—'}</div>
                     </td>
-                    {schedule.courts.sort((a,b)=>a.index-b.index).map(c => {
+                    {(schedule.courts || []).slice().sort((a, b) => a.index - b.index).map(c => {
                       const slot = slotsByRunCourt.get(`${r.index}:${c.index}`);
                       const conflictSet = localConflictsSlotIds || conflictsSlotIds;
                       const isConflict = slot?.id ? conflictSet.has(slot.id) : false;
@@ -2454,9 +2522,123 @@ export const SchedulePage: React.FC = () => {
                           }}
                         >
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                            <div className="text-sm" style={{ opacity: 0.75 }}>
-                              {runStartLabel(r.index)}
+                            <div
+                              className="text-sm"
+                              style={{ opacity: 0.75, cursor: canManage ? 'pointer' : 'default' }}
+                              onClick={e => {
+                                if (!canManage) return;
+                                e.preventDefault();
+                                e.stopPropagation();
+                                if (!slot?.id) return;
+
+                                if (editingSlotStartLabel?.slotId === slot.id) {
+                                  setEditingSlotStartLabel(null);
+                                  return;
+                                }
+
+                                const raw = String(slot?.override_subtitle || '').trim();
+                                const m = raw.match(/не\s*ранее\s*(\d{2}:\d{2})/i);
+                                const mode: 'then' | 'not_earlier' = m ? 'not_earlier' : 'then';
+                                const time = m ? String(m[1]) : '';
+                                setEditingSlotStartLabel({ slotId: slot.id, mode, time });
+                              }}
+                            >
+                              {slot?.override_subtitle ? slot.override_subtitle : runStartLabel(r.index)}
                             </div>
+
+                            {editingSlotStartLabel?.slotId === slot?.id && canManage && (
+                              <div
+                                data-export-exclude="true"
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                  flexWrap: 'wrap',
+                                  background: '#fff',
+                                  border: '1px solid #e5e7eb',
+                                  borderRadius: 8,
+                                  padding: 4,
+                                }}
+                                onClick={e => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                }}
+                              >
+                                {(() => {
+                                  const stLocal = editingSlotStartLabel;
+                                  if (!stLocal) return null;
+                                  return (
+                                    <>
+                                <select
+                                  className="input"
+                                  style={{ padding: '4px 8px', fontSize: 12, height: 30 }}
+                                  value={stLocal.mode}
+                                  onChange={e => {
+                                    const mode = e.target.value as 'then' | 'not_earlier';
+                                    setEditingSlotStartLabel(prev => (prev ? { ...prev, mode } : prev));
+                                  }}
+                                >
+                                  <option value="then">Затем</option>
+                                  <option value="not_earlier">Не ранее</option>
+                                </select>
+
+                                {stLocal.mode === 'not_earlier' && (
+                                  <input
+                                    className="input"
+                                    type="time"
+                                    style={{ padding: '4px 8px', fontSize: 12, height: 30 }}
+                                    value={stLocal.time}
+                                    onChange={e => {
+                                      const v = e.target.value;
+                                      setEditingSlotStartLabel(prev => (prev ? { ...prev, time: v } : prev));
+                                    }}
+                                  />
+                                )}
+
+                                <button
+                                  type="button"
+                                  className="btn"
+                                  title="Применить"
+                                  style={{ padding: '4px 8px', fontSize: 12, height: 30, lineHeight: 1 }}
+                                  onClick={e => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    const st = editingSlotStartLabel;
+                                    if (!st) return;
+
+                                    const next =
+                                      st.mode === 'then'
+                                        ? 'Затем'
+                                        : st.time
+                                          ? `Не ранее ${st.time}`
+                                          : 'Не ранее';
+                                    updateSlotOverrideSubtitle(st.slotId, next);
+                                    setEditingSlotStartLabel(null);
+                                  }}
+                                >
+                                  ✓
+                                </button>
+
+                                <button
+                                  type="button"
+                                  className="btn"
+                                  title="Сбросить"
+                                  style={{ padding: '4px 8px', fontSize: 12, height: 30, lineHeight: 1 }}
+                                  onClick={e => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    if (!slot?.id) return;
+                                    updateSlotOverrideSubtitle(slot.id, null);
+                                    setEditingSlotStartLabel(null);
+                                  }}
+                                >
+                                  ↺
+                                </button>
+                                    </>
+                                  );
+                                })()}
+                              </div>
+                            )}
                             <div
                             draggable={canEdit && !!cellMatchId}
                             onDragStart={e => {
