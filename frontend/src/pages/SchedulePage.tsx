@@ -1070,6 +1070,25 @@ export const SchedulePage: React.FC = () => {
     return s.length >= 5 ? s.slice(0, 5) : s;
   };
 
+  const normalizeHmInput = (raw: string): string => {
+    const cleaned = String(raw || '').replace(/[^0-9:]/g, '');
+    const digits = cleaned.replace(/:/g, '').slice(0, 4);
+    if (!digits) return '';
+    if (digits.length <= 2) return digits;
+    return `${digits.slice(0, 2)}:${digits.slice(2)}`;
+  };
+
+  const clampHm = (raw: string): string => {
+    const norm = normalizeHmInput(raw);
+    const m = norm.match(/^(\d{1,2})(?::(\d{1,2}))?$/);
+    if (!m) return norm;
+    const hh = Math.min(23, Math.max(0, Number(m[1] || 0)));
+    const mm = Math.min(59, Math.max(0, Number(m[2] || 0)));
+    const hhStr = String(hh).padStart(2, '0');
+    const mmStr = String(mm).padStart(2, '0');
+    return `${hhStr}:${mmStr}`;
+  };
+
   const runStartLabel = (runIndex: number) => {
     if (!schedule) return '';
     const r = schedule.runs.find(x => x.index === runIndex);
@@ -2585,11 +2604,17 @@ export const SchedulePage: React.FC = () => {
                                 {stLocal.mode === 'not_earlier' && (
                                   <input
                                     className="input"
-                                    type="time"
-                                    style={{ padding: '4px 8px', fontSize: 12, height: 30 }}
+                                    type="text"
+                                    inputMode="numeric"
+                                    placeholder="HH:MM"
+                                    style={{ padding: '4px 8px', fontSize: 12, height: 30, width: 90 }}
                                     value={stLocal.time}
                                     onChange={e => {
-                                      const v = e.target.value;
+                                      const v = normalizeHmInput(e.target.value);
+                                      setEditingSlotStartLabel(prev => (prev ? { ...prev, time: v } : prev));
+                                    }}
+                                    onBlur={e => {
+                                      const v = clampHm(e.target.value);
                                       setEditingSlotStartLabel(prev => (prev ? { ...prev, time: v } : prev));
                                     }}
                                   />
@@ -2606,11 +2631,12 @@ export const SchedulePage: React.FC = () => {
                                     const st = editingSlotStartLabel;
                                     if (!st) return;
 
+                                    const t = clampHm(st.time);
                                     const next =
                                       st.mode === 'then'
                                         ? 'Затем'
-                                        : st.time
-                                          ? `Не ранее ${st.time}`
+                                        : t
+                                          ? `Не ранее ${t}`
                                           : 'Не ранее';
                                     updateSlotOverrideSubtitle(st.slotId, next);
                                     setEditingSlotStartLabel(null);
