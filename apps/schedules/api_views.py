@@ -466,8 +466,8 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                     if mode == "not_earlier":
                         t = getattr(run_obj, "not_earlier_time", None)
                         if t:
-                            return f"не ранее {t.strftime('%H:%M')}"
-                        return "не ранее"
+                            return f"Не ранее {t.strftime('%H:%M')}"
+                        return "Не ранее"
                     t = getattr(run_obj, "start_time", None)
                     if t:
                         return t.strftime("%H:%M")
@@ -531,7 +531,7 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                     m = getattr(slot, "match", None)
                     if not m:
                         return f'<div class="cellText">Матч #{esc(slot.match_id)}</div>'
-                    t0 = run_top_label(run_obj)
+                    t0 = str(getattr(slot, "override_subtitle", None) or "").strip() or run_top_label(run_obj)
                     meta = match_meta_label(m)
                     t1 = team_label(getattr(m, "team_1", None))
                     t2 = team_label(getattr(m, "team_2", None))
@@ -953,6 +953,352 @@ class ScheduleViewSet(viewsets.ModelViewSet):
 
         resp = HttpResponse(pdf, content_type="application/pdf")
         resp["Content-Disposition"] = f'attachment; filename="schedule_{schedule.id}.pdf"'
+        return resp
+
+    @action(detail=True, methods=["get"], url_path="export/docx", permission_classes=[IsAuthenticated])
+    def export_docx(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        try:
+            from docx import Document
+            from docx.enum.section import WD_ORIENT
+            from docx.enum.table import WD_ALIGN_VERTICAL
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+            from docx.shared import Inches, Pt
+        except Exception:
+            return Response(
+                {
+                    "ok": False,
+                    "error": "docx_export_unavailable",
+                    "detail": "DOCX export is unavailable on this server (missing dependency: python-docx)",
+                },
+                status=status.HTTP_501_NOT_IMPLEMENTED,
+            )
+
+        courts = list(schedule.courts.all().order_by("index"))
+        runs = list(schedule.runs.all().order_by("index"))
+        slots_qs = schedule.slots.select_related(
+            "run",
+            "court",
+            "match",
+            "match__tournament",
+            "match__team_1",
+            "match__team_2",
+        )
+        slots_map: dict[tuple[int, int], Any] = {}
+        for s in slots_qs:
+            slots_map[(s.run_id, s.court_id)] = s
+
+        breaks = list(schedule.global_breaks.all().order_by("position"))
+        breaks_by_pos: dict[int, list[Any]] = {}
+        for br in breaks:
+            breaks_by_pos.setdefault(int(br.position), []).append(br)
+
+        tournament_names = []
+        for scope in schedule.scopes.select_related("tournament").all():
+            if scope.tournament and scope.tournament.name:
+                tournament_names.append(str(scope.tournament.name))
+        title = " + ".join(tournament_names) if tournament_names else "Расписание"
+
+        # Precompute RR meta label: "гр.X • a-b" (best-effort)
+        rr_row_by_team: dict[tuple[int, int, int], int] = {}
+        try:
+            from apps.tournaments.models import TournamentEntry
+
+            t_ids: set[int] = set()
+            team_ids: set[int] = set()
+            for s in slots_qs:
+                if getattr(s, "slot_type", None) != "match":
+                    continue
+                m = getattr(s, "match", None)
+                if not m or not getattr(m, "tournament_id", None):
+                    continue
+                t_ids.add(int(m.tournament_id))
+                if getattr(m, "team_1_id", None):
+                    team_ids.add(int(m.team_1_id))
+                if getattr(m, "team_2_id", None):
+                    team_ids.add(int(m.team_2_id))
+
+            if t_ids and team_ids:
+                qs = TournamentEntry.objects.filter(tournament_id__in=list(t_ids), team_id__in=list(team_ids)).only(
+                    "tournament_id", "team_id", "group_index", "row_index"
+                )
+                for e in qs:
+                    gi = int(e.group_index) if e.group_index is not None else 0
+                    if gi <= 0 or e.row_index is None:
+                        continue
+                    rr_row_by_team[(int(e.tournament_id), gi, int(e.team_id))] = int(e.row_index)
+        except Exception:
+            rr_row_by_team = {}
+
+        def run_top_label(run_obj: Any) -> str:
+            try:
+                mode = getattr(run_obj, "start_mode", "")
+                if mode == "then":
+                    return "Затем"
+                if mode == "not_earlier":
+                    t = getattr(run_obj, "not_earlier_time", None)
+                    if t:
+                        return f"Не ранее {t.strftime('%H:%M')}"
+                    return "Не ранее"
+                t = getattr(run_obj, "start_time", None)
+                if t:
+                    return t.strftime("%H:%M")
+            except Exception:
+                pass
+            return ""
+
+        def match_meta_label(m: Any) -> str:
+            if not m:
+                return ""
+            gi = getattr(m, "group_index", None)
+            group = f"гр.{gi}" if gi is not None else ""
+            try:
+                system = getattr(getattr(m, "tournament", None), "system", "")
+            except Exception:
+                system = ""
+            if system == "round_robin":
+                try:
+                    gi_int = int(gi) if gi is not None else 0
+                    t_id = int(getattr(m, "tournament_id", 0) or 0)
+                    a_id = int(getattr(m, "team_1_id", 0) or 0)
+                    b_id = int(getattr(m, "team_2_id", 0) or 0)
+                    r1 = rr_row_by_team.get((t_id, gi_int, a_id))
+                    r2 = rr_row_by_team.get((t_id, gi_int, b_id))
+                    pair = f"{r1}-{r2}" if (r1 is not None and r2 is not None) else ""
+                    return " • ".join([p for p in [group, pair] if p])
+                except Exception:
+                    return group
+            return group
+
+        def split_courts_evenly(items: list[Any], max_per_page: int = 10) -> list[list[Any]]:
+            n = len(items)
+            if n <= max_per_page:
+                return [items]
+            import math
+
+            k = int(math.ceil(n / max_per_page))
+            per = int(math.ceil(n / k))
+            chunks = []
+            i = 0
+            while i < n:
+                chunks.append(items[i : i + per])
+                i += per
+            return chunks
+
+        def _raw_team_label(team: Any) -> str:
+            if not team:
+                return ""
+            return getattr(team, "display_name", None) or getattr(team, "name", None) or str(team)
+
+        def _split_players(label: str) -> list[tuple[str, str]]:
+            import re
+
+            s = (label or "").strip()
+            if not s or s.upper() == "TBD":
+                return []
+
+            parts = [p.strip() for p in re.split(r"\s*/\s*", s) if p.strip()]
+            out: list[tuple[str, str]] = []
+            for p in parts:
+                tokens = [t for t in p.split() if t]
+                if not tokens:
+                    continue
+                surname = tokens[0]
+                initial = ""
+                if len(tokens) >= 2 and tokens[1]:
+                    initial = tokens[1][0].upper()
+                out.append((surname, initial))
+            return out
+
+        def _players_unique_key(surname: str, initial: str) -> str:
+            return f"{surname}|{initial}" if initial else surname
+
+        surname_to_keys: dict[str, set[str]] = {}
+        for s in slots_qs:
+            if getattr(s, "slot_type", None) != "match":
+                continue
+            m = getattr(s, "match", None)
+            if not m:
+                continue
+            for team in [getattr(m, "team_1", None), getattr(m, "team_2", None)]:
+                raw = _raw_team_label(team)
+                for (sn, ini) in _split_players(raw):
+                    surname_to_keys.setdefault(sn, set()).add(_players_unique_key(sn, ini))
+
+        def team_label(team: Any) -> list[str]:
+            if not team:
+                return ["TBD"]
+
+            raw = _raw_team_label(team)
+            if not raw:
+                return ["TBD"]
+
+            players = _split_players(raw)
+            if not players:
+                return [raw]
+
+            labels: list[str] = []
+            for (sn, ini) in players:
+                if len(surname_to_keys.get(sn, set())) > 1 and ini:
+                    labels.append(f"{sn} {ini}.")
+                else:
+                    labels.append(sn)
+            return labels
+
+        def slot_cell_lines(run_obj: Any, slot: Any) -> list[str]:
+            if not slot:
+                return []
+            if getattr(slot, "slot_type", None) == "text":
+                t = str(getattr(slot, "override_title", None) or getattr(slot, "text_title", None) or "").strip()
+                return [t] if t else []
+            if getattr(slot, "slot_type", None) == "match" and getattr(slot, "match_id", None):
+                if getattr(slot, "override_title", None):
+                    return [str(slot.override_title)]
+                m = getattr(slot, "match", None)
+                if not m:
+                    return [f"Матч #{slot.match_id}"]
+                top = str(getattr(slot, "override_subtitle", None) or "").strip() or run_top_label(run_obj)
+                meta = match_meta_label(m)
+                a = team_label(getattr(m, "team_1", None))
+                b = team_label(getattr(m, "team_2", None))
+                lines: list[str] = []
+                if top:
+                    lines.append(top)
+                if meta:
+                    lines.append(meta)
+                lines.extend([ln for ln in a if ln])
+                lines.append("против")
+                lines.extend([ln for ln in b if ln])
+                return lines
+            return []
+
+        court_chunks = split_courts_evenly(courts, max_per_page=10)
+
+        doc = Document()
+
+        # A4 landscape like PDF (default in current PDF fallback)
+        try:
+            section = doc.sections[0]
+            section.orientation = WD_ORIENT.LANDSCAPE
+            new_width, new_height = section.page_height, section.page_width
+            section.page_width = new_width
+            section.page_height = new_height
+            section.left_margin = Inches(0.4)
+            section.right_margin = Inches(0.4)
+            section.top_margin = Inches(0.4)
+            section.bottom_margin = Inches(0.4)
+        except Exception:
+            pass
+
+        def add_header_block():
+            p = doc.add_paragraph("Расписание")
+            try:
+                p.runs[0].font.size = Pt(14)
+                p.runs[0].bold = True
+            except Exception:
+                pass
+            p2 = doc.add_paragraph(title)
+            try:
+                p2.runs[0].font.size = Pt(10)
+            except Exception:
+                pass
+            p3 = doc.add_paragraph(str(schedule.date))
+            try:
+                p3.runs[0].font.size = Pt(10)
+            except Exception:
+                pass
+
+        for chunk_i, courts_subset in enumerate(court_chunks):
+            if chunk_i > 0:
+                try:
+                    doc.add_page_break()
+                except Exception:
+                    doc.add_paragraph("\f")
+
+            add_header_block()
+
+            # table: header row + body (runs + breaks)
+            cols = 1 + len(courts_subset)
+            table = doc.add_table(rows=1, cols=cols)
+            table.style = "Table Grid"
+            hdr_cells = table.rows[0].cells
+            hdr_cells[0].text = "Запуск"
+            for j, cobj in enumerate(courts_subset, start=1):
+                hdr_cells[j].text = str(getattr(cobj, "name", None) or f"Корт {getattr(cobj, 'index', j)}")
+                try:
+                    hdr_cells[j].vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                except Exception:
+                    pass
+
+            def add_run_row(run_obj: Any):
+                row_cells = table.add_row().cells
+                row_cells[0].text = f"Запуск {run_obj.index}"
+                # (План) show start_time if present
+                if getattr(run_obj, "start_time", None):
+                    row_cells[0].text += f"\nПлан: {run_obj.start_time.strftime('%H:%M')}"
+
+                for j, cobj in enumerate(courts_subset, start=1):
+                    slot = slots_map.get((run_obj.id, cobj.id))
+                    lines = slot_cell_lines(run_obj, slot)
+                    row_cells[j].text = "\n".join([str(x) for x in lines if str(x).strip()]) if lines else ""
+                    try:
+                        row_cells[j].vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                        for par in row_cells[j].paragraphs:
+                            par.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                            for r in par.runs:
+                                r.font.size = Pt(10)
+                    except Exception:
+                        pass
+
+            def add_break_row(br: Any):
+                row_cells = table.add_row().cells
+                t = br.time.strftime("%H:%M") if getattr(br, "time", None) else ""
+                row_cells[0].text = ""
+                msg = f"{t} — {br.text}".strip(" —")
+                if cols >= 2:
+                    row_cells[1].text = msg
+                    # best-effort merge across remaining court columns
+                    try:
+                        for k in range(2, cols):
+                            row_cells[1].merge(row_cells[k])
+                    except Exception:
+                        pass
+                    try:
+                        for par in row_cells[1].paragraphs:
+                            par.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                            for r in par.runs:
+                                r.font.size = Pt(10)
+                    except Exception:
+                        pass
+
+            run_index_to_obj = {int(r.index): r for r in runs}
+            current_run_idx = 1
+            while current_run_idx <= len(runs):
+                for br in breaks_by_pos.get(current_run_idx - 1, []):
+                    add_break_row(br)
+                run_obj = run_index_to_obj.get(current_run_idx)
+                if run_obj is not None:
+                    add_run_row(run_obj)
+                current_run_idx += 1
+
+            for br in breaks_by_pos.get(len(runs), []):
+                add_break_row(br)
+
+            doc.add_paragraph("")
+
+        buf = BytesIO()
+        doc.save(buf)
+        buf.seek(0)
+
+        from django.http import HttpResponse
+
+        resp = HttpResponse(
+            buf.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        resp["Content-Disposition"] = f'attachment; filename="schedule_{schedule.id}.docx"'
         return resp
 
     @action(detail=True, methods=["get"], url_path="planned_times", permission_classes=[AllowAny])

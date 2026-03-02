@@ -75,6 +75,9 @@ export const SchedulePage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
 
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'pdf' | 'docx'>('pdf');
+
   const [isDirty, setIsDirty] = useState(false);
   const [lastSavedSchedule, setLastSavedSchedule] = useState<ScheduleDTO | null>(null);
 
@@ -1875,24 +1878,33 @@ export const SchedulePage: React.FC = () => {
     }
   };
 
-  const handleExportPdf = async () => {
+  const doExport = async (format: 'pdf' | 'docx') => {
     if (!schedule) return;
     setExporting(true);
     try {
-      const blob = await scheduleApi.exportPdf(schedule.id);
+      const isDocx = format === 'docx';
+      const blob = isDocx ? await scheduleApi.exportDocx(schedule.id) : await scheduleApi.exportPdf(schedule.id);
+      const ext = isDocx ? 'docx' : 'pdf';
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `schedule_${schedule.id}.pdf`;
+      a.download = `schedule_${schedule.id}.${ext}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 2000);
     } catch (e: any) {
-      alert(e?.response?.data?.detail || e?.message || 'Не удалось экспортировать PDF');
+      const msg = format === 'docx' ? 'Не удалось экспортировать DOCX' : 'Не удалось экспортировать PDF';
+      alert(e?.response?.data?.detail || e?.message || msg);
     } finally {
       setExporting(false);
     }
+  };
+
+  const handleExport = () => {
+    if (!schedule) return;
+    setExportFormat('pdf');
+    setShowExportDialog(true);
   };
 
   const handleDeleteSchedule = async () => {
@@ -1973,7 +1985,7 @@ export const SchedulePage: React.FC = () => {
           {schedule && viewMode === 'grid' && (
             <>
               <button className="btn" disabled={saving || !canManage} onClick={handleSave}>Сохранить</button>
-              <button className="btn" disabled={exporting} onClick={handleExportPdf}>Экспорт PDF</button>
+              <button className="btn" disabled={exporting} onClick={handleExport}>Экспорт PDF/DOCX</button>
             </>
           )}
         </div>
@@ -2869,6 +2881,82 @@ export const SchedulePage: React.FC = () => {
               </button>
               <button className="btn" onClick={handleDiscardChanges} disabled={saving}>
                 Отменить изменения
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showExportDialog && (
+        <div
+          data-export-exclude="true"
+          style={{
+            position: 'fixed',
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0,0,0,0.35)',
+            zIndex: 50,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 12,
+          }}
+          onClick={() => {
+            if (exporting) return;
+            setShowExportDialog(false);
+          }}
+        >
+          <div
+            className="card"
+            style={{ width: 420, maxWidth: '100%', padding: 14 }}
+            onClick={e => {
+              e.stopPropagation();
+            }}
+          >
+            <div style={{ fontWeight: 700, marginBottom: 10 }}>Экспорт</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="radio"
+                  name="export-format"
+                  checked={exportFormat === 'pdf'}
+                  onChange={() => setExportFormat('pdf')}
+                  disabled={exporting}
+                />
+                PDF
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="radio"
+                  name="export-format"
+                  checked={exportFormat === 'docx'}
+                  onChange={() => setExportFormat('docx')}
+                  disabled={exporting}
+                />
+                DOCX
+              </label>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                type="button"
+                className="btn"
+                disabled={exporting}
+                onClick={() => setShowExportDialog(false)}
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={exporting}
+                onClick={async () => {
+                  setShowExportDialog(false);
+                  await doExport(exportFormat);
+                }}
+              >
+                Экспорт
               </button>
             </div>
           </div>
