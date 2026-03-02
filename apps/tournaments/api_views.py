@@ -1100,6 +1100,8 @@ class TournamentViewSet(viewsets.ModelViewSet):
 
         tournament: Tournament = self.get_object()
 
+        old_date_before = getattr(tournament, "date", None)
+        old_start_time_before = getattr(tournament, "start_time", None)
         old_system_before = tournament.system
         old_groups_count_before = int(getattr(tournament, "groups_count", None) or 1)
         old_planned_participants_before = getattr(tournament, "planned_participants", None)
@@ -1189,6 +1191,11 @@ class TournamentViewSet(viewsets.ModelViewSet):
         from django.db import transaction
 
         with transaction.atomic():
+            date_or_time_changed = (
+                getattr(tournament, "date", None) != old_date_before
+                or getattr(tournament, "start_time", None) != old_start_time_before
+            )
+
             old_system = old_system_before
             old_groups_count = old_groups_count_before
             old_planned_participants = old_planned_participants_before
@@ -1245,6 +1252,27 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     tournament.group_schedule_patterns = {}
 
             tournament.save()
+
+            # Если поменялась дата/время старта турнира — сбрасываем историю авто-анонсов,
+            # чтобы периодические задачи пересчитали окна (72h/48h/24h/2h) относительно нового start_dt.
+            if date_or_time_changed:
+                try:
+                    settings_obj = tournament.announcement_settings
+                    settings_obj.sent_72h_before = None
+                    settings_obj.sent_48h_before = None
+                    settings_obj.sent_24h_before = None
+                    settings_obj.sent_2h_before = None
+                    settings_obj.save(
+                        update_fields=[
+                            "sent_72h_before",
+                            "sent_48h_before",
+                            "sent_24h_before",
+                            "sent_2h_before",
+                            "updated_at",
+                        ]
+                    )
+                except Exception:
+                    pass
 
             # Если изменились ключевые параметры турнира, расписания становятся невалидными.
             # Удаляем ВСЕ расписания (и draft, и official), связанные со scope турнира.
@@ -3898,6 +3926,89 @@ class TournamentViewSet(viewsets.ModelViewSet):
         
         text = generate_announcement_text(tournament)
         return Response({"ok": True, "text": text})
+
+    @action(detail=True, methods=["get"], url_path="announcement_chat_info", permission_classes=[IsAuthenticated])
+    def announcement_chat_info(self, request, pk=None):
+        """Вернуть информацию о Telegram-чате для анонсов (например, название чата).
+
+        Используется в веб-кнопке "Анонс сейчас!".
+        Доступно только организатору/админу и только для турниров в статусе CREATED.
+        """
+
+        tournament: Tournament = self.get_object()
+
+        perm = IsTournamentCreatorOrAdmin()
+        if not perm.has_object_permission(request, self, tournament):
+            raise PermissionDenied("You do not have permission to manage announcement settings for this tournament")
+
+        if tournament.status != Tournament.Status.CREATED:
+            return Response({"ok": False, "error": "Доступно только для турниров в статусе CREATED"}, status=400)
+
+        try:
+            settings_obj = tournament.announcement_settings
+        except TournamentAnnouncementSettings.DoesNotExist:
+            return Response({"ok": False, "error": "Настройки анонсов не найдены"}, status=400)
+
+        chat_id = (settings_obj.telegram_chat_id or "").strip()
+        if not chat_id:
+            return Response({"ok": False, "error": "Не задан telegram_chat_id"}, status=400)
+
+        # Получаем название чата через Telegram Bot API
+        try:
+            from django.conf import settings as django_settings
+            from aiogram import Bot
+            from asgiref.sync import async_to_sync
+
+            async def _get_chat_title() -> str:
+                bot = Bot(token=django_settings.TELEGRAM_BOT_TOKEN)
+                try:
+                    chat = await bot.get_chat(chat_id=chat_id)
+                    title = getattr(chat, "title", None) or getattr(chat, "full_name", None) or ""
+                    return str(title)
+                finally:
+                    await bot.session.close()
+
+            title = async_to_sync(_get_chat_title)()
+        except Exception:
+            title = ""
+
+        return Response({"ok": True, "chat_id": chat_id, "chat_title": title})
+
+    @method_decorator(csrf_exempt)
+    @action(detail=True, methods=["post"], url_path="send_announcement_now", permission_classes=[IsAuthenticated])
+    def send_announcement_now(self, request, pk=None):
+        """Отправить анонс в Telegram-чат немедленно (с возможностью редактирования текста).
+
+        Используется веб-кнопкой "Анонс сейчас!".
+        Доступно только организатору/админу и только для турниров в статусе CREATED.
+        """
+
+        tournament: Tournament = self.get_object()
+
+        perm = IsTournamentCreatorOrAdmin()
+        if not perm.has_object_permission(request, self, tournament):
+            raise PermissionDenied("You do not have permission to manage announcement settings for this tournament")
+
+        if tournament.status != Tournament.Status.CREATED:
+            return Response({"ok": False, "error": "Доступно только для турниров в статусе CREATED"}, status=400)
+
+        try:
+            settings_obj = tournament.announcement_settings
+        except TournamentAnnouncementSettings.DoesNotExist:
+            return Response({"ok": False, "error": "Настройки анонсов не найдены"}, status=400)
+
+        chat_id = (settings_obj.telegram_chat_id or "").strip()
+        if not chat_id:
+            return Response({"ok": False, "error": "Не задан telegram_chat_id"}, status=400)
+
+        data = request.data or {}
+        text = (data.get("text") or "").strip()
+        if not text:
+            return Response({"ok": False, "error": "Пустой текст анонса"}, status=400)
+
+        from apps.telegram_bot.tasks import send_custom_tournament_announcement_to_chat
+        send_custom_tournament_announcement_to_chat.delay(tournament.id, text)
+        return Response({"ok": True})
 
     @method_decorator(csrf_exempt)
     @action(
