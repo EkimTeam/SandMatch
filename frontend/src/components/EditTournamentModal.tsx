@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import './NewTournamentModal.css';
 import { tournamentApi } from '../services/api';
 
@@ -30,13 +30,23 @@ export const EditTournamentModal: React.FC<EditTournamentModalProps> = ({
   const RR_DEFAULT_NAME = '(ITF): победы > личные встречи > разница сетов между всеми > личные встречи > разница геймов между всеми > личные встречи';
   const FREE_FORMAT_NAME = 'свободный формат';
 
+  const tournamentSetFormatId: string | number =
+    (tournament?.set_format && tournament.set_format.id) ||
+    tournament?.set_format_id ||
+    '';
+
+  const tournamentRulesetId: string | number =
+    (tournament?.ruleset && tournament.ruleset.id) ||
+    tournament?.ruleset_id ||
+    '';
+
   const initialSetFormatId: string | number =
-    (tournament.set_format && tournament.set_format.id) ||
+    tournamentSetFormatId ||
     (setFormats.find(f => f.name === FREE_FORMAT_NAME)?.id) ||
     setFormats[0]?.id || '';
 
   const initialRulesetId: string | number =
-    (tournament.ruleset && tournament.ruleset.id) ||
+    tournamentRulesetId ||
     (rulesets.find(r => r.name === RR_DEFAULT_NAME)?.id) ||
     rulesets[0]?.id || '';
 
@@ -61,9 +71,53 @@ export const EditTournamentModal: React.FC<EditTournamentModalProps> = ({
   const [localRulesets, setLocalRulesets] = useState<Ruleset[]>([]);
   const effectiveRulesets = (localRulesets && localRulesets.length > 0) ? localRulesets : rulesets;
 
+  const userChangedSelectRef = useRef({ set_format_id: false, ruleset_id: false });
+
+  useEffect(() => {
+    const desiredSetFormatId =
+      tournamentSetFormatId ||
+      (setFormats.find(f => f.name === FREE_FORMAT_NAME)?.id) ||
+      setFormats[0]?.id ||
+      '';
+    const desiredRulesetId =
+      tournamentRulesetId ||
+      (effectiveRulesets.find(r => r.name === RR_DEFAULT_NAME)?.id) ||
+      effectiveRulesets[0]?.id ||
+      '';
+
+    const setFormatOptions = new Set((setFormats || []).map(f => String(f.id)));
+    const rulesetOptions = new Set((effectiveRulesets || []).map(r => String(r.id)));
+
+    setFormData(prev => {
+      const next: any = { ...prev };
+
+      const currentSetFormatId = prev.set_format_id;
+      const currentRulesetId = prev.ruleset_id;
+
+      const shouldFixSetFormat =
+        (!userChangedSelectRef.current.set_format_id && String(currentSetFormatId) !== String(desiredSetFormatId) && !!desiredSetFormatId)
+        || (!currentSetFormatId && !!desiredSetFormatId)
+        || (!!desiredSetFormatId && setFormatOptions.size > 0 && !setFormatOptions.has(String(currentSetFormatId)));
+      const shouldFixRuleset =
+        (!userChangedSelectRef.current.ruleset_id && String(currentRulesetId) !== String(desiredRulesetId) && !!desiredRulesetId)
+        || (!currentRulesetId && !!desiredRulesetId)
+        || (!!desiredRulesetId && rulesetOptions.size > 0 && !rulesetOptions.has(String(currentRulesetId)));
+
+      if (shouldFixSetFormat) next.set_format_id = desiredSetFormatId;
+      if (shouldFixRuleset) next.ruleset_id = desiredRulesetId;
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tournamentSetFormatId, tournamentRulesetId, setFormats, effectiveRulesets]);
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target;
     const checked = (e.target as HTMLInputElement).checked;
+
+    if (name === 'set_format_id' || name === 'ruleset_id') {
+      (userChangedSelectRef.current as any)[name] = true;
+    }
+
     setFormData(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
     if (errors[name]) {
       setErrors(prev => ({ ...prev, [name]: '' }));

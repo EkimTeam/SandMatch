@@ -230,6 +230,7 @@ export const TournamentDetailPage: React.FC = () => {
       writePendingStart(false);
       setDragDropState(prev => ({ ...prev, isSelectionLocked: true }));
       await reload();
+      await refreshGroupStats();
     } catch (error) {
       console.error('Failed to lock participants:', error);
       alert('Не удалось начать турнир');
@@ -3381,9 +3382,10 @@ export const TournamentDetailPage: React.FC = () => {
                 await tournamentApi.unlockParticipants(t.id);
                 setLockParticipants(false);
                 await reload();
+                await refreshGroupStats();
               } catch (error) {
                 console.error('Failed to unlock participants:', error);
-                alert('Не удалось вернуть турнир в статус "Регистрация"');
+                alert('Не удалось вернуть турнир в регистрацию');
               } finally {
                 setSaving(false);
               }

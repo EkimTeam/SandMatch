@@ -7,6 +7,7 @@ from django.db import transaction
 
 from apps.matches.models import Match
 from apps.tournaments.models import Tournament, TournamentEntry, TournamentEntryStats
+from apps.tournaments.free_format_utils import is_free_format as _is_free_format
 
 
 def _ensure_stats(entry: TournamentEntry) -> TournamentEntryStats:
@@ -25,23 +26,77 @@ def _aggregate_for_group(tournament: Tournament, group_index: int) -> Dict[int, 
     # Определим, является ли формат турнира режимом "только тай-брейк" или свободным форматом
     set_format = getattr(tournament, "set_format", None)
     only_tiebreak_mode = False
-    is_free_format = False
-    
+    is_free = False
+
     if set_format is not None:
         try:
-            # Свободный формат: games_to == 0 и max_sets == 0
-            is_free_format = (int(getattr(set_format, "games_to", 6)) == 0 and 
-                            int(getattr(set_format, "max_sets", 1)) == 0)
-            
+            is_free = bool(_is_free_format(set_format))
             # Режим только тайбрейк
             only_tiebreak_mode = bool(getattr(set_format, "allow_tiebreak_only_set", False)) and int(getattr(set_format, "max_sets", 1)) == 1
         except Exception:
             only_tiebreak_mode = False
-            is_free_format = False
+            is_free = False
 
     for m in matches:
         t1 = m.team_1_id
         t2 = m.team_2_id
+        if not t1 or not t2:
+            continue
+
+        # Свободный формат: считаем сеты/геймы с учётом ориентации команды в матче.
+        # (games_1/games_2 относятся к team_1/team_2; для team_2 сравнение делаем зеркально)
+        if is_free:
+            for s in m.sets.all().order_by("index"):
+                if s.is_tiebreak_only:
+                    # Чемпионский TB: всегда 1:0/0:1 по сетам.
+                    if (s.tb_1 is None) or (s.tb_2 is None):
+                        continue
+
+                    if s.tb_1 > s.tb_2:
+                        agg[t1]["sets_won"] += 1
+                        agg[t2]["sets_lost"] += 1
+                        if only_tiebreak_mode:
+                            agg[t1]["games_won"] += s.tb_1
+                            agg[t1]["games_lost"] += s.tb_2
+                            agg[t2]["games_won"] += s.tb_2
+                            agg[t2]["games_lost"] += s.tb_1
+                        else:
+                            agg[t1]["games_won"] += 1
+                            agg[t2]["games_lost"] += 1
+                    elif s.tb_2 > s.tb_1:
+                        agg[t2]["sets_won"] += 1
+                        agg[t1]["sets_lost"] += 1
+                        if only_tiebreak_mode:
+                            agg[t1]["games_won"] += s.tb_1
+                            agg[t1]["games_lost"] += s.tb_2
+                            agg[t2]["games_won"] += s.tb_2
+                            agg[t2]["games_lost"] += s.tb_1
+                        else:
+                            agg[t2]["games_won"] += 1
+                            agg[t1]["games_lost"] += 1
+                    continue
+
+                g1 = int(getattr(s, "games_1", 0) or 0)
+                g2 = int(getattr(s, "games_2", 0) or 0)
+
+                agg[t1]["games_won"] += g1
+                agg[t1]["games_lost"] += g2
+                agg[t2]["games_won"] += g2
+                agg[t2]["games_lost"] += g1
+
+                if g1 > g2:
+                    agg[t1]["sets_won"] += 1
+                    agg[t2]["sets_lost"] += 1
+                elif g2 > g1:
+                    agg[t2]["sets_won"] += 1
+                    agg[t1]["sets_lost"] += 1
+                else:
+                    agg[t1]["sets_drawn"] += 1
+                    agg[t2]["sets_drawn"] += 1
+
+            # wins в свободном формате не считаем
+            continue
+
         sets_won_1 = 0
         sets_won_2 = 0
         games_1 = 0
@@ -68,7 +123,7 @@ def _aggregate_for_group(tournament: Tournament, group_index: int) -> Dict[int, 
                         games_2 += 1
             else:
                 # Обычный сет
-                if is_free_format:
+                if is_free:
                     # Для свободного формата: учитываем ничьи отдельно
                     if s.games_1 > s.games_2:
                         sets_won_1 += 1
@@ -105,7 +160,7 @@ def _aggregate_for_group(tournament: Tournament, group_index: int) -> Dict[int, 
         # Примечание: sets_drawn уже добавлены внутри цикла по сетам
         
         # Победы по победителю матча (для свободного формата всегда 0)
-        if not is_free_format:
+        if not is_free:
             if m.winner_id == t1:
                 agg[t1]["wins"] += 1
             elif m.winner_id == t2:
@@ -214,19 +269,16 @@ def _head_to_head_winner(tournament: Tournament, group_index: int, team_a: int, 
     # Для свободного формата (и на всякий случай для обычного) пробуем вычислить победителя
     # по сетам/геймам аналогично _aggregate_for_group.
     set_format = getattr(tournament, "set_format", None)
-    is_free_format = False
+    is_free = False
     only_tiebreak_mode = False
     if set_format is not None:
         try:
-            is_free_format = (
-                int(getattr(set_format, "games_to", 6)) == 0
-                and int(getattr(set_format, "max_sets", 1)) == 0
-            )
+            is_free = bool(_is_free_format(set_format))
             only_tiebreak_mode = bool(
                 getattr(set_format, "allow_tiebreak_only_set", False)
             ) and int(getattr(set_format, "max_sets", 1)) == 1
         except Exception:
-            is_free_format = False
+            is_free = False
             only_tiebreak_mode = False
 
     t1 = m.team_1_id
@@ -243,7 +295,7 @@ def _head_to_head_winner(tournament: Tournament, group_index: int, team_a: int, 
                 elif s.tb_2 > s.tb_1:
                     sets_won_2 += 1
         else:
-            if is_free_format:
+            if is_free:
                 # Свободный формат: побеждает тот, у кого больше геймов в сете.
                 if s.games_1 > s.games_2:
                     sets_won_1 += 1
@@ -366,44 +418,30 @@ def _rank_by_h2h_mini_tournament(tournament: Tournament, group_index: int, team_
 def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[int, dict]) -> List[int]:
     """Ранжирование по правилам ITF.
 
-    Алгоритм ITF (стандартный):
-    1. Победы
-    2. Личные встречи (мини-турнир)
-    3. Разница сетов
-    4. Личные встречи (мини-турнир)
-    5. Разница геймов
-    6. Личные встречи (мини-турнир)
-    7. Финальные тай-брейкеры: спец. участник -> рейтинг -> алфавит
+    Порядок критериев берётся из tournament.ruleset.ordering_priority.
+    Поддерживаемые токены (см. seed_rulesets.py):
+    wins, h2h, sets_ratio_all, games_ratio_all, sets_ratio_between,
+    games_ratio_between, games_ratio_between_tb3_as_1_0, name.
     
-    Для свободного формата:
-    1. Победы (всегда 0)
-    2. Разница сетов
-    3. Личные встречи (мини-турнир)
-    4. Разница геймов
-    5. Личные встречи (мини-турнир)
-    6. Финальные тай-брейкеры: спец. участник -> рейтинг -> алфавит
+    Финальный стабильный тай-брейкер: рейтинг → имя.
     """
-    priority: List[str] = ["wins", "sets_ratio", "games_ratio"]
-    
-    # Определяем, является ли турнир свободным форматом
+    priority: List[str] = ["wins", "sets_ratio_all", "games_ratio_all", "name"]
+
+    # Свободный формат: победитель матча не определяется, wins не считаются.
     set_format = getattr(tournament, "set_format", None)
     is_free_format = False
     if set_format is not None:
         try:
-            is_free_format = (
-                int(getattr(set_format, "games_to", 6)) == 0
-                and int(getattr(set_format, "max_sets", 1)) == 0
-            )
+            is_free_format = bool(_is_free_format(set_format))
         except Exception:
             is_free_format = False
 
     # Предрасчёт вспомогательных величин и состав группы
-    sets_ratio: Dict[int, float] = {}
-    games_ratio: Dict[int, float] = {}
+    sets_ratio_all: Dict[int, float] = {}
+    games_ratio_all: Dict[int, float] = {}
     name_by_team: Dict[int, str] = {}
     team_obj_by_id: Dict[int, any] = {}
     team_rating: Dict[int, float] = {}
-    has_special: Dict[int, bool] = {}
 
     from apps.tournaments.models import TournamentEntry
     entries = (
@@ -420,8 +458,8 @@ def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[
         # Для соотношения сетов учитываем ничьи: выигранные / (выигранные + проигранные + ничьи)
         st = d["sets_won"] + d["sets_lost"] + d["sets_drawn"]
         gt = d["games_won"] + d["games_lost"]
-        sets_ratio[team_id] = (d["sets_won"] / st) if st > 0 else 0.0
-        games_ratio[team_id] = (d["games_won"] / gt) if gt > 0 else 0.0
+        sets_ratio_all[team_id] = (d["sets_won"] / st) if st > 0 else 0.0
+        games_ratio_all[team_id] = (d["games_won"] / gt) if gt > 0 else 0.0
 
         # Суммарный рейтинг команды (если поля rating нет — считаем 0)
         r1 = 0.0
@@ -439,31 +477,161 @@ def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[
         else:
             team_rating[team_id] = r1
 
-        # Специальный участник: если в команде есть игрок "Петров Михаил"
-        def _is_special_player(p) -> bool:
-            if not p:
-                return False
-            try:
-                last = (getattr(p, "last_name", "") or "").strip().lower()
-                first = (getattr(p, "first_name", "") or "").strip().lower()
-                display = (getattr(p, "display_name", "") or "").strip().lower()
-                full = f"{last} {first}".strip()
-                return full == "петров михаил" or display == "петров михаил"
-            except Exception:
-                return False
-        has_special[team_id] = _is_special_player(getattr(team, "player_1", None)) or _is_special_player(getattr(team, "player_2", None))
+    has_special: Dict[int, bool] = {}
+    def _is_special_player(p) -> bool:
+        if not p:
+            return False
+        try:
+            last = (getattr(p, "last_name", "") or "").strip().lower()
+            first = (getattr(p, "first_name", "") or "").strip().lower()
+            display = (getattr(p, "display_name", "") or "").strip().lower()
+            full = f"{last} {first}".strip()
+            return full == "петров михаил" or display == "петров михаил"
+        except Exception:
+            return False
+    for e in entries:
+        try:
+            team_id = e.team_id
+            team = e.team
+            has_special[team_id] = _is_special_player(getattr(team, "player_1", None)) or _is_special_player(getattr(team, "player_2", None))
+        except Exception:
+            continue
 
     # Команды для ранжирования — именно участники группы, даже если у них пока нет матчей
     teams = [e.team_id for e in entries if e.team_id is not None]
+
+    try:
+        ruleset = getattr(tournament, "ruleset", None)
+        if ruleset and getattr(ruleset, "ordering_priority", None):
+            priority = list(ruleset.ordering_priority)
+    except Exception:
+        pass
+
+    priority = [
+        ("h2h" if c == "h2" else c)
+        for c in priority
+    ]
+
+    allowed = {
+        "wins",
+        "h2h",
+        "sets_ratio_all",
+        "games_ratio_all",
+        "sets_ratio_between",
+        "games_ratio_between",
+        "games_ratio_between_tb3_as_1_0",
+        "name",
+    }
+    priority = [c for c in priority if c in allowed]
+    if not priority:
+        priority = ["wins", "sets_ratio_all", "games_ratio_all", "name"]
+
+    # Особенность свободного формата:
+    # - wins всегда одинаковы (обычно 0), поэтому критерий wins неинформативен
+    # - личные встречи как первый критерий или сразу после wins тоже не дают смысла,
+    #   т.к. нет базы для отбора равных по победам (все равны)
+    if is_free_format and teams:
+        wins_values = {int((agg.get(tid) or {}).get("wins", 0)) for tid in teams}
+        if len(wins_values) == 1:
+            # Убираем ведущий wins
+            while priority and priority[0] == "wins":
+                priority = priority[1:]
+            # Убираем ведущий h2h (если был первым или шёл сразу после wins)
+            while priority and priority[0] == "h2h":
+                priority = priority[1:]
+            if not priority:
+                priority = ["sets_ratio_all", "games_ratio_all", "name"]
+
+    def _aggregate_between(team_list: List[int], tb3_as_1_0: bool = False) -> Dict[int, dict]:
+        from apps.matches.models import Match
+
+        h2h_agg = {tid: {"wins": 0, "sets_won": 0, "sets_lost": 0, "sets_drawn": 0, "games_won": 0, "games_lost": 0} for tid in team_list}
+
+        matches = Match.objects.filter(
+            tournament=tournament,
+            stage=Match.Stage.GROUP,
+            group_index=group_index,
+            team_1_id__in=team_list,
+            team_2_id__in=team_list,
+        ).prefetch_related("sets")
+
+        for m in matches:
+            t1 = m.team_1_id
+            t2 = m.team_2_id
+            if t1 not in team_list or t2 not in team_list:
+                continue
+
+            sets_won_1 = 0
+            sets_won_2 = 0
+            games_1 = 0
+            games_2 = 0
+
+            for s in m.sets.all().order_by("index"):
+                if s.is_tiebreak_only:
+                    if (s.tb_1 is not None) and (s.tb_2 is not None):
+                        if s.tb_1 > s.tb_2:
+                            sets_won_1 += 1
+                            if tb3_as_1_0:
+                                games_1 += 1
+                            else:
+                                games_1 += s.tb_1 or 0
+                                games_2 += s.tb_2 or 0
+                        elif s.tb_2 > s.tb_1:
+                            sets_won_2 += 1
+                            if tb3_as_1_0:
+                                games_2 += 1
+                            else:
+                                games_1 += s.tb_1 or 0
+                                games_2 += s.tb_2 or 0
+                    continue
+
+                if s.games_1 > s.games_2:
+                    sets_won_1 += 1
+                elif s.games_2 > s.games_1:
+                    sets_won_2 += 1
+                elif s.games_1 == s.games_2:
+                    h2h_agg[t1]["sets_drawn"] += 1
+                    h2h_agg[t2]["sets_drawn"] += 1
+                elif (s.tb_1 is not None) and (s.tb_2 is not None):
+                    if s.tb_1 > s.tb_2:
+                        sets_won_1 += 1
+                    elif s.tb_2 > s.tb_1:
+                        sets_won_2 += 1
+
+                games_1 += s.games_1 or 0
+                games_2 += s.games_2 or 0
+
+            h2h_agg[t1]["sets_won"] += sets_won_1
+            h2h_agg[t1]["sets_lost"] += sets_won_2
+            h2h_agg[t1]["games_won"] += games_1
+            h2h_agg[t1]["games_lost"] += games_2
+            h2h_agg[t2]["sets_won"] += sets_won_2
+            h2h_agg[t2]["sets_lost"] += sets_won_1
+            h2h_agg[t2]["games_won"] += games_2
+            h2h_agg[t2]["games_lost"] += games_1
+
+            winner = m.winner_id
+            if not winner:
+                if sets_won_1 > sets_won_2:
+                    winner = t1
+                elif sets_won_2 > sets_won_1:
+                    winner = t2
+
+            if winner == t1:
+                h2h_agg[t1]["wins"] += 1
+            elif winner == t2:
+                h2h_agg[t2]["wins"] += 1
+
+        return h2h_agg
 
     def get_criterion_value(team_id: int, crit: str):
         """Получить значение критерия для команды."""
         if crit == "wins":
             return agg[team_id]["wins"]
-        elif crit == "sets_ratio":
-            return sets_ratio.get(team_id, 0.0)
-        elif crit == "games_ratio":
-            return games_ratio.get(team_id, 0.0)
+        elif crit == "sets_ratio_all":
+            return sets_ratio_all.get(team_id, 0.0)
+        elif crit == "games_ratio_all":
+            return games_ratio_all.get(team_id, 0.0)
         elif crit == "name":
             return (name_by_team.get(team_id) or "").lower()
         return None
@@ -473,7 +641,7 @@ def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[
         if len(team_list) <= 1:
             return team_list
         if criteria_index >= len(priority):
-            # Закончились критерии — применяем финальные тай-брейкеры: спец → рейтинг → имя
+            # Закончились критерии — применяем финальные тай-брейкеры
             return sorted(
                 team_list,
                 key=lambda tid: (
@@ -484,11 +652,48 @@ def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[
             )
 
         current_crit = priority[criteria_index]
-        
-        # Для свободного формата: пропускаем h2h после wins, применяем только после sets_ratio и games_ratio
-        should_apply_h2h = True
-        if is_free_format and current_crit == "wins":
-            should_apply_h2h = False
+
+        if current_crit in {"sets_ratio_between", "games_ratio_between", "games_ratio_between_tb3_as_1_0"}:
+            between_agg = _aggregate_between(
+                team_list,
+                tb3_as_1_0=(current_crit == "games_ratio_between_tb3_as_1_0"),
+            )
+
+            def between_value(tid: int):
+                d = between_agg.get(tid) or {"wins": 0, "sets_won": 0, "sets_lost": 0, "sets_drawn": 0, "games_won": 0, "games_lost": 0}
+                st = d["sets_won"] + d["sets_lost"] + d.get("sets_drawn", 0)
+                gt = d["games_won"] + d["games_lost"]
+                if current_crit == "sets_ratio_between":
+                    return (d["sets_won"] / st) if st > 0 else 0.0
+                return (d["games_won"] / gt) if gt > 0 else 0.0
+
+            groups = defaultdict(list)
+            for tid in team_list:
+                groups[between_value(tid)].append(tid)
+
+            result: List[int] = []
+            for val in sorted(groups.keys(), reverse=True):
+                subgroup = groups[val]
+                if len(subgroup) == 1:
+                    result.extend(subgroup)
+                else:
+                    result.extend(rank_teams_recursive(subgroup, criteria_index + 1))
+            return result
+
+        if current_crit == "h2h":
+            if len(team_list) == 2:
+                a, b = team_list[0], team_list[1]
+                winner = _head_to_head_winner(tournament, group_index, a, b)
+                if winner == a:
+                    return [a, b]
+                if winner == b:
+                    return [b, a]
+                return rank_teams_recursive(team_list, criteria_index + 1)
+
+            h2h_result = _rank_by_h2h_mini_tournament(tournament, group_index, team_list, agg)
+            if h2h_result is not None:
+                return h2h_result
+            return rank_teams_recursive(team_list, criteria_index + 1)
         
         # Группируем команды по значению текущего критерия
         from collections import defaultdict
@@ -506,34 +711,8 @@ def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[
             group = groups[val]
             if len(group) == 1:
                 result.extend(group)
-            elif len(group) == 2:
-                if should_apply_h2h:
-                    # Для пары применяем личную встречу
-                    a, b = group[0], group[1]
-                    winner = _head_to_head_winner(tournament, group_index, a, b)
-                    if winner == a:
-                        result.extend([a, b])
-                    elif winner == b:
-                        result.extend([b, a])
-                    else:
-                        # Нет данных о личной встрече — переходим к следующему критерию
-                        result.extend(rank_teams_recursive(group, criteria_index + 1))
-                else:
-                    # Для свободного формата после wins: пропускаем h2h, сразу к следующему критерию
-                    result.extend(rank_teams_recursive(group, criteria_index + 1))
             else:
-                if should_apply_h2h:
-                    # Для 3+ участников: сначала пробуем мини-турнир по личным встречам (ITF)
-                    h2h_result = _rank_by_h2h_mini_tournament(tournament, group_index, group, agg)
-                    if h2h_result is not None:
-                        # Личные встречи определили порядок
-                        result.extend(h2h_result)
-                    else:
-                        # Личные встречи не определили порядок — переходим к следующему критерию
-                        result.extend(rank_teams_recursive(group, criteria_index + 1))
-                else:
-                    # Для свободного формата после wins: пропускаем h2h, сразу к следующему критерию
-                    result.extend(rank_teams_recursive(group, criteria_index + 1))
+                result.extend(rank_teams_recursive(group, criteria_index + 1))
         
         return result
 

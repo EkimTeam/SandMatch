@@ -8,7 +8,17 @@ from apps.tournaments.models import TournamentEntry
 
 def is_free_format(set_format) -> bool:
     """Проверить, является ли формат свободным"""
-    return set_format.games_to == 0 and set_format.max_sets == 0
+    try:
+        name = (getattr(set_format, "name", "") or "").strip().lower()
+        if name == "свободный формат":
+            return True
+    except Exception:
+        pass
+
+    try:
+        return int(getattr(set_format, "games_to", 0) or 0) == 0 and int(getattr(set_format, "max_sets", 0) or 0) == 0
+    except Exception:
+        return False
 
 
 def calculate_tb_winner_points(loser_points: int, tiebreak_points: int = 7, is_champion_tb: bool = False) -> int:

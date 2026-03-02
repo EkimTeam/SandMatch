@@ -318,6 +318,7 @@ class TournamentSerializer(serializers.ModelSerializer):
         try:
             sf: SetFormat = obj.set_format
             return {
+                "id": sf.id,
                 "name": sf.name,
                 "games_to": sf.games_to,
                 "tiebreak_at": sf.tiebreak_at,

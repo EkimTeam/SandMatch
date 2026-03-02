@@ -901,6 +901,11 @@ export const scheduleApi = {
     const resp = await api.get(`/schedules/${scheduleId}/export/pdf/`, { responseType: 'blob' });
     return resp.data;
   },
+
+  exportDocx: async (scheduleId: number): Promise<Blob> => {
+    const resp = await api.get(`/schedules/${scheduleId}/export/docx/`, { responseType: 'blob' });
+    return resp.data;
+  },
 };
 
 // API методы для игроков

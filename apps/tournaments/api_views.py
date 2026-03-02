@@ -1100,6 +1100,10 @@ class TournamentViewSet(viewsets.ModelViewSet):
 
         tournament: Tournament = self.get_object()
 
+        old_system_before = tournament.system
+        old_groups_count_before = int(getattr(tournament, "groups_count", None) or 1)
+        old_planned_participants_before = getattr(tournament, "planned_participants", None)
+
         # Разрешаем редактирование только для черновиков
         if tournament.status != Tournament.Status.CREATED:
             return Response({"ok": False, "error": "Настройки можно изменять только для турниров в статусе CREATED"}, status=400)
@@ -1185,7 +1189,19 @@ class TournamentViewSet(viewsets.ModelViewSet):
         from django.db import transaction
 
         with transaction.atomic():
-            old_system = tournament.system
+            old_system = old_system_before
+            old_groups_count = old_groups_count_before
+            old_planned_participants = old_planned_participants_before
+
+            new_groups_count = int(getattr(tournament, "groups_count", None) or 1)
+            new_planned_participants = getattr(tournament, "planned_participants", None)
+
+            key_params_changed = (
+                str(old_system) != str(system)
+                or int(old_groups_count) != int(new_groups_count)
+                or (old_planned_participants != new_planned_participants)
+            )
+
             tournament.system = system
             # Обновляем group_schedule_patterns в зависимости от системы
             if system == Tournament.System.KNOCKOUT:
@@ -1230,11 +1246,30 @@ class TournamentViewSet(viewsets.ModelViewSet):
 
             tournament.save()
 
+            # Если изменились ключевые параметры турнира, расписания становятся невалидными.
+            # Удаляем ВСЕ расписания (и draft, и official), связанные со scope турнира.
+            if key_params_changed:
+                try:
+                    from apps.schedules.models import Schedule, ScheduleScope
+
+                    schedule_ids = list(
+                        ScheduleScope.objects.filter(tournament=tournament).values_list(
+                            "schedule_id", flat=True
+                        )
+                    )
+                    if schedule_ids:
+                        Schedule.objects.filter(id__in=schedule_ids).delete()
+                except Exception:
+                    # Не даём ошибкам удаления расписаний ломать изменение настроек
+                    pass
+
             entries_qs = TournamentEntry.objects.filter(tournament=tournament).order_by("id")
 
             if system == Tournament.System.ROUND_ROBIN or system == Tournament.System.KING:
-                # Обнуляем позиции — участники останутся зарегистрированными, но не расставленными по таблицам
-                entries_qs.update(group_index=None, row_index=None)
+                # Если ключевые параметры не менялись — сохраняем текущие позиции участников.
+                # Если менялись — обнуляем позиции (участники останутся зарегистрированными, но не расставленными по таблицам).
+                if key_params_changed:
+                    entries_qs.update(group_index=None, row_index=None)
             elif system == Tournament.System.KNOCKOUT:
                 # Для олимпийской системы: если изменился planned_participants, пересоздаем сетку
                 if old_system == Tournament.System.KNOCKOUT and planned_participants is not None:
@@ -3642,8 +3677,12 @@ class TournamentViewSet(viewsets.ModelViewSet):
         )
 
         from apps.tournaments.services.stats import _aggregate_for_group, rank_group_with_ruleset
+        import logging
         payload = {"ok": True, "groups": {}}
         for gi in group_indices:
+            agg = {}
+            group_block = {}
+            placements = {}
             try:
                 agg = _aggregate_for_group(tournament, gi)
                 # Преобразуем defaultdict в обычный dict с int ключами
@@ -3658,12 +3697,20 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     }
                     for team_id, data in agg.items()
                 }
-                # Ранжирование согласно правилам Ruleset
+            except Exception as e:
+                logger = logging.getLogger(__name__)
+                logger.exception(f"group_stats: failed to aggregate stats for tournament={tournament.id}, group_index={gi}: {e}")
+
+            # Ранжирование согласно правилам Ruleset. Даже если упало — stats всё равно отдаём.
+            try:
                 order = rank_group_with_ruleset(tournament, int(gi), agg)
-                placements = { int(team_id): (idx + 1) for idx, team_id in enumerate(order) }
-                payload["groups"][int(gi)] = { "stats": group_block, "placements": placements }
-            except Exception:
-                payload["groups"][int(gi)] = { "stats": {}, "placements": {} }
+                placements = {int(team_id): (idx + 1) for idx, team_id in enumerate(order)}
+            except Exception as e:
+                logger = logging.getLogger(__name__)
+                logger.exception(f"group_stats: failed to rank tournament={tournament.id}, group_index={gi}: {e}")
+                placements = {}
+
+            payload["groups"][int(gi)] = {"stats": group_block, "placements": placements}
         return Response(payload)
 
     @action(detail=True, methods=["get"], url_path="text_results", permission_classes=[AllowAny])
