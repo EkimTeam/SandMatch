@@ -531,6 +531,11 @@ def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[
     # - личные встречи как первый критерий или сразу после wins тоже не дают смысла,
     #   т.к. нет базы для отбора равных по победам (все равны)
     if is_free_format and teams:
+        # Бизнес-правило: если регламент начинается с "wins > h2h > ...",
+        # то для свободного формата оба критерия пропускаем всегда.
+        if len(priority) >= 2 and priority[0] == "wins" and priority[1] == "h2h":
+            priority = priority[2:]
+
         wins_values = {int((agg.get(tid) or {}).get("wins", 0)) for tid in teams}
         if len(wins_values) == 1:
             # Убираем ведущий wins
@@ -627,7 +632,8 @@ def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[
     def get_criterion_value(team_id: int, crit: str):
         """Получить значение критерия для команды."""
         if crit == "wins":
-            return agg[team_id]["wins"]
+            d = agg.get(team_id) or {"wins": 0}
+            return int(d.get("wins", 0) or 0)
         elif crit == "sets_ratio_all":
             return sets_ratio_all.get(team_id, 0.0)
         elif crit == "games_ratio_all":
@@ -696,7 +702,6 @@ def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[
             return rank_teams_recursive(team_list, criteria_index + 1)
         
         # Группируем команды по значению текущего критерия
-        from collections import defaultdict
         groups = defaultdict(list)
         for tid in team_list:
             val = get_criterion_value(tid, current_crit)
