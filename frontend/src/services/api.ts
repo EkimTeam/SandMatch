@@ -88,6 +88,13 @@ export interface TournamentAnnouncementSettingsDTO {
   send_on_roster_change: boolean;
 }
 
+export interface TournamentAnnouncementChatInfoDTO {
+  ok: boolean;
+  chat_id?: string;
+  chat_title?: string;
+  error?: string;
+}
+
 export interface ScheduleCourtDTO {
   id: number;
   index: number;
@@ -536,6 +543,18 @@ export const tournamentApi = {
   updateAnnouncementSettings: async (id: number, payload: TournamentAnnouncementSettingsDTO): Promise<TournamentAnnouncementSettingsDTO> => {
     const response = await api.post<TournamentAnnouncementSettingsDTO>(`/tournaments/${id}/announcement_settings/`, payload);
     return response.data;
+  },
+
+  // Информация о Telegram-чате анонсов (название группы/канала)
+  getAnnouncementChatInfo: async (id: number): Promise<TournamentAnnouncementChatInfoDTO> => {
+    const { data } = await api.get<TournamentAnnouncementChatInfoDTO>(`/tournaments/${id}/announcement_chat_info/`);
+    return data;
+  },
+
+  // Отправить анонс сейчас (с отредактированным текстом)
+  sendAnnouncementNow: async (id: number, text: string): Promise<{ ok: boolean; error?: string }> => {
+    const { data } = await api.post(`/tournaments/${id}/send_announcement_now/`, { text });
+    return data;
   },
   // Установить регламент турнира
   setRuleset: async (id: number, rulesetId: number): Promise<{ ok: boolean }> => {

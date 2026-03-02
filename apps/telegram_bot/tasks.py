@@ -109,9 +109,25 @@ def check_upcoming_tournaments():
     Запускается периодически (например, каждый час)
     """
     from apps.tournaments.models import Tournament, TournamentAnnouncementSettings
-    from datetime import timedelta
+    from datetime import datetime, time, timedelta
     
     now = timezone.now()
+    tz = timezone.get_current_timezone()
+
+    def _tournament_start_dt(t: Tournament):
+        """Return aware datetime of tournament start in current timezone.
+
+        Tournament stores date as DateField and optional start_time separately.
+        For correct announcement scheduling we combine them.
+        """
+        d = getattr(t, "date", None)
+        if not d:
+            return None
+        st = getattr(t, "start_time", None) or time(0, 0)
+        dt = datetime.combine(d, st)
+        if timezone.is_aware(dt):
+            return dt
+        return timezone.make_aware(dt, tz)
     
     # Проверяем турниры для разных временных триггеров
     triggers = [
@@ -125,16 +141,26 @@ def check_upcoming_tournaments():
     sent_reminders = 0
     
     for trigger_type, hours_before, tolerance in triggers:
-        time_min = now + timedelta(hours=hours_before - tolerance)
-        time_max = now + timedelta(hours=hours_before + tolerance)
-        
-        # Находим турниры в нужном временном окне
-        tournaments = Tournament.objects.filter(
-            date__gte=time_min,
-            date__lte=time_max
-        ).select_related('announcement_settings')
+        # Ограничим выборку по дате, а точное окно проверим по start_dt в Python.
+        # Это важно, т.к. Tournament.date — DateField, а start_time хранится отдельно.
+        date_min = (now + timedelta(hours=hours_before - tolerance)).date()
+        date_max = (now + timedelta(hours=hours_before + tolerance)).date()
+
+        tournaments = (
+            Tournament.objects.filter(date__gte=date_min, date__lte=date_max)
+            .select_related("announcement_settings")
+        )
         
         for tournament in tournaments:
+            start_dt = _tournament_start_dt(tournament)
+            if not start_dt:
+                continue
+
+            # Проверяем точное попадание в окно (в часах), относительно start_dt
+            delta_hours = (start_dt - now).total_seconds() / 3600.0
+            if not ((hours_before - tolerance) <= delta_hours <= (hours_before + tolerance)):
+                continue
+
             # Проверяем наличие настроек анонсов
             try:
                 settings = tournament.announcement_settings
@@ -582,10 +608,96 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str, 
         mode_str = "отредактирован" if settings.announcement_mode == 'edit_single' and settings.last_announcement_message_id else "отправлен"
         logger.info(f"Анонс турнира {tournament.name} {mode_str} в чат {settings.telegram_chat_id} (триггер: {trigger_type})")
         return f"Анонс {mode_str} (триггер: {trigger_type})"
-        
     except Tournament.DoesNotExist:
         logger.error(f"Турнир {tournament_id} не найден")
-        return f"Турнир {tournament_id} не найден"
+        return "Турнир не найден"
     except Exception as e:
-        logger.error(f"Ошибка отправки анонса турнира {tournament_id}: {e}", exc_info=True)
+        logger.error(f"Ошибка отправки анонса: {e}", exc_info=True)
+        return f"Ошибка: {e}"
+
+
+@shared_task
+def send_custom_tournament_announcement_to_chat(tournament_id: int, text: str):
+    """Отправить произвольный (отредактированный) текст анонса турнира в чат.
+
+    Используется кнопкой "Анонс сейчас!" из веб-интерфейса.
+    Уважает режим announcement_mode (edit_single/new_messages) и обновляет
+    last_announcement_message_id. Не влияет на sent_* timestamps.
+    """
+
+    from apps.tournaments.models import Tournament, TournamentAnnouncementSettings
+    from django.conf import settings as django_settings
+    from asgiref.sync import async_to_sync
+    from aiogram import Bot
+    from aiogram.client.default import DefaultBotProperties
+    from aiogram.enums import ParseMode
+
+    logger.info(
+        "[ANNOUNCEMENT_CUSTOM] Start send custom announcement, tournament_id=%s",
+        tournament_id,
+    )
+
+    try:
+        tournament = Tournament.objects.get(id=tournament_id)
+    except Tournament.DoesNotExist:
+        logger.error("[ANNOUNCEMENT_CUSTOM] Tournament not found, id=%s", tournament_id)
+        return "Турнир не найден"
+
+    try:
+        settings_obj = tournament.announcement_settings
+    except TournamentAnnouncementSettings.DoesNotExist:
+        logger.info(
+            "[ANNOUNCEMENT_CUSTOM] Announcement settings not found for tournament=%s",
+            tournament_id,
+        )
+        return "Настройки анонсов не найдены"
+
+    if not (settings_obj.telegram_chat_id or "").strip():
+        return "telegram_chat_id не задан"
+
+    announcement_text = (text or "").strip()
+    if not announcement_text:
+        return "Пустой текст анонса"
+
+    async def _send_or_edit() -> int:
+        bot = Bot(
+            token=django_settings.TELEGRAM_BOT_TOKEN,
+            default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN),
+        )
+        try:
+            if settings_obj.announcement_mode == 'edit_single' and settings_obj.last_announcement_message_id:
+                try:
+                    await bot.edit_message_text(
+                        chat_id=settings_obj.telegram_chat_id,
+                        message_id=settings_obj.last_announcement_message_id,
+                        text=announcement_text,
+                    )
+                    return int(settings_obj.last_announcement_message_id)
+                except Exception as e:
+                    logger.warning(
+                        "[ANNOUNCEMENT_CUSTOM] Failed to edit message_id=%s, will send new: %s",
+                        settings_obj.last_announcement_message_id,
+                        e,
+                    )
+
+            msg = await bot.send_message(
+                chat_id=settings_obj.telegram_chat_id,
+                text=announcement_text,
+            )
+            return int(msg.message_id)
+        finally:
+            await bot.session.close()
+
+    try:
+        message_id = async_to_sync(_send_or_edit)()
+        settings_obj.last_announcement_message_id = message_id
+        settings_obj.save(update_fields=["last_announcement_message_id", "updated_at"])
+        logger.info(
+            "[ANNOUNCEMENT_CUSTOM] Sent ok, tournament_id=%s, message_id=%s",
+            tournament_id,
+            message_id,
+        )
+        return "ok"
+    except Exception as e:
+        logger.error("[ANNOUNCEMENT_CUSTOM] Error sending: %s", e, exc_info=True)
         return f"Ошибка: {e}"

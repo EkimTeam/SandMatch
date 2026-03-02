@@ -116,6 +116,13 @@ export const KnockoutPage: React.FC = () => {
   const [loadingAnnouncementSettings, setLoadingAnnouncementSettings] = useState(false);
   const [savingAnnouncementSettings, setSavingAnnouncementSettings] = useState(false);
 
+  // "Анонс сейчас" (отправка в Telegram чат)
+  const [showAnnounceNowModal, setShowAnnounceNowModal] = useState(false);
+  const [announceNowChatTitle, setAnnounceNowChatTitle] = useState<string>('');
+  const [announceNowText, setAnnounceNowText] = useState<string>('');
+  const [loadingAnnounceNow, setLoadingAnnounceNow] = useState(false);
+  const [sendingAnnounceNow, setSendingAnnounceNow] = useState(false);
+
   // Многостадийный турнир: список стадий и текущая стадия
   const [stages, setStages] = useState<StageInfo[]>([]);
   const [currentStageId, setCurrentStageId] = useState<number | null>(null);
@@ -249,6 +256,74 @@ export const KnockoutPage: React.FC = () => {
       setLoadingAnnouncementSettings(false);
     }
   };
+
+  useEffect(() => {
+    if (!tMeta || !canManageStructure || tMeta.status !== 'created') return;
+    if (announcementSettings) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await tournamentApi.getAnnouncementSettings(tMeta.id);
+        if (cancelled) return;
+        setAnnouncementSettings({ ...data });
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tMeta, canManageStructure, announcementSettings]);
+
+  const handleAnnounceNowClick = useCallback(async () => {
+    if (!tMeta || !canManageStructure || tMeta.status !== 'created') return;
+
+    const chatId = (announcementSettings?.telegram_chat_id || '').trim();
+    if (!chatId) {
+      alert('Сначала укажи ID чата в настройках авто-анонсов');
+      return;
+    }
+
+    try {
+      setLoadingAnnounceNow(true);
+      const info = await tournamentApi.getAnnouncementChatInfo(tMeta.id);
+      const title = (info?.chat_title || '').trim();
+      setAnnounceNowChatTitle(title || chatId);
+
+      const res = await tournamentApi.getAnnouncementText(tMeta.id);
+      setAnnounceNowText(res?.text || '');
+      setShowAnnounceNowModal(true);
+    } catch (e: any) {
+      console.error('Failed to open announce now modal', e);
+      alert(e?.response?.data?.error || e?.response?.data?.detail || 'Не удалось подготовить отправку анонса');
+    } finally {
+      setLoadingAnnounceNow(false);
+    }
+  }, [tMeta, canManageStructure, announcementSettings?.telegram_chat_id]);
+
+  const handleSendAnnounceNow = useCallback(async () => {
+    if (!tMeta) return;
+    const text = (announceNowText || '').trim();
+    if (!text) {
+      alert('Текст анонса пустой');
+      return;
+    }
+    try {
+      setSendingAnnounceNow(true);
+      const res = await tournamentApi.sendAnnouncementNow(tMeta.id, text);
+      if (!(res as any)?.ok) {
+        alert((res as any)?.error || 'Не удалось отправить анонс');
+        return;
+      }
+      setShowAnnounceNowModal(false);
+      alert('Анонс отправлен');
+    } catch (e: any) {
+      console.error('Failed to send announce now', e);
+      alert(e?.response?.data?.error || e?.response?.data?.detail || 'Не удалось отправить анонс');
+    } finally {
+      setSendingAnnounceNow(false);
+    }
+  }, [tMeta, announceNowText]);
 
   const handleSaveAnnouncementSettings = async () => {
     if (!tMeta || !announcementSettings) return;
@@ -1521,6 +1596,65 @@ export const KnockoutPage: React.FC = () => {
         </div>
       )}
 
+      {showAnnounceNowModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => !sendingAnnounceNow && setShowAnnounceNowModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: '#fff',
+              padding: 20,
+              maxWidth: 700,
+              width: '100%',
+              maxHeight: '80vh',
+              overflow: 'auto',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>Анонс сейчас</h3>
+            <div style={{ fontSize: 14, marginBottom: 8 }}>
+              Чат: <b>{announceNowChatTitle || '...'}</b>
+            </div>
+            <div style={{ fontSize: 13, color: '#4b5563', marginBottom: 10 }}>
+              Текст анонса можно отредактировать перед отправкой.
+            </div>
+            <textarea
+              value={announceNowText}
+              onChange={(e) => setAnnounceNowText(e.target.value)}
+              style={{ width: '100%', height: 260, resize: 'vertical', marginTop: 8, whiteSpace: 'pre' }}
+              disabled={sendingAnnounceNow}
+            />
+            <div style={{ marginTop: 10, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => setShowAnnounceNowModal(false)}
+                disabled={sendingAnnounceNow}
+              >
+                Отменить
+              </button>
+              <button
+                className="btn"
+                type="button"
+                onClick={handleSendAnnounceNow}
+                disabled={sendingAnnounceNow || !announceNowText.trim()}
+              >
+                Отправить анонс
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showAnnouncementSettingsModal && announcementSettings && (
         <div
           style={{
@@ -1784,6 +1918,17 @@ export const KnockoutPage: React.FC = () => {
                 onClick={handleOpenAnnouncementSettings}
               >
                 Настройка авто-анонсов
+              </button>
+            )}
+            {tMeta && canManageStructure && tMeta.status === 'created' && !!(announcementSettings?.telegram_chat_id || '').trim() && (
+              <button
+                className="btn"
+                type="button"
+                disabled={loadingAnnounceNow}
+                onClick={handleAnnounceNowClick}
+                style={{ background: '#28a745', borderColor: '#28a745' }}
+              >
+                Анонс сейчас!
               </button>
             )}
             {tMeta && tMeta.status === 'completed' && (

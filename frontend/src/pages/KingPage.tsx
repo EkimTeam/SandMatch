@@ -114,6 +114,13 @@ export const KingPage: React.FC = () => {
   } | null>(null);
   const [loadingAnnouncementSettings, setLoadingAnnouncementSettings] = useState(false);
   const [savingAnnouncementSettings, setSavingAnnouncementSettings] = useState(false);
+
+  // "Анонс сейчас" (отправка в Telegram чат)
+  const [showAnnounceNowModal, setShowAnnounceNowModal] = useState(false);
+  const [announceNowChatTitle, setAnnounceNowChatTitle] = useState<string>('');
+  const [announceNowText, setAnnounceNowText] = useState<string>('');
+  const [loadingAnnounceNow, setLoadingAnnounceNow] = useState(false);
+  const [sendingAnnounceNow, setSendingAnnounceNow] = useState(false);
   
   const handleRollbackTournamentCompletion = async () => {
     if (!t || role !== 'ADMIN') return;
@@ -161,6 +168,74 @@ export const KingPage: React.FC = () => {
       setLoadingAnnouncementSettings(false);
     }
   };
+
+  useEffect(() => {
+    if (!t || !canManageTournament || t.status !== 'created') return;
+    if (announcementSettings) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await tournamentApi.getAnnouncementSettings(t.id);
+        if (cancelled) return;
+        setAnnouncementSettings({ ...data });
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [t, canManageTournament, announcementSettings]);
+
+  const handleAnnounceNowClick = useCallback(async () => {
+    if (!t || !canManageTournament || t.status !== 'created') return;
+
+    const chatId = (announcementSettings?.telegram_chat_id || '').trim();
+    if (!chatId) {
+      alert('Сначала укажи ID чата в настройках авто-анонсов');
+      return;
+    }
+
+    try {
+      setLoadingAnnounceNow(true);
+      const info = await tournamentApi.getAnnouncementChatInfo(t.id);
+      const title = (info?.chat_title || '').trim();
+      setAnnounceNowChatTitle(title || chatId);
+
+      const res = await tournamentApi.getAnnouncementText(t.id);
+      setAnnounceNowText(res?.text || '');
+      setShowAnnounceNowModal(true);
+    } catch (e: any) {
+      console.error('Failed to open announce now modal', e);
+      alert(e?.response?.data?.error || e?.response?.data?.detail || 'Не удалось подготовить отправку анонса');
+    } finally {
+      setLoadingAnnounceNow(false);
+    }
+  }, [t, canManageTournament, announcementSettings?.telegram_chat_id]);
+
+  const handleSendAnnounceNow = useCallback(async () => {
+    if (!t) return;
+    const text = (announceNowText || '').trim();
+    if (!text) {
+      alert('Текст анонса пустой');
+      return;
+    }
+    try {
+      setSendingAnnounceNow(true);
+      const res = await tournamentApi.sendAnnouncementNow(t.id, text);
+      if (!(res as any)?.ok) {
+        alert((res as any)?.error || 'Не удалось отправить анонс');
+        return;
+      }
+      setShowAnnounceNowModal(false);
+      alert('Анонс отправлен');
+    } catch (e: any) {
+      console.error('Failed to send announce now', e);
+      alert(e?.response?.data?.error || e?.response?.data?.detail || 'Не удалось отправить анонс');
+    } finally {
+      setSendingAnnounceNow(false);
+    }
+  }, [t, announceNowText]);
 
   const handleSaveAnnouncementSettings = async () => {
     if (!t || !announcementSettings) return;
@@ -1986,6 +2061,17 @@ export const KingPage: React.FC = () => {
                   Настройка авто-анонсов
                 </button>
               )}
+              {t && canManageTournament && t.status === 'created' && !!(announcementSettings?.telegram_chat_id || '').trim() && (
+                <button
+                  className="btn"
+                  type="button"
+                  disabled={loadingAnnounceNow}
+                  onClick={handleAnnounceNowClick}
+                  style={{ background: '#28a745', borderColor: '#28a745' }}
+                >
+                  Анонс сейчас!
+                </button>
+              )}
               {t.status === 'completed' && (
                 <button
                   className="btn"
@@ -2066,6 +2152,65 @@ export const KingPage: React.FC = () => {
               </button>
               <button className="btn" type="button" onClick={handleCopyAnnouncementText} disabled={!announcementText}>
                 Копировать
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAnnounceNowModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => !sendingAnnounceNow && setShowAnnounceNowModal(false)}
+        >
+          <div
+            style={{
+              backgroundColor: '#fff',
+              padding: 20,
+              maxWidth: 700,
+              width: '100%',
+              maxHeight: '80vh',
+              overflow: 'auto',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>Анонс сейчас</h3>
+            <div style={{ fontSize: 14, marginBottom: 8 }}>
+              Чат: <b>{announceNowChatTitle || '...'}</b>
+            </div>
+            <div style={{ fontSize: 13, color: '#4b5563', marginBottom: 10 }}>
+              Текст анонса можно отредактировать перед отправкой.
+            </div>
+            <textarea
+              value={announceNowText}
+              onChange={(e) => setAnnounceNowText(e.target.value)}
+              style={{ width: '100%', height: 260, resize: 'vertical', marginTop: 8, whiteSpace: 'pre' }}
+              disabled={sendingAnnounceNow}
+            />
+            <div style={{ marginTop: 10, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => setShowAnnounceNowModal(false)}
+                disabled={sendingAnnounceNow}
+              >
+                Отменить
+              </button>
+              <button
+                className="btn"
+                type="button"
+                onClick={handleSendAnnounceNow}
+                disabled={sendingAnnounceNow || !announceNowText.trim()}
+              >
+                Отправить анонс
               </button>
             </div>
           </div>
