@@ -110,6 +110,7 @@ def check_upcoming_tournaments():
     """
     from apps.tournaments.models import Tournament, TournamentAnnouncementSettings
     from datetime import datetime, time, timedelta
+    from django.core.cache import cache
     
     now = timezone.now()
     tz = timezone.get_current_timezone()
@@ -215,9 +216,22 @@ def check_upcoming_tournaments():
                     if last_sent:
                         logger.info(f"[CHECK_TOURNAMENTS] Анонс {trigger_type} для турнира {tournament.id} уже был отправлен {last_sent}, пропускаем")
                         continue
-                
-                # Отправляем анонс в чат, если настроено
-                send_tournament_announcement_to_chat.delay(tournament.id, trigger_type)
+
+                # Планируем анонс в чат на точное время (start_dt - hours_before)
+                # Чтобы не слать раньше времени при частом запуске beat.
+                intended_chat_dt = start_dt - timedelta(hours=hours_before)
+                schedule_key = f"scheduled_chat_announcement_{tournament.id}_{trigger_type}"
+                if cache.get(schedule_key):
+                    continue
+
+                if intended_chat_dt <= now:
+                    send_tournament_announcement_to_chat.delay(tournament.id, trigger_type)
+                else:
+                    send_tournament_announcement_to_chat.apply_async(
+                        args=(tournament.id, trigger_type),
+                        eta=intended_chat_dt,
+                    )
+                cache.set(schedule_key, True, timeout=int(tolerance * 3600) + 900)
                 sent_tasks += 1
             except TournamentAnnouncementSettings.DoesNotExist:
                 pass
@@ -239,7 +253,19 @@ def check_upcoming_tournaments():
             ).exists()
 
             if not already_sent:
-                send_tournament_reminder.delay(tournament.id, hours_before=hours_before)
+                reminder_schedule_key = f"scheduled_personal_reminder_{tournament.id}_{reminder_type}"
+                if cache.get(reminder_schedule_key):
+                    continue
+
+                if adjusted_send_dt <= now:
+                    send_tournament_reminder.delay(tournament.id, hours_before=hours_before)
+                else:
+                    send_tournament_reminder.apply_async(
+                        args=(tournament.id,),
+                        kwargs={"hours_before": hours_before},
+                        eta=adjusted_send_dt,
+                    )
+                cache.set(reminder_schedule_key, True, timeout=int(tolerance * 3600) + 900)
                 sent_reminders += 1
     
     return f"Запланировано {sent_tasks} анонсов и {sent_reminders} напоминаний о турнирах"
