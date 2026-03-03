@@ -1985,7 +1985,16 @@ export const SchedulePage: React.FC = () => {
           {schedule && viewMode === 'grid' && (
             <>
               <button className="btn" disabled={saving || !canManage} onClick={handleSave}>Сохранить</button>
-              <button className="btn" disabled={exporting} onClick={handleExport}>Экспорт PDF/DOCX</button>
+              <button className="btn" disabled={exporting} onClick={handleExport}>
+                {exporting ? (
+                  <span className="sm-btn-loading">
+                    <span className="sm-spinner" aria-hidden="true" />
+                    Экспорт...
+                  </span>
+                ) : (
+                  'Экспорт PDF/DOCX'
+                )}
+              </button>
             </>
           )}
         </div>

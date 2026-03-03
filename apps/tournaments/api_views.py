@@ -112,7 +112,28 @@ def generate_announcement_text(tournament) -> str:
         except Exception:
             date_part = str(tournament.date)
 
-    time_part = "14:00-18:00"
+    start_time_val = getattr(tournament, "start_time", None)
+    if start_time_val is None:
+        from datetime import time
+
+        start_time_val = time(14, 0)
+
+    try:
+        start_time_str = start_time_val.strftime("%H:%M")
+    except Exception:
+        start_time_str = "14:00"
+
+    end_time_str = "18:00"
+    try:
+        from datetime import datetime, timedelta
+
+        start_dt = datetime(2000, 1, 1, start_time_val.hour, start_time_val.minute)
+        end_dt = start_dt + timedelta(hours=4)
+        end_time_str = end_dt.time().strftime("%H:%M")
+    except Exception:
+        end_time_str = "18:00"
+
+    time_part = f"{start_time_str}-{end_time_str}"
     if weekday and date_part:
         lines.append(f"🥎 {weekday}, {date_part} {time_part} 🏆")
     elif date_part:

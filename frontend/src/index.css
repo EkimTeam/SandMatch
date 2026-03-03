@@ -111,3 +111,25 @@ body {
 .close-btn {
   @apply bg-transparent border-0 text-lg cursor-pointer p-1 text-gray-600 hover:text-black;
 }
+
+.sm-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  border-top-color: rgba(255, 255, 255, 1);
+  border-radius: 50%;
+  display: inline-block;
+  animation: sm-spin 0.8s linear infinite;
+}
+
+.sm-btn-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@keyframes sm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
