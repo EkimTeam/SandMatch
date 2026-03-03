@@ -4,7 +4,7 @@ import { getAccessToken, refreshAccessToken, clearTokens } from './auth';
 // Базовая конфигурация API клиента
 const api = axios.create({
   baseURL: '/api',
-  timeout: 10000,
+  timeout: 20000,
   headers: {
     'Content-Type': 'application/json',
   },

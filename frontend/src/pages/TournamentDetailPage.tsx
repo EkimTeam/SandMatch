@@ -3568,7 +3568,14 @@ export const TournamentDetailPage: React.FC = () => {
                 disabled={loadingAnnouncement}
                 onClick={handleShowAnnouncementText}
               >
-                Текст анонса
+                {loadingAnnouncement ? (
+                  <span className="sm-btn-loading">
+                    <span className="sm-spinner" aria-hidden="true" />
+                    Загрузка...
+                  </span>
+                ) : (
+                  'Текст анонса'
+                )}
               </button>
             )}
             {t && canManageTournament && t.status === 'created' && (
