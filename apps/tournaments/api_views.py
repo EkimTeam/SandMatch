@@ -3918,13 +3918,45 @@ class TournamentViewSet(viewsets.ModelViewSet):
         settings_obj.save()
         return Response(serialize(settings_obj))
 
-    @action(detail=True, methods=["get"], url_path="announcement_text", permission_classes=[AllowAny])
+    @action(detail=True, methods=["get", "post"], url_path="announcement_text", permission_classes=[AllowAny])
     def announcement_text(self, request, pk=None):
-        """Вернуть текстовый анонс турнира для копирования организатором."""
+        """Вернуть текстовый анонс турнира (GET) или сохранить кастомный текст (POST)."""
         tournament: Tournament = self.get_object()
+
+        if request.method == "POST":
+            if not request.user.is_authenticated:
+                raise PermissionDenied("Authentication required")
+
+            perm = IsTournamentCreatorOrAdmin()
+            if not perm.has_object_permission(request, self, tournament):
+                raise PermissionDenied("You do not have permission to manage announcement text for this tournament")
+
+            if tournament.status != Tournament.Status.CREATED:
+                return Response({"ok": False, "error": "Доступно только для турниров в статусе CREATED"}, status=400)
+
+            try:
+                settings_obj = tournament.announcement_settings
+            except TournamentAnnouncementSettings.DoesNotExist:
+                return Response({"ok": False, "error": "Настройки анонсов не найдены"}, status=400)
+
+            text = (request.data or {}).get("text")
+            text = (text or "").strip()
+            if not text:
+                return Response({"ok": False, "error": "Пустой текст анонса"}, status=400)
+
+            settings_obj.custom_announcement_text = text
+            settings_obj.save(update_fields=["custom_announcement_text", "updated_at"])
+            return Response({"ok": True})
+
         self._ensure_can_view_tournament(request, tournament)
-        
-        text = generate_announcement_text(tournament)
+
+        custom_text = ""
+        try:
+            custom_text = (tournament.announcement_settings.custom_announcement_text or "").strip()
+        except Exception:
+            custom_text = ""
+
+        text = custom_text or generate_announcement_text(tournament)
         return Response({"ok": True, "text": text})
 
     @action(detail=True, methods=["get"], url_path="announcement_chat_info", permission_classes=[IsAuthenticated])

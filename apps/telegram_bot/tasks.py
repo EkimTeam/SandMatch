@@ -123,7 +123,8 @@ def check_upcoming_tournaments():
         d = getattr(t, "date", None)
         if not d:
             return None
-        st = getattr(t, "start_time", None) or time(0, 0)
+        # Если start_time не задан, считаем стартом 14:00 (дефолт для анонса)
+        st = getattr(t, "start_time", None) or time(14, 0)
         dt = datetime.combine(d, st)
         if timezone.is_aware(dt):
             return dt
@@ -140,6 +141,24 @@ def check_upcoming_tournaments():
     sent_tasks = 0
     sent_reminders = 0
     
+    def _adjust_personal_send_dt(intended_dt):
+        """Ensure personal reminders are sent only within 09:00-22:00 local time.
+
+        If intended time is outside the window, shift earlier to fit:
+        - if time < 09:00 -> 22:00 previous day
+        - if time > 22:00 -> 22:00 same day
+        """
+        from datetime import timedelta, time as _time
+
+        local = timezone.localtime(intended_dt, tz)
+        if local.time() < _time(9, 0):
+            shifted = local.replace(hour=22, minute=0, second=0, microsecond=0) - timedelta(days=1)
+            return timezone.make_aware(shifted.replace(tzinfo=None), tz)
+        if local.time() > _time(22, 0):
+            shifted = local.replace(hour=22, minute=0, second=0, microsecond=0)
+            return timezone.make_aware(shifted.replace(tzinfo=None), tz)
+        return intended_dt
+
     for trigger_type, hours_before, tolerance in triggers:
         # Ограничим выборку по дате, а точное окно проверим по start_dt в Python.
         # Это важно, т.к. Tournament.date — DateField, а start_time хранится отдельно.
@@ -164,6 +183,20 @@ def check_upcoming_tournaments():
             # Проверяем наличие настроек анонсов
             try:
                 settings = tournament.announcement_settings
+
+                enabled_flag = None
+                if trigger_type == "72h":
+                    enabled_flag = "send_72h_before"
+                elif trigger_type == "48h":
+                    enabled_flag = "send_48h_before"
+                elif trigger_type == "24h":
+                    enabled_flag = "send_24h_before"
+                elif trigger_type == "2h":
+                    enabled_flag = "send_2h_before"
+
+                # Если триггер выключен в настройках — ничего не шлём ни в чат, ни в личку
+                if enabled_flag and not bool(getattr(settings, enabled_flag, False)):
+                    continue
                 
                 # Проверяем, был ли уже отправлен анонс для этого триггера
                 timestamp_field = None
@@ -188,19 +221,26 @@ def check_upcoming_tournaments():
                 sent_tasks += 1
             except TournamentAnnouncementSettings.DoesNotExist:
                 pass
-            
-            # Отправляем персональные напоминания участникам (старая логика)
-            if trigger_type == '24h':
-                from apps.telegram_bot.models import NotificationLog
-                already_sent = NotificationLog.objects.filter(
-                    tournament=tournament,
-                    notification_type='tournament_reminder',
-                    sent_at__gte=now - timedelta(hours=25)
-                ).exists()
-                
-                if not already_sent:
-                    send_tournament_reminder.delay(tournament.id, hours_before=24)
-                    sent_reminders += 1
+
+            # Персональные напоминания участникам — для каждого включенного триггера
+            from apps.telegram_bot.models import NotificationLog
+
+            intended_send_dt = start_dt - timedelta(hours=hours_before)
+            adjusted_send_dt = _adjust_personal_send_dt(intended_send_dt)
+            adjusted_delta_hours = (adjusted_send_dt - now).total_seconds() / 3600.0
+            if not ((-tolerance) <= adjusted_delta_hours <= tolerance):
+                continue
+
+            reminder_type = f"tournament_reminder_{int(hours_before)}h"
+            already_sent = NotificationLog.objects.filter(
+                tournament=tournament,
+                notification_type=reminder_type,
+                sent_at__gte=now - timedelta(hours=hours_before + 2),
+            ).exists()
+
+            if not already_sent:
+                send_tournament_reminder.delay(tournament.id, hours_before=hours_before)
+                sent_reminders += 1
     
     return f"Запланировано {sent_tasks} анонсов и {sent_reminders} напоминаний о турнирах"
 
@@ -477,8 +517,10 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str, 
                     return f"Анонс {trigger_type} уже отправлен"
         
         logger.info(f"[ANNOUNCEMENT] Генерируем текст анонса...")
+
+        custom_text = (getattr(settings, "custom_announcement_text", "") or "").strip()
         # Генерируем текст анонса
-        announcement_text = generate_announcement_text(tournament)
+        announcement_text = custom_text or generate_announcement_text(tournament)
         logger.info(f"[ANNOUNCEMENT] Текст анонса сгенерирован, длина: {len(announcement_text)} символов")
         
         # Отправляем в Telegram

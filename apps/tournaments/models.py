@@ -579,6 +579,12 @@ class TournamentAnnouncementSettings(models.Model):
         verbose_name="ID чата Telegram",
         help_text="ID чата или канала для публикации анонсов (например: -1001234567890)"
     )
+
+    custom_announcement_text = models.TextField(
+        blank=True,
+        default="",
+        verbose_name="Кастомный текст анонса",
+    )
     
     class AnnouncementMode(models.TextChoices):
         NEW_MESSAGES = 'new_messages', 'Публиковать новые сообщения'

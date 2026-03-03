@@ -36,9 +36,10 @@ services:
     build: .
     container_name: sandmatch_celery
     restart: unless-stopped
-    command: celery -A sandmatch worker -l info
     env_file:
       - .env
+    environment:
+      - RUN_CELERY_WORKER=true
     depends_on:
       - redis
     # volumes:
@@ -48,9 +49,10 @@ services:
     build: .
     container_name: sandmatch_celery_beat
     restart: unless-stopped
-    command: celery -A sandmatch beat -l info
     env_file:
       - .env
+    environment:
+      - RUN_CELERY_BEAT=true
     depends_on:
       - redis
       - celery
