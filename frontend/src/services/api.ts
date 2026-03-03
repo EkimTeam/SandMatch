@@ -730,6 +730,11 @@ export const tournamentApi = {
     return data;
   },
 
+  saveAnnouncementText: async (tournamentId: number, text: string): Promise<{ ok: boolean; error?: string }> => {
+    const { data } = await api.post(`/tournaments/${tournamentId}/announcement_text/`, { text });
+    return data;
+  },
+
   // --- Многостадийные турниры ---
 
   // Данные мастер-турнира и всех стадий

@@ -207,7 +207,7 @@ class TournamentSerializer(serializers.ModelSerializer):
     updated_at = serializers.SerializerMethodField()
     # Дополнительно для детальной страницы
     date = serializers.DateField(read_only=True)
-    start_time = serializers.TimeField(read_only=True)
+    start_time = serializers.TimeField(required=False, allow_null=True)
     system = serializers.CharField(read_only=True)
     participant_mode = serializers.CharField(read_only=True)
     groups_count = serializers.IntegerField(read_only=True)

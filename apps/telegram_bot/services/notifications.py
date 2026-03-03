@@ -155,7 +155,16 @@ class NotificationService:
         )
         
         if tournament.date:
-            message += f"📅 {tournament.date.strftime('%d.%m.%Y в %H:%M')}\n"
+            from datetime import datetime, time as _time
+            from django.utils import timezone
+
+            st = getattr(tournament, "start_time", None) or _time(14, 0)
+            dt = datetime.combine(tournament.date, st)
+            tz = timezone.get_current_timezone()
+            if not timezone.is_aware(dt):
+                dt = timezone.make_aware(dt, tz)
+
+            message += f"📅 {dt.strftime('%d.%m.%Y в %H:%M')}\n"
         
         if tournament.venue:
             message += f"📍 {tournament.venue.name}\n"
@@ -168,7 +177,7 @@ class NotificationService:
                 success = await self.send_notification(
                     telegram_user=user,
                     message=message,
-                    notification_type='tournament_reminder',
+                    notification_type=f"tournament_reminder_{int(hours_before)}h",
                     tournament=tournament
                 )
                 if success:

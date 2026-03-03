@@ -101,6 +101,7 @@ export const KingPage: React.FC = () => {
   const [showAnnouncementModal, setShowAnnouncementModal] = useState(false);
   const [announcementText, setAnnouncementText] = useState<string>('');
   const [loadingAnnouncement, setLoadingAnnouncement] = useState(false);
+  const [savingAnnouncementText, setSavingAnnouncementText] = useState(false);
   const [showAnnouncementSettingsModal, setShowAnnouncementSettingsModal] = useState(false);
   const [announcementSettings, setAnnouncementSettings] = useState<{
     telegram_chat_id: string;
@@ -2142,9 +2143,10 @@ export const KingPage: React.FC = () => {
             onClick={(e) => e.stopPropagation()}
           >
             <textarea
-              readOnly
               value={announcementText}
               style={{ width: '100%', height: 260, resize: 'vertical', marginTop: 8, whiteSpace: 'pre' }}
+              onChange={(e) => setAnnouncementText(e.target.value)}
+              disabled={savingAnnouncementText}
             />
             <div style={{ marginTop: 10, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button className="btn" type="button" onClick={() => setShowAnnouncementModal(false)}>
@@ -2153,6 +2155,32 @@ export const KingPage: React.FC = () => {
               <button className="btn" type="button" onClick={handleCopyAnnouncementText} disabled={!announcementText}>
                 Копировать
               </button>
+              {t && canManageTournament && t.status === 'created' && (
+                <button
+                  className="btn"
+                  type="button"
+                  disabled={savingAnnouncementText || !announcementText.trim()}
+                  onClick={async () => {
+                    if (!t) return;
+                    try {
+                      setSavingAnnouncementText(true);
+                      const res = await tournamentApi.saveAnnouncementText(t.id, announcementText);
+                      if (!(res as any)?.ok) {
+                        alert((res as any)?.error || 'Не удалось сохранить текст анонса');
+                        return;
+                      }
+                      alert('Текст анонса сохранён');
+                    } catch (e: any) {
+                      console.error('Failed to save announcement text', e);
+                      alert(e?.response?.data?.error || e?.response?.data?.detail || 'Не удалось сохранить текст анонса');
+                    } finally {
+                      setSavingAnnouncementText(false);
+                    }
+                  }}
+                >
+                  Сохранить
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -140,6 +140,7 @@ export const TournamentDetailPage: React.FC = () => {
   const [showAnnouncementModal, setShowAnnouncementModal] = useState(false);
   const [announcementText, setAnnouncementText] = useState<string>('');
   const [loadingAnnouncement, setLoadingAnnouncement] = useState(false);
+  const [savingAnnouncementText, setSavingAnnouncementText] = useState(false);
   // Настройки авто-анонсов турнира
   const [showAnnouncementSettingsModal, setShowAnnouncementSettingsModal] = useState(false);
   const [announcementSettings, setAnnouncementSettings] = useState<{
@@ -2679,25 +2680,12 @@ export const TournamentDetailPage: React.FC = () => {
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div
-              style={{
-                width: '100%',
-                minHeight: 260,
-                padding: 10,
-                marginTop: 8,
-                whiteSpace: 'pre-wrap',
-                border: '1px solid #ccc',
-                borderRadius: 4,
-                backgroundColor: '#f9f9f9',
-                fontFamily: 'monospace',
-                fontSize: 14,
-                lineHeight: 1.5,
-                overflowY: 'auto',
-                maxHeight: '60vh',
-              }}
-            >
-              {renderAnnouncementWithLinks(announcementText)}
-            </div>
+            <textarea
+              value={announcementText}
+              onChange={(e) => setAnnouncementText(e.target.value)}
+              style={{ width: '100%', height: 260, resize: 'vertical', marginTop: 8, whiteSpace: 'pre' }}
+              disabled={savingAnnouncementText}
+            />
             <div style={{ marginTop: 10, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button className="btn" type="button" onClick={() => setShowAnnouncementModal(false)}>
                 Закрыть
@@ -2705,6 +2693,32 @@ export const TournamentDetailPage: React.FC = () => {
               <button className="btn" type="button" onClick={handleCopyAnnouncementText} disabled={!announcementText}>
                 Копировать
               </button>
+              {t && canManageTournament && t.status === 'created' && (
+                <button
+                  className="btn"
+                  type="button"
+                  disabled={savingAnnouncementText || !announcementText.trim()}
+                  onClick={async () => {
+                    if (!t) return;
+                    try {
+                      setSavingAnnouncementText(true);
+                      const res = await tournamentApi.saveAnnouncementText(t.id, announcementText);
+                      if (!(res as any)?.ok) {
+                        alert((res as any)?.error || 'Не удалось сохранить текст анонса');
+                        return;
+                      }
+                      alert('Текст анонса сохранён');
+                    } catch (e: any) {
+                      console.error('Failed to save announcement text', e);
+                      alert(e?.response?.data?.error || e?.response?.data?.detail || 'Не удалось сохранить текст анонса');
+                    } finally {
+                      setSavingAnnouncementText(false);
+                    }
+                  }}
+                >
+                  Сохранить
+                </button>
+              )}
             </div>
           </div>
         </div>
