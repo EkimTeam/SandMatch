@@ -50,6 +50,8 @@ jobs:
             ${{ env.RESOLVED_IMAGE_REPO }}:latest
           labels: |
             org.opencontainers.image.source=${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   deploy:
     needs: build-and-push
