@@ -3937,6 +3937,17 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 setattr(settings_obj, field, bool(data.get(field)))
 
         settings_obj.save()
+
+        # Если включили "Отправить при создании" после создания турнира,
+        # то сигнал post_save уже мог не сработать. В этом случае отправим
+        # анонс сразу после сохранения настроек.
+        try:
+            if settings_obj.send_on_creation and not settings_obj.sent_on_creation:
+                from apps.telegram_bot.tasks import send_tournament_announcement_to_chat
+
+                send_tournament_announcement_to_chat.delay(tournament.id, "creation")
+        except Exception:
+            pass
         return Response(serialize(settings_obj))
 
     @action(detail=True, methods=["get", "post"], url_path="announcement_text", permission_classes=[AllowAny])
