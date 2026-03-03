@@ -19,6 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: write
       packages: write
     env:
       RESOLVED_IMAGE_TAG: ${{ github.event_name == 'push' && format('main-{0}', github.sha) || (inputs.image_tag != '' && inputs.image_tag || format('main-{0}', github.sha)) }}
