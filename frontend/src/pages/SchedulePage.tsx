@@ -1152,7 +1152,7 @@ export const SchedulePage: React.FC = () => {
     if (isDraftMode) {
       const gi = m?.group_index;
       const group = gi != null && gi !== '' ? Number(gi) : NaN;
-      const pair = isDraftPreviewMode && tournamentSystem === 'round_robin' && m?.id != null ? rrPairByMatchId.get(Number(m.id)) : undefined;
+      const pair = isDraftMode && tournamentSystem === 'round_robin' && m?.id != null ? rrPairByMatchId.get(Number(m.id)) : undefined;
       const aPos = pair ? Number(pair[0]) : NaN;
       const bPos = pair ? Number(pair[1]) : NaN;
       const meta = Number.isFinite(group) && pair ? `гр.${group} • ${aPos}-${bPos}` : matchMetaLabel(m) || (m?.id ? `Матч #${m.id}` : 'Матч');
@@ -1329,6 +1329,28 @@ export const SchedulePage: React.FC = () => {
       if (t1p2) pids.push(Number(t1p2));
       if (t2p1) pids.push(Number(t2p1));
       if (t2p2) pids.push(Number(t2p2));
+
+      // For draft RR matches (no teams assigned), extract virtual IDs from round_name
+      // e.g., "гр.1 • 1-12" -> group 1, positions 1 and 12
+      if (pids.length === 0 && isDraftMode && tournamentSystem === 'round_robin') {
+        const rn = String(m?.round_name || '').trim();
+        const gi = m?.group_index;
+        if (rn && gi != null) {
+          const match = rn.match(/(\d+)-(\d+)/);
+          if (match) {
+            const pos1 = Number(match[1]);
+            const pos2 = Number(match[2]);
+            // Use negative IDs to avoid collision with real player IDs
+            // Format: -(group * 1000 + position)
+            const g = Number(gi);
+            if (Number.isFinite(g) && Number.isFinite(pos1) && Number.isFinite(pos2)) {
+              pids.push(-(g * 1000 + pos1));
+              pids.push(-(g * 1000 + pos2));
+            }
+          }
+        }
+      }
+
       return pids;
     };
 
@@ -1641,7 +1663,7 @@ export const SchedulePage: React.FC = () => {
     let canceled = false;
 
     const run = async () => {
-      if (!isDraftPreviewMode || tournamentSystem !== 'round_robin' || !Number.isFinite(tournamentId)) {
+      if (!isDraftMode || tournamentSystem !== 'round_robin' || !Number.isFinite(tournamentId)) {
         setRrPairByMatchId(new Map());
         return;
       }
@@ -1699,7 +1721,7 @@ export const SchedulePage: React.FC = () => {
     return () => {
       canceled = true;
     };
-  }, [isDraftPreviewMode, tournamentSystem, tournamentId, pool]);
+  }, [isDraftMode, tournamentSystem, tournamentId, pool]);
 
   useEffect(() => {
     setCourtsCountText(String(courtsCount || 1));

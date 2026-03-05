@@ -56,6 +56,115 @@ class ScheduleViewSet(viewsets.ModelViewSet):
             return [IsAuthenticated()]
         return super().get_permissions()
 
+    def _compute_rr_row_by_team(self, slots_qs: Any) -> dict[tuple[int, int, int], int]:
+        rr_row_by_team: dict[tuple[int, int, int], int] = {}
+        try:
+            from apps.tournaments.models import TournamentEntry
+
+            t_ids: set[int] = set()
+            team_ids: set[int] = set()
+            for s in slots_qs:
+                if getattr(s, "slot_type", None) != "match":
+                    continue
+                m = getattr(s, "match", None)
+                if not m or not getattr(m, "tournament_id", None):
+                    continue
+                t_ids.add(int(m.tournament_id))
+                if getattr(m, "team_1_id", None):
+                    team_ids.add(int(m.team_1_id))
+                if getattr(m, "team_2_id", None):
+                    team_ids.add(int(m.team_2_id))
+
+            if t_ids and team_ids:
+                qs = TournamentEntry.objects.filter(tournament_id__in=list(t_ids), team_id__in=list(team_ids)).only(
+                    "tournament_id", "team_id", "group_index", "row_index"
+                )
+                for e in qs:
+                    gi = int(e.group_index) if e.group_index is not None else 0
+                    if gi <= 0 or e.row_index is None:
+                        continue
+                    rr_row_by_team[(int(e.tournament_id), gi, int(e.team_id))] = int(e.row_index)
+        except Exception:
+            rr_row_by_team = {}
+        return rr_row_by_team
+
+    def _run_top_label(self, run_obj: Any) -> str:
+        try:
+            mode = getattr(run_obj, "start_mode", "")
+            if mode == "then":
+                return "Затем"
+            if mode == "not_earlier":
+                t = getattr(run_obj, "not_earlier_time", None)
+                if t:
+                    return f"Не ранее {t.strftime('%H:%M')}"
+                return "Не ранее"
+            t = getattr(run_obj, "start_time", None)
+            if t:
+                return t.strftime("%H:%M")
+        except Exception:
+            pass
+        return ""
+
+    def _match_meta_label(self, m: Any, rr_row_by_team: dict[tuple[int, int, int], int]) -> str:
+        if not m:
+            return ""
+
+        gi = getattr(m, "group_index", None)
+        group = f"гр.{gi}" if gi is not None else ""
+
+        try:
+            system = getattr(getattr(m, "tournament", None), "system", "")
+        except Exception:
+            system = ""
+
+        if system == "knockout":
+            rn = str(getattr(m, "round_name", "") or "").strip()
+            if rn:
+                return rn
+            ri = getattr(m, "round_index", None)
+            return f"Раунд {ri}".strip() if ri is not None else ""
+
+        if system == "round_robin":
+            rn = str(getattr(m, "round_name", "") or "").strip()
+            if rn and "гр." in rn and "•" in rn:
+                return rn
+            try:
+                gi_int = int(gi) if gi is not None else 0
+                t_id = int(getattr(m, "tournament_id", 0) or 0)
+                a_id = int(getattr(m, "team_1_id", 0) or 0)
+                b_id = int(getattr(m, "team_2_id", 0) or 0)
+                r1 = rr_row_by_team.get((t_id, gi_int, a_id))
+                r2 = rr_row_by_team.get((t_id, gi_int, b_id))
+                pair = f"{r1}-{r2}" if (r1 is not None and r2 is not None) else ""
+                return " • ".join([p for p in [group, pair] if p])
+            except Exception:
+                return group
+
+        if system == "king":
+            def _raw_team_label(team: Any) -> str:
+                if not team:
+                    return ""
+                return str(
+                    getattr(team, "display_name", None)
+                    or getattr(team, "full_name", None)
+                    or getattr(team, "name", None)
+                    or ""
+                ).strip()
+
+            def _normalize_pair(text: str) -> str:
+                return str(text or "").replace(" ", "").replace("/", "+").upper()
+
+            a = _normalize_pair(_raw_team_label(getattr(m, "team_1", None)))
+            b = _normalize_pair(_raw_team_label(getattr(m, "team_2", None)))
+            vs = f"{a} vs {b}" if a and b else ""
+            rn = str(getattr(m, "round_name", "") or "").strip()
+            mid = getattr(m, "id", None)
+            fallback = f"Матч {mid}" if mid is not None else ""
+            meta = vs or rn or fallback
+            return " • ".join([p for p in [group, meta] if p])
+
+        return group
+
     def destroy(self, request, *args, **kwargs):
         schedule: Schedule = self.get_object()
         self._ensure_can_manage_schedule(request, schedule)
@@ -352,36 +461,7 @@ class ScheduleViewSet(viewsets.ModelViewSet):
             for s in slots_qs:
                 slots_map[(s.run_id, s.court_id)] = s
 
-            # Precompute row indices for RR meta label: "гр.X • a-b"
-            rr_row_by_team: dict[tuple[int, int, int], int] = {}
-            try:
-                from apps.tournaments.models import TournamentEntry
-
-                t_ids: set[int] = set()
-                team_ids: set[int] = set()
-                for s in slots_qs:
-                    if getattr(s, "slot_type", None) != "match":
-                        continue
-                    m = getattr(s, "match", None)
-                    if not m or not getattr(m, "tournament_id", None):
-                        continue
-                    t_ids.add(int(m.tournament_id))
-                    if getattr(m, "team_1_id", None):
-                        team_ids.add(int(m.team_1_id))
-                    if getattr(m, "team_2_id", None):
-                        team_ids.add(int(m.team_2_id))
-
-                if t_ids and team_ids:
-                    qs = TournamentEntry.objects.filter(tournament_id__in=list(t_ids), team_id__in=list(team_ids)).only(
-                        "tournament_id", "team_id", "group_index", "row_index"
-                    )
-                    for e in qs:
-                        gi = int(e.group_index) if e.group_index is not None else 0
-                        if gi <= 0 or e.row_index is None:
-                            continue
-                        rr_row_by_team[(int(e.tournament_id), gi, int(e.team_id))] = int(e.row_index)
-            except Exception:
-                rr_row_by_team = {}
+            rr_row_by_team = self._compute_rr_row_by_team(slots_qs)
 
             tournament_names = []
             for scope in schedule.scopes.select_related("tournament").all():
@@ -459,56 +539,10 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                 return "\n".join(labels)
 
             def run_top_label(run_obj: Any) -> str:
-                try:
-                    mode = getattr(run_obj, "start_mode", "")
-                    if mode == "then":
-                        return "Затем"
-                    if mode == "not_earlier":
-                        t = getattr(run_obj, "not_earlier_time", None)
-                        if t:
-                            return f"Не ранее {t.strftime('%H:%M')}"
-                        return "Не ранее"
-                    t = getattr(run_obj, "start_time", None)
-                    if t:
-                        return t.strftime("%H:%M")
-                except Exception:
-                    pass
-                return ""
+                return self._run_top_label(run_obj)
 
             def match_meta_label(m: Any) -> str:
-                if not m:
-                    return ""
-
-                gi = getattr(m, "group_index", None)
-                group = f"гр.{gi}" if gi is not None else ""
-
-                try:
-                    system = getattr(getattr(m, "tournament", None), "system", "")
-                except Exception:
-                    system = ""
-
-                if system == "knockout":
-                    rn = str(getattr(m, "round_name", "") or "").strip()
-                    if rn:
-                        return rn
-                    ri = getattr(m, "round_index", None)
-                    return f"Раунд {ri}".strip() if ri is not None else ""
-
-                if system == "round_robin":
-                    try:
-                        gi_int = int(gi) if gi is not None else 0
-                        t_id = int(getattr(m, "tournament_id", 0) or 0)
-                        a_id = int(getattr(m, "team_1_id", 0) or 0)
-                        b_id = int(getattr(m, "team_2_id", 0) or 0)
-                        r1 = rr_row_by_team.get((t_id, gi_int, a_id))
-                        r2 = rr_row_by_team.get((t_id, gi_int, b_id))
-                        pair = f"{r1}-{r2}" if (r1 is not None and r2 is not None) else ""
-                        return " • ".join([p for p in [group, pair] if p])
-                    except Exception:
-                        return group
-
-                # king / other systems
-                return group
+                return self._match_meta_label(m, rr_row_by_team)
 
             def slot_class(slot: Any) -> str:
                 try:
@@ -712,6 +746,14 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                 tournament_names.append(str(scope.tournament.name))
         title = " + ".join(tournament_names) if tournament_names else "Расписание"
 
+        rr_row_by_team = self._compute_rr_row_by_team(slots_qs)
+
+        def run_top_label(run_obj: Any) -> str:
+            return self._run_top_label(run_obj)
+
+        def match_meta_label(m: Any) -> str:
+            return self._match_meta_label(m, rr_row_by_team)
+
         # --- PDF canvas ---
         buf = BytesIO()
         page_size = landscape(A4)
@@ -804,7 +846,7 @@ class ScheduleViewSet(viewsets.ModelViewSet):
             c.setStrokeColor(colors.HexColor("#D1D5DB"))
             c.line(x0, y0 - col_header_h, x0 + run_col_w + col_w * len(courts_subset), y0 - col_header_h)
 
-        def slot_text(slot: Any) -> str:
+        def slot_text(run_obj: Any, slot: Any) -> str:
             if not slot:
                 return ""
             if slot.slot_type == "text":
@@ -816,9 +858,17 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                 m = slot.match
                 if not m:
                     return f"Матч #{slot.match_id}"
+                top = str(getattr(slot, "override_subtitle", None) or "").strip() or run_top_label(run_obj)
+                meta = match_meta_label(m)
                 t1 = getattr(m.team_1, "display_name", None) or getattr(m.team_1, "name", None) or str(m.team_1) if m.team_1 else "TBD"
                 t2 = getattr(m.team_2, "display_name", None) or getattr(m.team_2, "name", None) or str(m.team_2) if m.team_2 else "TBD"
-                return f"{t1}\nпротив\n{t2}"
+                lines: list[str] = []
+                if top:
+                    lines.append(top)
+                if meta:
+                    lines.append(meta)
+                lines.extend([str(t1), "против", str(t2)])
+                return "\n".join(lines)
             return ""
 
         def slot_status_color(slot: Any):
@@ -858,7 +908,7 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                     c.rect(cx, y_top - run_row_h, col_w, run_row_h, fill=1, stroke=0)
 
                 c.setFillColor(colors.black)
-                txt = slot_text(slot)
+                txt = slot_text(run_obj, slot)
                 if txt:
                     lines = [ln.strip() for ln in str(txt).split("\n") if ln.strip()]
                     # вертикальное размещение ближе к центру ячейки
@@ -1001,76 +1051,13 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                 tournament_names.append(str(scope.tournament.name))
         title = " + ".join(tournament_names) if tournament_names else "Расписание"
 
-        # Precompute RR meta label: "гр.X • a-b" (best-effort)
-        rr_row_by_team: dict[tuple[int, int, int], int] = {}
-        try:
-            from apps.tournaments.models import TournamentEntry
-
-            t_ids: set[int] = set()
-            team_ids: set[int] = set()
-            for s in slots_qs:
-                if getattr(s, "slot_type", None) != "match":
-                    continue
-                m = getattr(s, "match", None)
-                if not m or not getattr(m, "tournament_id", None):
-                    continue
-                t_ids.add(int(m.tournament_id))
-                if getattr(m, "team_1_id", None):
-                    team_ids.add(int(m.team_1_id))
-                if getattr(m, "team_2_id", None):
-                    team_ids.add(int(m.team_2_id))
-
-            if t_ids and team_ids:
-                qs = TournamentEntry.objects.filter(tournament_id__in=list(t_ids), team_id__in=list(team_ids)).only(
-                    "tournament_id", "team_id", "group_index", "row_index"
-                )
-                for e in qs:
-                    gi = int(e.group_index) if e.group_index is not None else 0
-                    if gi <= 0 or e.row_index is None:
-                        continue
-                    rr_row_by_team[(int(e.tournament_id), gi, int(e.team_id))] = int(e.row_index)
-        except Exception:
-            rr_row_by_team = {}
+        rr_row_by_team = self._compute_rr_row_by_team(slots_qs)
 
         def run_top_label(run_obj: Any) -> str:
-            try:
-                mode = getattr(run_obj, "start_mode", "")
-                if mode == "then":
-                    return "Затем"
-                if mode == "not_earlier":
-                    t = getattr(run_obj, "not_earlier_time", None)
-                    if t:
-                        return f"Не ранее {t.strftime('%H:%M')}"
-                    return "Не ранее"
-                t = getattr(run_obj, "start_time", None)
-                if t:
-                    return t.strftime("%H:%M")
-            except Exception:
-                pass
-            return ""
+            return self._run_top_label(run_obj)
 
         def match_meta_label(m: Any) -> str:
-            if not m:
-                return ""
-            gi = getattr(m, "group_index", None)
-            group = f"гр.{gi}" if gi is not None else ""
-            try:
-                system = getattr(getattr(m, "tournament", None), "system", "")
-            except Exception:
-                system = ""
-            if system == "round_robin":
-                try:
-                    gi_int = int(gi) if gi is not None else 0
-                    t_id = int(getattr(m, "tournament_id", 0) or 0)
-                    a_id = int(getattr(m, "team_1_id", 0) or 0)
-                    b_id = int(getattr(m, "team_2_id", 0) or 0)
-                    r1 = rr_row_by_team.get((t_id, gi_int, a_id))
-                    r2 = rr_row_by_team.get((t_id, gi_int, b_id))
-                    pair = f"{r1}-{r2}" if (r1 is not None and r2 is not None) else ""
-                    return " • ".join([p for p in [group, pair] if p])
-                except Exception:
-                    return group
-            return group
+            return self._match_meta_label(m, rr_row_by_team)
 
         def split_courts_evenly(items: list[Any], max_per_page: int = 10) -> list[list[Any]]:
             n = len(items)

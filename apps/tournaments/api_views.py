@@ -558,28 +558,18 @@ class TournamentViewSet(viewsets.ModelViewSet):
 
             courts = list(schedule.courts.all().order_by("index"))
 
-            # Create match slots (empty cells are match slots with match_id=NULL).
-            matches = list(
-                pool_qs.order_by(
-                    "stage",
-                    "group_index",
-                    "round_index",
-                    "order_in_round",
-                    "id",
-                )
-            )
-            mi = 0
+            # Create match slots.
+            # Важно: для черновика не привязываем матчи сразу подряд,
+            # иначе фронт будет считать их "уже назначенными" и не сможет
+            # корректно автозаполнить с учётом конфликтов.
             for r in runs:
                 for c in courts:
-                    match_id = matches[mi].id if mi < len(matches) else None
-                    if match_id is not None:
-                        mi += 1
                     ScheduleSlot.objects.create(
                         schedule=schedule,
                         run=r,
                         court=c,
                         slot_type=ScheduleSlot.SlotType.MATCH,
-                        match_id=match_id,
+                        match_id=None,
                     )
 
         return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data}, status=status.HTTP_201_CREATED)
