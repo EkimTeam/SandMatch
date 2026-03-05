@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { playerApi, Player, ratingApi } from '../services/api';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Player, ratingApi } from '../services/api';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 export const PlayersPage: React.FC = () => {
@@ -8,31 +8,74 @@ export const PlayersPage: React.FC = () => {
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
   const [briefs, setBriefs] = useState<Record<number, { current_rating: number; last_delta: number }>>({});
+  const [page, setPage] = useState<number>(1);
+  const [totalPages, setTotalPages] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(24);
+  const [q, setQ] = useState<string>('');
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
 
   useEffect(() => {
-    loadPlayers();
+    const pageParam = parseInt(searchParams.get('page') || '1', 10);
+    const pageSizeParam = parseInt(searchParams.get('page_size') || '24', 10);
+    const qParam = searchParams.get('q') || '';
+    setPage(Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1);
+    setPageSize([24, 48, 72].includes(pageSizeParam) ? pageSizeParam : 24);
+    setQ(qParam);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadPlayers = async () => {
-    try {
-      const data = await playerApi.getList();
-      setPlayers(data);
-      if (data && data.length) {
-        const ids = data.map(p => p.id);
-        const br = await ratingApi.playerBriefs(ids);
-        const map: Record<number, { current_rating: number; last_delta: number }> = {};
-        (br.results || []).forEach((r: any) => { map[r.id] = { current_rating: r.current_rating, last_delta: r.last_delta }; });
-        setBriefs(map);
-      } else {
+  useEffect(() => {
+    const params: any = {};
+    if (q) params.q = q;
+    if (page && page > 1) params.page = String(page);
+    if (pageSize !== 24) params.page_size = String(pageSize);
+    setSearchParams(params, { replace: true });
+  }, [q, page, pageSize, setSearchParams]);
+
+  const canLoad = useMemo(() => user?.role !== 'REFEREE', [user?.role]);
+
+  useEffect(() => {
+    const loadPlayers = async () => {
+      if (!canLoad) return;
+      try {
+        setLoading(true);
+        const data = await ratingApi.leaderboard({ q, page, page_size: pageSize });
+        const rows: any[] = data?.results || [];
+        setTotalPages(data?.total_pages || 1);
+
+        const mapped: Player[] = rows.map((r: any) => ({
+          id: r.id,
+          first_name: r.first_name || r.display_name,
+          last_name: r.last_name,
+          display_name: r.display_name,
+          level: undefined as any,
+          current_rating: r.current_rating,
+        }));
+        setPlayers(mapped);
+
+        if (rows.length) {
+          const ids = rows.map((r: any) => r.id);
+          const br = await ratingApi.playerBriefs(ids);
+          const map: Record<number, { current_rating: number; last_delta: number }> = {};
+          (br.results || []).forEach((r: any) => {
+            map[r.id] = { current_rating: r.current_rating, last_delta: r.last_delta };
+          });
+          setBriefs(map);
+        } else {
+          setBriefs({});
+        }
+      } catch (error) {
+        console.error('Ошибка загрузки игроков:', error);
+        setPlayers([]);
         setBriefs({});
+        setTotalPages(1);
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error('Ошибка загрузки игроков:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    };
+    loadPlayers();
+  }, [canLoad, page, pageSize, q]);
 
   if (user?.role === 'REFEREE') {
     return (
@@ -61,6 +104,54 @@ export const PlayersPage: React.FC = () => {
         >
           Добавить игрока
         </button>
+      </div>
+
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setPage(1);
+            setQ(q.trim());
+          }}
+        >
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            className="border rounded px-2 py-1 text-sm"
+            placeholder="Поиск игрока"
+          />
+          <button type="submit" className="px-3 py-1 text-sm bg-blue-600 text-white rounded">
+            Искать
+          </button>
+          <button
+            type="button"
+            className="px-3 py-1 text-sm bg-gray-100 rounded"
+            onClick={() => {
+              setQ('');
+              setPage(1);
+            }}
+          >
+            Сброс
+          </button>
+        </form>
+
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-gray-600">Показывать:</span>
+          <select
+            value={pageSize}
+            onChange={(e) => {
+              const newSize = parseInt(e.target.value, 10);
+              setPageSize(newSize);
+              setPage(1);
+            }}
+            className="px-2 py-1 border rounded bg-white text-sm"
+          >
+            <option value={24}>24</option>
+            <option value={48}>48</option>
+            <option value={72}>72</option>
+          </select>
+        </div>
       </div>
 
       {players.length > 0 ? (
@@ -100,8 +191,28 @@ export const PlayersPage: React.FC = () => {
           })}
         </div>
       ) : (
-        <div className="card text-center py-8">Пока нет игроков</div>
+        <div className="card text-center py-8">{loading ? 'Загрузка игроков...' : (q ? 'Игроки не найдены' : 'Пока нет игроков')}</div>
       )}
+
+      <div className="mt-4 flex items-center justify-between gap-3 text-sm flex-wrap">
+        <div>Стр. {page} из {totalPages}</div>
+        <div className="flex items-center gap-2 ml-auto">
+          <button
+            disabled={page <= 1}
+            className="px-2 py-1 border rounded disabled:opacity-50"
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+          >
+            Назад
+          </button>
+          <button
+            disabled={page >= totalPages}
+            className="px-2 py-1 border rounded disabled:opacity-50"
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+          >
+            Вперёд
+          </button>
+        </div>
+      </div>
 
       {user?.role === 'ADMIN' && (
         <div className="mt-8 text-center">

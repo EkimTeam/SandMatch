@@ -18,6 +18,11 @@ from apps.tournaments.services.king_stats import (
     _aggregate_for_king_group,
     compute_king_group_ranking,
 )
+from apps.tournaments.services.team_ordering import (
+    build_team_display_name,
+    build_team_full_name,
+    team_players_in_display_order,
+)
 
 
 @dataclass
@@ -116,40 +121,19 @@ def _recalc_king_placements(tournament: Tournament) -> None:
             if round_idx not in rounds_dict:
                 rounds_dict[round_idx] = []
 
-            team1_players = []
-            team2_players = []
+            def _players_payload(team) -> List[dict]:
+                payload: List[dict] = []
+                for p in team_players_in_display_order(tournament, team):
+                    payload.append(
+                        {
+                            "id": p.id,
+                            "name": f"{p.last_name} {p.first_name}",
+                        }
+                    )
+                return payload
 
-            if m.team_1:
-                if m.team_1.player_1:
-                    team1_players.append(
-                        {
-                            "id": m.team_1.player_1.id,
-                            "name": f"{m.team_1.player_1.last_name} {m.team_1.player_1.first_name}",
-                        }
-                    )
-                if m.team_1.player_2:
-                    team1_players.append(
-                        {
-                            "id": m.team_1.player_2.id,
-                            "name": f"{m.team_1.player_2.last_name} {m.team_1.player_2.first_name}",
-                        }
-                    )
-
-            if m.team_2:
-                if m.team_2.player_1:
-                    team2_players.append(
-                        {
-                            "id": m.team_2.player_1.id,
-                            "name": f"{m.team_2.player_1.last_name} {m.team_2.player_1.first_name}",
-                        }
-                    )
-                if m.team_2.player_2:
-                    team2_players.append(
-                        {
-                            "id": m.team_2.player_2.id,
-                            "name": f"{m.team_2.player_2.last_name} {m.team_2.player_2.first_name}",
-                        }
-                    )
+            team1_players = _players_payload(m.team_1)
+            team2_players = _players_payload(m.team_2)
 
             rounds_dict[round_idx].append(
                 {
@@ -168,6 +152,7 @@ def _recalc_king_placements(tournament: Tournament) -> None:
 
         participants_data = []
         for e in entries:
+            ordered_players = team_players_in_display_order(tournament, e.team) if e.team else []
             participants_data.append(
                 {
                     "row_index": e.row_index,
@@ -175,14 +160,9 @@ def _recalc_king_placements(tournament: Tournament) -> None:
                         "player_1": e.team.player_1_id if e.team else None,
                         "player_2": e.team.player_2_id if e.team else None,
                     },
-                    "display_name": (
-                        e.team.player_1.display_name if e.team and e.team.player_1 else ""
-                    ),
-                    "name": (
-                        f"{e.team.player_1.last_name} {e.team.player_1.first_name}"
-                        if e.team and e.team.player_1
-                        else ""
-                    ),
+                    "display_name": build_team_display_name(tournament, e.team) if e.team else "",
+                    "name": build_team_full_name(tournament, e.team) if e.team else "",
+                    "player_id": ordered_players[0].id if ordered_players else None,
                 }
             )
 

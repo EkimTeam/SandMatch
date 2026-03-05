@@ -1162,9 +1162,19 @@ export const ratingApi = {
     return data;
   },
   playerBriefs: async (ids: number[]): Promise<{ results: Array<{ id: number; current_rating: number; last_delta: number; rank?: number }> }> => {
-    const qs = ids.length ? `?ids=${ids.join(',')}` : '';
-    const { data } = await api.get(`/rating/players/briefs/${qs}`);
-    return data;
+    if (!ids?.length) return { results: [] };
+
+    const CHUNK_SIZE = 200;
+    const results: Array<{ id: number; current_rating: number; last_delta: number; rank?: number }> = [];
+
+    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+      const chunk = ids.slice(i, i + CHUNK_SIZE);
+      const qs = `?ids=${chunk.join(',')}`;
+      const { data } = await api.get(`/rating/players/briefs/${qs}`);
+      if (data?.results?.length) results.push(...data.results);
+    }
+
+    return { results };
   },
   playerMatchDeltas: async (playerId: number): Promise<{
     player_id: number;
