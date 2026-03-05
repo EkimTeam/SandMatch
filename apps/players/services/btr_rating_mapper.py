@@ -1,9 +1,7 @@
 """
 Сервис для расчета стартового BP рейтинга на основе BTR рейтинга.
 """
-from typing import Optional
 from apps.btr.models import BtrPlayer, BtrRatingSnapshot
-from django.db.models import Max
 
 
 def calculate_initial_bp_rating_from_btr(btr_player_id: int) -> int:
@@ -34,13 +32,12 @@ def calculate_initial_bp_rating_from_btr(btr_player_id: int) -> int:
     Returns:
         Стартовый BP рейтинг (целое число, от 1000 до 2000)
     """
-    try:
-        btr_player = BtrPlayer.objects.get(id=btr_player_id)
-    except BtrPlayer.DoesNotExist:
+    if not BtrPlayer.objects.filter(id=btr_player_id).exists():
         return 1000  # Дефолтный стартовый рейтинг
     
     # Получаем последние рейтинги в категориях men_double и women_double
     relevant_categories = ['men_double', 'women_double']
+    junior_categories = ['junior_male', 'junior_female']
     
     max_btr_rating = 0
     
@@ -53,6 +50,21 @@ def calculate_initial_bp_rating_from_btr(btr_player_id: int) -> int:
         
         if latest_snapshot and latest_snapshot.rating_value > max_btr_rating:
             max_btr_rating = latest_snapshot.rating_value
+
+    # Спец-правило для юниоров:
+    # если у игрока есть ТОЛЬКО юниорские категории (MU/WU),
+    # а взрослых men_double/women_double нет, стартовый BP = 800.
+    has_adult_snapshots = BtrRatingSnapshot.objects.filter(
+        player_id=btr_player_id,
+        category__in=relevant_categories,
+    ).exists()
+    has_junior_snapshots = BtrRatingSnapshot.objects.filter(
+        player_id=btr_player_id,
+        category__in=junior_categories,
+    ).exists()
+
+    if not has_adult_snapshots and has_junior_snapshots:
+        return 800
     
     # Если нет рейтинга в BTR или он меньше 80 (любители)
     if max_btr_rating < 80:

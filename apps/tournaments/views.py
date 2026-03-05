@@ -7,6 +7,10 @@ from django.views.decorators.http import require_POST
 from django.views.generic import TemplateView, DetailView
 
 from apps.tournaments.models import Tournament, SetFormat, Ruleset, TournamentEntry
+from apps.tournaments.services.team_ordering import (
+    build_team_display_name,
+    team_players_in_display_order,
+)
 from apps.teams.models import Team
 from apps.players.models import Player
 from apps.tournaments.services.round_robin import _round_robin_pairings
@@ -199,8 +203,9 @@ class TournamentDetailView(DetailView):
             )
 
             team = e.team
-            p1 = team.player_1
-            p2 = team.player_2
+            ordered_players = team_players_in_display_order(t, team)
+            p1 = ordered_players[0] if ordered_players else team.player_1
+            p2 = ordered_players[1] if len(ordered_players) > 1 else None
 
             p1_vr = get_player_visible_rating(t, p1)
             p2_vr = get_player_visible_rating(t, p2) if p2 else None
@@ -899,12 +904,8 @@ def _diff(w: int, l: int) -> int:
     return int(w - l)
 
 
-def _team_display_name(team) -> str:
-    p1 = team.player_1
-    p2 = team.player_2
-    if p2 is None:
-        return p1.display_name or p1.first_name or str(p1)
-    return f"{p1.display_name or p1.first_name} / {p2.display_name or p2.first_name}"
+def _team_display_name(tournament: Tournament, team) -> str:
+    return build_team_display_name(tournament, team)
 
 
 def _build_group_table(t: Tournament, gi: int):
@@ -976,7 +977,7 @@ def _build_group_table(t: Tournament, gi: int):
         sets_won = int(data["sets_won"]) ; sets_lost = int(data["sets_lost"]) ; games_won = int(data["games_won"]) ; games_lost = int(data["games_lost"]) ; wins = int(data["wins"])
         items.append({
             "row_index": e.row_index,
-            "team_name": _team_display_name(e.team),
+            "team_name": _team_display_name(t, e.team),
             "wins": wins,
             "sets": f"{sets_won}-{sets_lost}",
             "sets_diff": _diff(sets_won, sets_lost),

@@ -205,10 +205,14 @@ def generate_announcement_text(tournament) -> str:
 
     # Списки зарегистрированных участников (если используется новая система регистрации)
     if has_registration_model:
+        from apps.tournaments.services.team_ordering import build_team_full_name, order_pair_players
+
         registrations_qs = TournamentRegistration.objects.filter(tournament=tournament).select_related(
             "player",
             "partner",
             "team",
+            "team__player_1",
+            "team__player_2",
         )
 
         # Основной состав (уникальные команды / игроки)
@@ -220,17 +224,18 @@ def generate_announcement_text(tournament) -> str:
                 continue
             if team:
                 seen_teams.add(team.id)
-                p1 = getattr(team, "player_1", None) or reg.player
-                p2 = getattr(team, "player_2", None) or reg.partner
+                pair_name = build_team_full_name(tournament, team)
             else:
                 # На всякий случай поддерживаем одиночные турниры без команды
                 p1 = reg.player
                 p2 = reg.partner
+                if p2:
+                    ordered = order_pair_players(tournament, p1, p2)
+                    pair_name = " / ".join(str(p) for p in ordered)
+                else:
+                    pair_name = str(p1)
 
-            if p2:
-                main_pairs.append(f"{p1} / {p2}")
-            else:
-                main_pairs.append(str(p1))
+            main_pairs.append(pair_name)
 
         # Резервный состав
         reserve_pairs: list[str] = []
@@ -241,16 +246,17 @@ def generate_announcement_text(tournament) -> str:
                 continue
             if team:
                 seen_teams_reserve.add(team.id)
-                p1 = getattr(team, "player_1", None) or reg.player
-                p2 = getattr(team, "player_2", None) or reg.partner
+                pair_name = build_team_full_name(tournament, team)
             else:
                 p1 = reg.player
                 p2 = reg.partner
+                if p2:
+                    ordered = order_pair_players(tournament, p1, p2)
+                    pair_name = " / ".join(str(p) for p in ordered)
+                else:
+                    pair_name = str(p1)
 
-            if p2:
-                reserve_pairs.append(f"{p1} / {p2}")
-            else:
-                reserve_pairs.append(str(p1))
+            reserve_pairs.append(pair_name)
 
         # Игроки, которые ищут пару
         looking_players: list[str] = []
@@ -1726,13 +1732,15 @@ class TournamentViewSet(viewsets.ModelViewSet):
             rating = 0
 
             from apps.tournaments.services.rating_visible import get_team_visible_rating
+            from apps.tournaments.services.team_ordering import team_players_in_display_order
 
             if team.player_1:
-                p1 = team.player_1
-                if team.player_2:
-                    # Пара: считаем средний рейтинг двух игроков
-                    p2 = team.player_2
+                ordered_players = team_players_in_display_order(tournament, team)
+                p1 = ordered_players[0] if ordered_players else team.player_1
+                p2 = ordered_players[1] if len(ordered_players) > 1 else None
 
+                if p2:
+                    # Пара: считаем средний рейтинг двух игроков
                     # Для завершённых турниров в BP оставляем исторический рейтинг ДО турнира,
                     # для остальных случаев — используем видимый рейтинг турнира.
                     if use_before_rating and tournament.rating_visible == Tournament.RatingVisible.BEACHPLAY:
@@ -2941,6 +2949,27 @@ class TournamentViewSet(viewsets.ModelViewSet):
         
         groups_count = max(1, tournament.groups_count or 1)
         schedule = {}
+
+        from apps.tournaments.services.team_ordering import (
+            build_team_display_name,
+            build_team_full_name,
+            team_players_in_display_order,
+        )
+
+        def _players_payload_for_team(team):
+            if not team:
+                return []
+            ordered_players = team_players_in_display_order(tournament, team)
+            payload = []
+            for p in ordered_players:
+                payload.append(
+                    {
+                        'id': p.id,
+                        'name': f"{p.last_name} {p.first_name}",
+                        'display_name': p.display_name or p.first_name,
+                    }
+                )
+            return payload
         
         for group_idx in range(1, groups_count + 1):
             # Получаем участников группы
@@ -2964,35 +2993,9 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 if round_num not in rounds_dict:
                     rounds_dict[round_num] = []
                 
-                # Определяем игроков в парах
-                team1_players = []
-                team2_players = []
-                
-                if match.team_1 and match.team_1.player_1:
-                    team1_players.append({
-                        'id': match.team_1.player_1.id,
-                        'name': f"{match.team_1.player_1.last_name} {match.team_1.player_1.first_name}",
-                        'display_name': match.team_1.player_1.display_name or match.team_1.player_1.first_name
-                    })
-                if match.team_1 and match.team_1.player_2:
-                    team1_players.append({
-                        'id': match.team_1.player_2.id,
-                        'name': f"{match.team_1.player_2.last_name} {match.team_1.player_2.first_name}",
-                        'display_name': match.team_1.player_2.display_name or match.team_1.player_2.first_name
-                    })
-                
-                if match.team_2 and match.team_2.player_1:
-                    team2_players.append({
-                        'id': match.team_2.player_1.id,
-                        'name': f"{match.team_2.player_1.last_name} {match.team_2.player_1.first_name}",
-                        'display_name': match.team_2.player_1.display_name or match.team_2.player_1.first_name
-                    })
-                if match.team_2 and match.team_2.player_2:
-                    team2_players.append({
-                        'id': match.team_2.player_2.id,
-                        'name': f"{match.team_2.player_2.last_name} {match.team_2.player_2.first_name}",
-                        'display_name': match.team_2.player_2.display_name or match.team_2.player_2.first_name
-                    })
+                # Определяем игроков в парах в едином порядке отображения
+                team1_players = _players_payload_for_team(match.team_1)
+                team2_players = _players_payload_for_team(match.team_2)
                 
                 # Получить счёт
                 score_str = None
@@ -3034,19 +3037,23 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     'matches': rounds_dict[round_num]
                 })
             
-            schedule[str(group_idx)] = {
-                'participants': [
+            participants_payload = []
+            for e in entries:
+                ordered_players = team_players_in_display_order(tournament, e.team) if e.team else []
+                participants_payload.append(
                     {
                         'id': e.id,
                         'team_id': e.team_id,
-                        # базовый игрок в группе (team.player_1)
-                        'player_id': e.team.player_1_id if e.team and e.team.player_1_id is not None else None,
-                        'name': f"{e.team.player_1.last_name} {e.team.player_1.first_name}" if e.team and e.team.player_1 else '',
-                        'display_name': (e.team.player_1.display_name or e.team.player_1.first_name) if e.team and e.team.player_1 else '',
+                        # базовый игрок в группе (первый в порядке отображения пары)
+                        'player_id': ordered_players[0].id if ordered_players else None,
+                        'name': build_team_full_name(tournament, e.team) if e.team else '',
+                        'display_name': build_team_display_name(tournament, e.team) if e.team else '',
                         'row_index': e.row_index,
                     }
-                    for e in entries
-                ],
+                )
+
+            schedule[str(group_idx)] = {
+                'participants': participants_payload,
                 'rounds': rounds_list,
             }
         
@@ -3069,6 +3076,26 @@ class TournamentViewSet(viewsets.ModelViewSet):
             _aggregate_for_king_group,
             compute_king_group_ranking
         )
+        from apps.tournaments.services.team_ordering import (
+            build_team_display_name,
+            build_team_full_name,
+            team_players_in_display_order,
+        )
+
+        def _players_payload_for_team(team):
+            if not team:
+                return []
+            ordered_players = team_players_in_display_order(tournament, team)
+            payload = []
+            for p in ordered_players:
+                payload.append(
+                    {
+                        'id': p.id,
+                        'name': f"{p.last_name} {p.first_name}",
+                        'display_name': p.display_name or p.first_name,
+                    }
+                )
+            return payload
         
         # Получаем расписание для всех групп (используем ту же логику, что в king_schedule)
         groups_count = max(1, tournament.groups_count or 1)
@@ -3101,66 +3128,44 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 if round_idx not in rounds_dict:
                     rounds_dict[round_idx] = []
                 
-                team1_players = []
-                team2_players = []
-                # Для King туров матч содержит временные пары: берем игроков напрямую из m.team_1/m.team_2
-                if m.team_1:
-                    if m.team_1.player_1:
-                        team1_players.append({
-                            'id': m.team_1.player_1.id,
-                            'name': f"{m.team_1.player_1.last_name} {m.team_1.player_1.first_name}"
-                        })
-                    if m.team_1.player_2:
-                        team1_players.append({
-                            'id': m.team_1.player_2.id,
-                            'name': f"{m.team_1.player_2.last_name} {m.team_1.player_2.first_name}"
-                        })
-
-                if m.team_2:
-                    if m.team_2.player_1:
-                        team2_players.append({
-                            'id': m.team_2.player_1.id,
-                            'name': f"{m.team_2.player_1.last_name} {m.team_2.player_1.first_name}"
-                        })
-                    if m.team_2.player_2:
-                        team2_players.append({
-                            'id': m.team_2.player_2.id,
-                            'name': f"{m.team_2.player_2.last_name} {m.team_2.player_2.first_name}"
-                        })
+                team1_players = _players_payload_for_team(m.team_1)
+                team2_players = _players_payload_for_team(m.team_2)
                 
                 rounds_dict[round_idx].append({
                     'id': m.id,
                     'team1_players': team1_players,
                     'team2_players': team2_players,
                 })
-            
+
             rounds_list = [{'round': r, 'matches': rounds_dict[r]} for r in sorted(rounds_dict.keys())]
-            
+
             participants_data = []
             for e in entries:
+                ordered_players = team_players_in_display_order(tournament, e.team) if e.team else []
                 participants_data.append({
                     'row_index': e.row_index,
                     'team': {
                         'player_1': e.team.player_1_id if e.team else None,
                         'player_2': e.team.player_2_id if e.team else None,
                     },
-                    'display_name': e.team.player_1.display_name if e.team and e.team.player_1 else '',
-                    'name': f"{e.team.player_1.last_name} {e.team.player_1.first_name}" if e.team and e.team.player_1 else '',
+                    'display_name': build_team_display_name(tournament, e.team) if e.team else '',
+                    'name': build_team_full_name(tournament, e.team) if e.team else '',
+                    'player_id': ordered_players[0].id if ordered_players else None,
                 })
-            
+
             group_data = {
                 'participants': participants_data,
                 'rounds': rounds_list
             }
-            
+
             # Рассчитываем агрегаты для всех трёх режимов (NO, G-, M+)
             stats, compute_stats_fn = _aggregate_for_king_group(tournament, group_idx, group_data)
-            
+
             # Рассчитываем ранжирование для текущего режима
             placements = compute_king_group_ranking(
                 tournament, group_idx, calculation_mode, group_data, stats, compute_stats_fn
             )
-            
+
             # Формируем результат для группы (включаем все поля для всех режимов)
             result['groups'][str(group_idx)] = {
                 'stats': {
@@ -3169,7 +3174,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 },
                 'placements': {str(row_idx): rank for row_idx, rank in placements.items()}
             }
-        
+
         return Response({'ok': True, 'groups': result['groups']})
 
     @method_decorator(csrf_exempt)
@@ -4176,19 +4181,14 @@ class TournamentViewSet(viewsets.ModelViewSet):
         # Если это стадия турнира, берём участников из TournamentEntry
         if tournament.parent_tournament_id:
             entries = tournament.entries.select_related('team', 'team__player_1', 'team__player_2').all()
+            from apps.tournaments.services.team_ordering import build_team_full_name
             
             for entry in entries:
                 if not entry.team:
                     continue
                 
                 team = entry.team
-                # Формируем имя
-                if team.player_2:
-                    # Пара
-                    full_name = f"{team.player_1.last_name} {team.player_1.first_name} / {team.player_2.last_name} {team.player_2.first_name}"
-                else:
-                    # Одиночка
-                    full_name = f"{team.player_1.last_name} {team.player_1.first_name}"
+                full_name = build_team_full_name(tournament, team)
                 
                 # Рейтинг
                 from apps.tournaments.services.rating_visible import get_team_visible_rating
@@ -4218,7 +4218,8 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     TournamentRegistration.Status.MAIN_LIST,
                     TournamentRegistration.Status.RESERVE_LIST
                 ]
-            ).select_related('player', 'partner', 'team').order_by('registration_order')
+            ).select_related('player', 'partner', 'team', 'team__player_1', 'team__player_2').order_by('registration_order')
+            from apps.tournaments.services.team_ordering import build_team_full_name
             
             seen_teams = set()  # Чтобы не дублировать пары
             
@@ -4229,12 +4230,12 @@ class TournamentViewSet(viewsets.ModelViewSet):
                         continue
                     seen_teams.add(reg.team_id)
                 
-                # Формируем имя
-                if reg.partner:
-                    # Пара
+                # Формируем имя с единым правилом порядка игроков пары
+                if reg.team:
+                    full_name = build_team_full_name(tournament, reg.team)
+                elif reg.partner:
                     full_name = f"{reg.player.last_name} {reg.player.first_name} / {reg.partner.last_name} {reg.partner.first_name}"
                 else:
-                    # Одиночка
                     full_name = f"{reg.player.last_name} {reg.player.first_name}"
                 
                 # Рейтинг

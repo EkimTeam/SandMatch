@@ -4,6 +4,11 @@ from apps.teams.models import Team
 from apps.matches.models import Match, MatchSet
 from apps.accounts.permissions import IsTournamentCreatorOrAdminForDeletion
 from .models import Tournament, TournamentEntry, SetFormat, SchedulePattern, Ruleset, TournamentPlacement
+from apps.tournaments.services.team_ordering import (
+    build_team_display_name,
+    build_team_full_name,
+    team_players_in_display_order,
+)
 
 
 class PlayerSerializer(serializers.ModelSerializer):
@@ -28,14 +33,15 @@ class TeamSerializer(serializers.ModelSerializer):
     def get_name(self, obj: Team) -> str:
         return str(obj)
 
+    def _tournament(self, obj: Team):
+        tournament = self.context.get("tournament")
+        if tournament is not None:
+            return tournament
+        return None
+
     def get_display_name(self, obj: Team) -> str:
         try:
-            if obj.player_2_id:
-                dn1 = getattr(obj.player_1, "display_name", None) or str(obj.player_1)
-                dn2 = getattr(obj.player_2, "display_name", None) or str(obj.player_2)
-                return f"{dn1} / {dn2}".strip()
-            # одиночка
-            return getattr(obj.player_1, "display_name", None) or str(obj.player_1)
+            return build_team_display_name(self._tournament(obj), obj) or str(obj)
         except Exception:
             return str(obj)
 
@@ -49,15 +55,14 @@ class TeamSerializer(serializers.ModelSerializer):
             except Exception:
                 return str(p)
         try:
-            if obj.player_2_id:
-                return f"{full(obj.player_1)} / {full(obj.player_2)}".strip()
-            return full(obj.player_1)
+            full_name = build_team_full_name(self._tournament(obj), obj)
+            return full_name if full_name else full(obj.player_1)
         except Exception:
             return str(obj)
 
 
 class ParticipantSerializer(serializers.ModelSerializer):
-    team = TeamSerializer(read_only=True)
+    team = serializers.SerializerMethodField()
     team_id = serializers.IntegerField(write_only=True)
     list_status = serializers.SerializerMethodField()
     visible_rating = serializers.SerializerMethodField()
@@ -126,6 +131,12 @@ class ParticipantSerializer(serializers.ModelSerializer):
         
         return "main"  # По умолчанию основной список
 
+    def get_team(self, obj: TournamentEntry):
+        team = getattr(obj, "team", None)
+        if not team:
+            return None
+        return TeamSerializer(team, context={**self.context, "tournament": obj.tournament}).data
+
     def get_visible_rating(self, obj: TournamentEntry):
         from apps.tournaments.services.rating_visible import get_entry_visible_rating
 
@@ -164,7 +175,8 @@ class ParticipantSerializer(serializers.ModelSerializer):
         if not tournament or not team:
             return None
 
-        player = getattr(team, "player_1", None) if which == 1 else getattr(team, "player_2", None)
+        players = team_players_in_display_order(tournament, team)
+        player = players[which - 1] if len(players) >= which else None
         if not player:
             return None
 
@@ -188,8 +200,8 @@ class ParticipantSerializer(serializers.ModelSerializer):
 
 
 class MatchSerializer(serializers.ModelSerializer):
-    team_1 = TeamSerializer(read_only=True)
-    team_2 = TeamSerializer(read_only=True)
+    team_1 = serializers.SerializerMethodField()
+    team_2 = serializers.SerializerMethodField()
     sets = serializers.SerializerMethodField()
     score = serializers.SerializerMethodField()
 
@@ -217,6 +229,16 @@ class MatchSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    def get_team_1(self, obj: Match):
+        if not obj.team_1:
+            return None
+        return TeamSerializer(obj.team_1, context={**self.context, "tournament": obj.tournament}).data
+
+    def get_team_2(self, obj: Match):
+        if not obj.team_2:
+            return None
+        return TeamSerializer(obj.team_2, context={**self.context, "tournament": obj.tournament}).data
 
     def get_sets(self, obj: Match):
         # Возвращаем краткое представление сетов для отображения счёта
