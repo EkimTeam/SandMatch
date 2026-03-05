@@ -495,6 +495,11 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                     return f"Раунд {ri}".strip() if ri is not None else ""
 
                 if system == "round_robin":
+                    # In draft mode (no teams assigned yet) we still want the full label
+                    # e.g. "гр.1 • 1-12". For RR drafts we store that in round_name.
+                    rn = str(getattr(m, "round_name", "") or "").strip()
+                    if rn and "гр." in rn and "•" in rn:
+                        return rn
                     try:
                         gi_int = int(gi) if gi is not None else 0
                         t_id = int(getattr(m, "tournament_id", 0) or 0)
@@ -1059,6 +1064,9 @@ class ScheduleViewSet(viewsets.ModelViewSet):
             except Exception:
                 system = ""
             if system == "round_robin":
+                rn = str(getattr(m, "round_name", "") or "").strip()
+                if rn and "гр." in rn and "•" in rn:
+                    return rn
                 try:
                     gi_int = int(gi) if gi is not None else 0
                     t_id = int(getattr(m, "tournament_id", 0) or 0)
