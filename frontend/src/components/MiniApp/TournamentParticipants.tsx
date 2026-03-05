@@ -89,7 +89,18 @@ const TournamentParticipants = ({ tournamentId, currentPlayerId, currentPlayerSt
     const reg1 = pairRegs[0]
     
     const isCurrentPlayerInPair = pairRegs.some(r => r.player_id === currentPlayerId)
-    const pairRating = (reg1 as any).rating_bp
+
+    const getRatingText = (reg: TournamentRegistration) => {
+      const rating = (reg.visible_rating ?? reg.rating_bp)
+      if (rating === null || rating === undefined) return null
+      const label = (reg.rating_label || '').trim() || 'BP'
+      const place = (reg.visible_place ?? null)
+      return (typeof place === 'number')
+        ? `(#${place} • ${rating} ${label})`
+        : `(${rating} ${label})`
+    }
+
+    const pairRatingText = getRatingText(reg1)
     
     return (
       <div
@@ -104,8 +115,8 @@ const TournamentParticipants = ({ tournamentId, currentPlayerId, currentPlayerSt
               {reg1.player_name} / {reg1.partner_name}
               {isCurrentPlayerInPair && <span className="ml-2 text-xs text-blue-600">(Вы)</span>}
             </div>
-            {pairRating !== null && pairRating !== undefined && (
-              <div className="text-xs text-gray-500 mt-1">Рейтинг пары: {pairRating}</div>
+            {pairRatingText && (
+              <div className="text-xs text-gray-500 mt-1">Рейтинг пары: {pairRatingText}</div>
             )}
           </div>
         </div>
@@ -115,7 +126,17 @@ const TournamentParticipants = ({ tournamentId, currentPlayerId, currentPlayerSt
 
   const renderSingle = (reg: TournamentRegistration, showInviteButton: boolean = false) => {
     const isCurrentPlayer = reg.player_id === currentPlayerId
-    const playerRating = (reg as any).rating_bp
+    const getRatingText = (reg: TournamentRegistration) => {
+      const rating = (reg.visible_rating ?? reg.rating_bp)
+      if (rating === null || rating === undefined) return null
+      const label = (reg.rating_label || '').trim() || 'BP'
+      const place = (reg.visible_place ?? null)
+      return (typeof place === 'number')
+        ? `(#${place} • ${rating} ${label})`
+        : `(${rating} ${label})`
+    }
+
+    const playerRatingText = getRatingText(reg)
     
     // Показываем кнопку "Пригласить" если:
     // 1. showInviteButton = true (список "Ищут пару")
@@ -137,8 +158,8 @@ const TournamentParticipants = ({ tournamentId, currentPlayerId, currentPlayerSt
               {reg.player_name}
               {isCurrentPlayer && <span className="ml-2 text-xs text-blue-600">(Вы)</span>}
             </div>
-            {playerRating !== null && playerRating !== undefined && (
-              <div className="text-xs text-gray-500 mt-1">Рейтинг: {playerRating}</div>
+            {playerRatingText && (
+              <div className="text-xs text-gray-500 mt-1">Рейтинг: {playerRatingText}</div>
             )}
           </div>
           

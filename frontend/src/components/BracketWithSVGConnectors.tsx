@@ -13,7 +13,8 @@ export const BracketWithSVGConnectors: React.FC<{
   isLocked?: boolean;
   showFullNames?: boolean;
   byePositions?: Set<number>;
-}> = ({ data, onMatchClick, highlightIds, dropSlots, onDrop, onRemoveFromSlot, isLocked, showFullNames, byePositions }) => {
+  ratingVisible?: string | null;
+}> = ({ data, onMatchClick, highlightIds, dropSlots, onDrop, onRemoveFromSlot, isLocked, showFullNames, byePositions, ratingVisible }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [positions, setPositions] = useState<Map<number, DOMRect>>(new Map());
@@ -215,6 +216,7 @@ export const BracketWithSVGConnectors: React.FC<{
                 isLocked={isLocked}
                 showFullNames={showFullNames}
                 byePositions={byePositions}
+                ratingVisible={ratingVisible}
               />
             );
           });

@@ -18,6 +18,8 @@ interface TournamentOverviewItem {
   organizer_name?: string;
   participants_count?: number;
   avg_rating_bp?: number | null;
+  avg_rating_visible?: number | null;
+  rating_visible?: string;
   planned_participants?: number | null;
   groups_count?: number;
   rating_coefficient?: number | null;
@@ -158,7 +160,10 @@ export const TournamentListPage: React.FC = () => {
   };
 
   const renderCardMetaExtra = (t: TournamentOverviewItem) => {
-    const avg = typeof t.avg_rating_bp === 'number' ? Math.round(t.avg_rating_bp) : null;
+    const avgRaw = (typeof t.avg_rating_visible === 'number')
+      ? t.avg_rating_visible
+      : (typeof t.avg_rating_bp === 'number' ? t.avg_rating_bp : null);
+    const avg = typeof avgRaw === 'number' ? Math.round(avgRaw) : null;
     const coef = typeof t.rating_coefficient === 'number' ? t.rating_coefficient.toFixed(1) : null;
     const prize = t.prize_fund ? t.prize_fund.trim() : null;
     

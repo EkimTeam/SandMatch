@@ -214,7 +214,7 @@ const UserRolesPageInner: React.FC = () => {
                 checked={filterBTR}
                 onChange={e => setFilterBTR(e.target.checked)}
               />
-              Игрок BTR
+              Игрок РПТТ
             </label>
             <label className="flex items-center gap-1 text-sm cursor-pointer">
               <input
@@ -254,8 +254,8 @@ const UserRolesPageInner: React.FC = () => {
                       <span title="Игрок BP" className={row.has_bp_player ? 'text-blue-600 font-semibold' : 'text-gray-300'}>
                         BP
                       </span>
-                      <span title="Игрок BTR" className={row.has_btr_player ? 'text-green-600 font-semibold' : 'text-gray-300'}>
-                        BTR
+                      <span title="Игрок РПТТ" className={row.has_btr_player ? 'text-green-600 font-semibold' : 'text-gray-300'}>
+                        РПТТ
                       </span>
                       <span
                         title="Telegram"
@@ -361,7 +361,7 @@ const UserRolesPageInner: React.FC = () => {
             – есть связанный игрок BeachPlay (нет связи – значок серый).
           </div>
           <div>
-            <span className="font-mono font-semibold text-green-600 mr-1">BTR</span>
+            <span className="font-mono font-semibold text-green-600 mr-1">РПТТ</span>
             – есть связанный игрок BeachTennisRussia (нет связи – значок серый).
           </div>
           <div>

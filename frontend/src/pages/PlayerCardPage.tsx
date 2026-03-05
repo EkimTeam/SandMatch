@@ -338,7 +338,7 @@ export const PlayerCardPage: React.FC = () => {
                   <span 
                     className="inline-flex items-baseline gap-2 cursor-pointer hover:opacity-80"
                     onClick={() => navigate(`/btr/players/${btrInfo.btr_player_id}`)}
-                    title="Перейти к BTR профилю"
+                    title="Перейти к профилю РПТТ"
                   >
                     {Object.entries(btrInfo.categories).map(([catCode, catData]) => {
                       const shortLabel = catCode === 'men_double' ? 'M' : 
@@ -350,7 +350,7 @@ export const PlayerCardPage: React.FC = () => {
                       return (
                         <span key={catCode} className="inline-flex items-baseline gap-1">
                           <span className="text-xl font-bold leading-none">{Math.round(catData.current_rating)}</span>
-                          <span className="text-[10px] leading-none opacity-70">BTR {shortLabel}</span>
+                          <span className="text-[10px] leading-none opacity-70">РПТТ {shortLabel}</span>
                           {catData.rank && (
                             <span className="text-[10px] leading-none opacity-70">(#{catData.rank})</span>
                           )}

@@ -51,6 +51,7 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
     brackets_count: 1,
     schedule_pattern_id: '',
     is_rating_calc: true,
+    rating_visible: 'beachplay',
     has_prize_fund: false,
     prize_fund: '',
   });
@@ -336,6 +337,52 @@ export const NewTournamentModal: React.FC<NewTournamentModalProps> = ({
                   onChange={handleChange}
                 />
                 <label htmlFor="is_rating_calc" style={{ margin: 0, cursor: 'pointer' }}>с обсчётом рейтинга BP</label>
+              </div>
+            </div>
+
+            <div className="form-row">
+              <label>Отображать рейтинг</label>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, margin: 0, cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="rating_visible"
+                    value="beachplay"
+                    checked={formData.rating_visible === 'beachplay'}
+                    onChange={handleChange}
+                  />
+                  BeachPlay
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, margin: 0, cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="rating_visible"
+                    value="btr_mw"
+                    checked={formData.rating_visible === 'btr_mw'}
+                    onChange={handleChange}
+                  />
+                  РПТТ (м/ж)
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, margin: 0, cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="rating_visible"
+                    value="btr_mixed"
+                    checked={formData.rating_visible === 'btr_mixed'}
+                    onChange={handleChange}
+                  />
+                  РПТТ (микст)
+                </label>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, margin: 0, cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="rating_visible"
+                    value="btr_under"
+                    checked={formData.rating_visible === 'btr_under'}
+                    onChange={handleChange}
+                  />
+                  РПТТ (юн.)
+                </label>
               </div>
             </div>
 

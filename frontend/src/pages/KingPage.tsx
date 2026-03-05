@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { formatDate } from '../services/date';
-import api, { tournamentApi, Ruleset as ApiRuleset, ratingApi, schedulePatternApi, SchedulePattern, KingScheduleResponse, KingCalculationMode, matchApi } from '../services/api';
+import api, { tournamentApi, Ruleset as ApiRuleset, schedulePatternApi, SchedulePattern, KingScheduleResponse, KingCalculationMode, matchApi } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { KnockoutParticipantPicker } from '../components/KnockoutParticipantPicker';
 import SchedulePatternModal from '../components/SchedulePatternModal';
@@ -40,6 +40,14 @@ type TournamentDetail = {
   participants_count?: number;
 };
 
+const getRatingLabelByVisible = (ratingVisible?: string | null) => {
+  if (ratingVisible === 'beachplay') return 'BP';
+  if (ratingVisible === 'btr_mw') return 'РПТТ';
+  if (ratingVisible === 'btr_mixed') return 'РПТТ';
+  if (ratingVisible === 'btr_under') return 'РПТТ';
+  return 'BP';
+};
+
 type SetFormatDict = { id: number; name: string };
 
 export const KingPage: React.FC = () => {
@@ -69,7 +77,6 @@ export const KingPage: React.FC = () => {
   const [setFormats, setSetFormats] = useState<SetFormatDict[]>([]);
   const [rrRulesets, setRrRulesets] = useState<ApiRuleset[]>([]);
   const [schedulePatternModal, setSchedulePatternModal] = useState<{ groupName: string; participantsCount: number; currentPatternId?: number | null } | null>(null);
-  const [playerRatings, setPlayerRatings] = useState<Map<number, number>>(new Map());
   const [schedulePatterns, setSchedulePatterns] = useState<Map<number, SchedulePattern>>(new Map());
   const [kingSchedule, setKingSchedule] = useState<KingScheduleResponse | null>(null);
   const [calculationMode, setCalculationMode] = useState<KingCalculationMode>('g_minus');
@@ -98,6 +105,20 @@ export const KingPage: React.FC = () => {
   const [showTextResultsModal, setShowTextResultsModal] = useState(false);
   const [textResults, setTextResults] = useState<string>('');
   const [loadingTextResults, setLoadingTextResults] = useState(false);
+
+  const teamRatingMap = useMemo(() => {
+    const m = new Map<number, { rating: number; label: string }>();
+    if (!t) return m;
+    const fallbackLabel = getRatingLabelByVisible((t as any)?.rating_visible);
+    for (const entry of (t.participants || []) as any[]) {
+      const team = entry?.team;
+      if (!team || typeof team.id !== 'number') continue;
+      if (typeof team.rating !== 'number') continue;
+      const label = (typeof team.rating_label === 'string') ? team.rating_label : fallbackLabel;
+      m.set(team.id, { rating: Math.round(team.rating), label });
+    }
+    return m;
+  }, [t]);
   const [showAnnouncementModal, setShowAnnouncementModal] = useState(false);
   const [announcementText, setAnnouncementText] = useState<string>('');
   const [loadingAnnouncement, setLoadingAnnouncement] = useState(false);
@@ -610,66 +631,6 @@ export const KingPage: React.FC = () => {
     loadKingSchedule();
   }, [t]);
 
-  // Загрузка рейтингов игроков
-  useEffect(() => {
-    const loadRatings = async () => {
-      try {
-        if (!t || !t.participants) return;
-        const ids = new Set<number>();
-        for (const p of t.participants) {
-          const team: any = p.team || {};
-          const p1 = team.player_1 && typeof team.player_1 === 'object' ? team.player_1.id : (typeof team.player_1 === 'number' ? team.player_1 : null);
-          const p2 = team.player_2 && typeof team.player_2 === 'object' ? team.player_2.id : (typeof team.player_2 === 'number' ? team.player_2 : null);
-          if (typeof p1 === 'number') ids.add(p1);
-          if (typeof p2 === 'number') ids.add(p2);
-        }
-        if (ids.size === 0) { setPlayerRatings(new Map()); return; }
-        const idArray = Array.from(ids);
-
-        // Для завершённых турниров используем рейтинг ДО турнира
-        if (t.status === 'completed') {
-          const map = new Map<number, number>();
-          await Promise.all(idArray.map(async (pid) => {
-            try {
-              const hist = await ratingApi.playerHistory(pid);
-              const rows = hist?.history || [];
-              const row = rows.find((r: any) => r.tournament_id === t.id && typeof r.rating_before === 'number');
-              if (row) {
-                map.set(pid, row.rating_before);
-              }
-            } catch {}
-          }));
-
-          const missing = idArray.filter(pid => !map.has(pid));
-          if (missing.length > 0) {
-            try {
-              const respBriefs = await ratingApi.playerBriefs(missing);
-              for (const it of (respBriefs.results || [])) {
-                if (typeof it.id === 'number' && typeof it.current_rating === 'number' && !map.has(it.id)) {
-                  map.set(it.id, it.current_rating);
-                }
-              }
-            } catch {}
-          }
-          setPlayerRatings(map);
-        } else {
-          // Для незавершённых турниров используем текущий рейтинг
-          const resp = await ratingApi.playerBriefs(idArray);
-          const map = new Map<number, number>();
-          for (const it of (resp.results || [])) {
-            if (typeof it.id === 'number' && typeof it.current_rating === 'number') {
-              map.set(it.id, it.current_rating);
-            }
-          }
-          setPlayerRatings(map);
-        }
-      } catch {
-        setPlayerRatings(new Map());
-      }
-    };
-    loadRatings();
-  }, [t]);
-
   const fetchGroupSchedule = useCallback(async (tournamentId?: string | number) => {
     const tid = tournamentId ?? id;
     if (!tid) return;
@@ -731,6 +692,8 @@ export const KingPage: React.FC = () => {
             displayName: p.name,
             currentRating: typeof p.rating === 'number' ? p.rating : undefined,
             rating: typeof p.rating === 'number' ? p.rating : undefined,
+            place: (typeof p.place === 'number') ? p.place : null,
+            ratingLabel: typeof p.rating_label === 'string' ? p.rating_label : undefined,
             groupIndex: position.groupIndex,
             rowIndex: position.rowIndex,
             isInBracket: position.groupIndex != null && position.rowIndex != null,
@@ -1439,47 +1402,21 @@ export const KingPage: React.FC = () => {
                               const letter = String.fromCharCode(64 + (participant.row_index || 0));
                               const nm = showFullName ? participant.name : participant.display_name;
                               
-                              // Получаем рейтинг участника
                               const entry = (t.participants || []).find((e: any) => e.group_index === gi && e.row_index === participant.row_index);
-                              const pTeam: any = entry?.team || {};
-                              
-                              // Получаем рейтинг первого игрока команды
-                              let pid: number | null = null;
-                              if (typeof pTeam.player_1 === 'object' && pTeam.player_1?.id) {
-                                pid = Number(pTeam.player_1.id);
-                              } else if (typeof pTeam.player_1 === 'number') {
-                                pid = Number(pTeam.player_1);
-                              }
-                              
-                              // Для doubles берем среднее из двух игроков
-                              let pr: number | null = null;
-                              if (t.participant_mode === 'doubles') {
-                                let pid2: number | null = null;
-                                if (typeof pTeam.player_2 === 'object' && pTeam.player_2?.id) {
-                                  pid2 = Number(pTeam.player_2.id);
-                                } else if (typeof pTeam.player_2 === 'number') {
-                                  pid2 = Number(pTeam.player_2);
-                                }
-                                const r1 = (pid != null && playerRatings.has(pid)) ? playerRatings.get(pid)! : null;
-                                const r2 = (pid2 != null && playerRatings.has(pid2)) ? playerRatings.get(pid2)! : null;
-                                if (r1 !== null && r2 !== null) {
-                                  pr = Math.round((r1 + r2) / 2);
-                                } else if (r1 !== null) {
-                                  pr = r1;
-                                } else if (r2 !== null) {
-                                  pr = r2;
-                                }
-                              } else {
-                                pr = (pid != null && playerRatings.has(pid)) ? playerRatings.get(pid)! : null;
-                              }
+                              const teamId = entry?.team?.id;
+                              const teamRating = (typeof teamId === 'number') ? teamRatingMap.get(teamId) : undefined;
+                              const place = (typeof participant.place === 'number') ? participant.place : null;
+                              const ratingText = teamRating
+                                ? (place ? `(#${place} • ${teamRating.rating} ${teamRating.label})` : `(${teamRating.rating} ${teamRating.label})`)
+                                : null;
                               
                               return (
                                 <tr key={participant.id}>
                                   <td style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'center' }}>{letter}</td>
                                   <td style={{ border: '1px solid #e7e7ea', padding: '6px 8px', textAlign: 'left', fontWeight: 700 }}>
                                     <span>{nm}</span>
-                                    {typeof pr === 'number' && (
-                                      <span style={{ marginLeft: 6, fontSize: 10, opacity: 0.75 }}>{Math.round(pr)} <span style={{ fontSize: 9 }}>BP</span></span>
+                                    {ratingText && (
+                                      <span style={{ marginLeft: 6, fontSize: 10, opacity: 0.75 }}>{ratingText}</span>
                                     )}
                                   </td>
                                   {/* Ячейки по турам + статистика */}
@@ -1489,6 +1426,7 @@ export const KingPage: React.FC = () => {
                                     
                                     // Собираем ID игроков для поиска матчей
                                     const playerIds = new Set<number>();
+                                    const pTeam: any = entry?.team || {};
                                     if (typeof pTeam.player_1 === 'object' && pTeam.player_1?.id) {
                                       playerIds.add(Number(pTeam.player_1.id));
                                     } else if (typeof pTeam.player_1 === 'number') {
@@ -1944,12 +1882,11 @@ export const KingPage: React.FC = () => {
                                           </span>
                                         ))}
                                         {(() => {
-                                          const vals = team1Players
-                                            .map((p: any) => playerRatings.get(Number(p.id)))
-                                            .filter((v: unknown): v is number => typeof v === 'number');
-                                          if (vals.length === 0) return null;
-                                          const avg = Math.round(vals.reduce((a: number, b: number) => a + b, 0) / vals.length);
-                                          return <div style={{ fontSize: 10, opacity: 0.75 }}>{avg} <span style={{ fontSize: 9 }}>BP</span></div>;
+                                          const teamId = match.team_1_id ?? match.team_1?.id ?? null;
+                                          if (typeof teamId !== 'number') return null;
+                                          const rr = teamRatingMap.get(teamId);
+                                          if (!rr) return null;
+                                          return <div style={{ fontSize: 10, opacity: 0.75 }}>{rr.rating} <span style={{ fontSize: 9 }}>{rr.label}</span></div>;
                                         })()}
                                       </div>
                                       <div style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1974,12 +1911,11 @@ export const KingPage: React.FC = () => {
                                           </span>
                                         ))}
                                         {(() => {
-                                          const vals = team2Players
-                                            .map((p: any) => playerRatings.get(Number(p.id)))
-                                            .filter((v: unknown): v is number => typeof v === 'number');
-                                          if (vals.length === 0) return null;
-                                          const avg = Math.round(vals.reduce((a: number, b: number) => a + b, 0) / vals.length);
-                                          return <div style={{ fontSize: 10, opacity: 0.75 }}>{avg} <span style={{ fontSize: 9 }}>BP</span></div>;
+                                          const teamId = match.team_2_id ?? match.team_2?.id ?? null;
+                                          if (typeof teamId !== 'number') return null;
+                                          const rr = teamRatingMap.get(teamId);
+                                          if (!rr) return null;
+                                          return <div style={{ fontSize: 10, opacity: 0.75 }}>{rr.rating} <span style={{ fontSize: 9 }}>{rr.label}</span></div>;
                                         })()}
                                       </div>
                                     </div>

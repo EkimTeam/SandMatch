@@ -145,7 +145,7 @@ const BtrCategoryTable: React.FC<{
         </div>
       )}
       {!loading && !error && !categoryData && (
-        <div className="py-6 text-center text-gray-500">Нет данных по рейтингу BTR</div>
+        <div className="py-6 text-center text-gray-500">Нет данных по рейтингу РПТТ</div>
       )}
     </div>
   );
@@ -337,7 +337,7 @@ export const RatingPage: React.FC = () => {
       <div>
         <div className="flex items-center gap-2 mb-4">
           <h1 className="text-2xl font-bold">
-            {ratingType === 'bp' ? 'BeachPlay-Рейтинг (BP-Рейтинг)' : 'BTR-Рейтинг (BeachTennisRussia)'}
+            {ratingType === 'bp' ? 'BeachPlay-Рейтинг (BP-Рейтинг)' : 'РПТТ-Рейтинг (BeachTennisRussia)'}
           </h1>
           <div className="relative group">
             <button className="ml-1 inline-flex items-center justify-center w-5 h-5 rounded bg-blue-600 text-white text-[11px] font-semibold" aria-label="Методика">i</button>
@@ -370,7 +370,7 @@ export const RatingPage: React.FC = () => {
                 : 'text-gray-600 hover:text-gray-900'
             }`}
           >
-            BTR-Рейтинг
+            РПТТ-Рейтинг
           </button>
         </div>
       </div>

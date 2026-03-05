@@ -170,7 +170,7 @@ const AdminUserLinksPageInner: React.FC = () => {
               </label>
               <label className="flex items-center gap-1 text-sm cursor-pointer">
                 <input type="checkbox" checked={filterBTR} onChange={e => setFilterBTR(e.target.checked)} />
-                <span>BTR</span>
+                <span>РПТТ</span>
               </label>
               <label className="flex items-center gap-1 text-sm cursor-pointer">
                 <input type="checkbox" checked={filterTelegram} onChange={e => setFilterTelegram(e.target.checked)} />
@@ -200,7 +200,7 @@ const AdminUserLinksPageInner: React.FC = () => {
                     <td className="px-3 py-2 text-center">
                       <div className="flex items-center justify-center gap-2">
                         <span className={row.has_bp_player ? 'text-blue-600 font-semibold' : 'text-gray-300'}>BP</span>
-                        <span className={row.has_btr_player ? 'text-green-600 font-semibold' : 'text-gray-300'}>BTR</span>
+                        <span className={row.has_btr_player ? 'text-green-600 font-semibold' : 'text-gray-300'}>РПТТ</span>
                         <span className={row.has_telegram ? 'text-blue-500 font-semibold' : row.has_telegram_profile ? 'text-yellow-500 font-semibold' : 'text-gray-300'}>TG</span>
                       </div>
                     </td>
@@ -420,7 +420,7 @@ const AdminUserLinksPageInner: React.FC = () => {
                         checked={linksDraft.player.is_profi}
                         onChange={e => updateDraft(d => { if (d.player) d.player.is_profi = e.target.checked; })}
                       />
-                      <span>Профессиональный игрок (BTR)</span>
+                      <span>Профессиональный игрок (РПТТ)</span>
                     </label>
                   </div>
                 </div>

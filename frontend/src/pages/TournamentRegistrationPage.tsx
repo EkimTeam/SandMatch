@@ -130,7 +130,15 @@ const TournamentRegistrationPage: React.FC = () => {
   const isDoubles = tournament.participant_mode === 'doubles';
   const isSingles = tournament.participant_mode === 'singles';
 
-  const isInAnyList = !!myReg;
+  const getRatingText = (reg: WebTournamentRegistration) => {
+    const rating = (reg as any).visible_rating ?? reg.rating_bp;
+    if (rating === null || rating === undefined) return null;
+    const label = ((reg as any).rating_label || '').trim() || 'BP';
+    const place = (reg as any).visible_place ?? null;
+    return (typeof place === 'number')
+      ? `(#${place} • ${rating} ${label})`
+      : `(${rating} ${label})`;
+  };
 
   const dedupePairs = (list: WebTournamentRegistration[]): WebTournamentRegistration[] => {
     const seen = new Set<string>();
@@ -328,9 +336,11 @@ const TournamentRegistrationPage: React.FC = () => {
                     <p className="font-medium text-gray-900">
                       {idx + 1}. {reg.player_name}
                       {reg.partner_name && ` / ${reg.partner_name}`}
-                      {typeof reg.rating_bp === 'number' && (
-                        <span className="ml-2 text-xs text-gray-500">BP {reg.rating_bp}</span>
-                      )}
+                      {(() => {
+                        const txt = getRatingText(reg);
+                        if (!txt) return null;
+                        return <span className="ml-2 text-xs text-gray-500">{txt}</span>;
+                      })()}
                     </p>
                   </div>
                   {myReg && (myReg.player_id === reg.player_id || myReg.player_id === reg.partner_id) && (
@@ -354,9 +364,11 @@ const TournamentRegistrationPage: React.FC = () => {
                     <p className="font-medium text-gray-900">
                       {idx + 1}. {reg.player_name}
                       {reg.partner_name && ` / ${reg.partner_name}`}
-                      {typeof reg.rating_bp === 'number' && (
-                        <span className="ml-2 text-xs text-gray-500">BP {reg.rating_bp}</span>
-                      )}
+                      {(() => {
+                        const txt = getRatingText(reg);
+                        if (!txt) return null;
+                        return <span className="ml-2 text-xs text-gray-500">{txt}</span>;
+                      })()}
                     </p>
                   </div>
                   {myReg && (myReg.player_id === reg.player_id || myReg.player_id === reg.partner_id) && (
@@ -392,9 +404,11 @@ const TournamentRegistrationPage: React.FC = () => {
                         <div>
                           <p className="font-medium text-gray-900">
                             {reg.player_name}
-                            {typeof reg.rating_bp === 'number' && (
-                              <span className="ml-2 text-xs text-gray-500">BP {reg.rating_bp}</span>
-                            )}
+                            {(() => {
+                              const txt = getRatingText(reg);
+                              if (!txt) return null;
+                              return <span className="ml-2 text-xs text-gray-500">{txt}</span>;
+                            })()}
                             {isMe && (
                               <span className="ml-2 text-xs px-2 py-1 rounded bg-blue-100 text-blue-800">Это вы</span>
                             )}

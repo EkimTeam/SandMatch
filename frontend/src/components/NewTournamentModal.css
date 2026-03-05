@@ -43,7 +43,7 @@
 
 .form-row {
   display: grid;
-  grid-template-columns: 1fr 2fr;
+  grid-template-columns: minmax(160px, 0.8fr) 2.2fr;
   gap: 12px;
   margin-bottom: 10px;
   align-items: center;

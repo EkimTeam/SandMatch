@@ -17,6 +17,8 @@ export interface Tournament {
   is_registered: boolean
   start_time?: string | null
   avg_rating_bp?: number | null
+  avg_rating_visible?: number | null
+  rating_visible?: 'beachplay' | 'btr_mw' | 'btr_mixed' | 'btr_under'
   system?: string
   participant_mode?: 'singles' | 'doubles'
   set_format_name?: string | null
@@ -55,6 +57,12 @@ export interface TournamentRegistration {
   status: 'looking_for_partner' | 'invited' | 'main_list' | 'reserve_list'
   status_display: string
   registered_at: string
+
+  // Backward-compatible rating fields. Newer backends may provide visible_* and rating_label.
+  rating_bp?: number | null
+  visible_rating?: number | null
+  visible_place?: number | null
+  rating_label?: string | null
 }
 
 export interface PairInvitation {

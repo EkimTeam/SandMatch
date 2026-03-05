@@ -464,6 +464,9 @@ class TournamentRegistrationSerializer(serializers.Serializer):
     registration_order = serializers.IntegerField(read_only=True)
     # BP-рейтинг строки: для пары усреднённый рейтинг обоих игроков, для одиночки — рейтинг игрока
     rating_bp = serializers.SerializerMethodField()
+    visible_rating = serializers.SerializerMethodField()
+    visible_place = serializers.SerializerMethodField()
+    rating_label = serializers.SerializerMethodField()
     
     def get_player_name(self, obj):
         """Получить ФИО игрока"""
@@ -513,6 +516,49 @@ class TournamentRegistrationSerializer(serializers.Serializer):
         avg = sum(numeric) / len(numeric)
         # Как и в других местах Mini App, показываем целым числом
         return int(round(avg))
+
+    def get_visible_rating(self, obj):
+        from apps.tournaments.services.rating_visible import get_player_visible_rating, get_team_visible_rating
+
+        tournament = getattr(obj, "tournament", None)
+        player = getattr(obj, "player", None)
+        partner = getattr(obj, "partner", None)
+        if not tournament or not player:
+            return 0
+
+        # Если регистрация уже в паре (partner задан) — считаем рейтинг команды
+        if partner:
+            try:
+                team = Team(player_1=player, player_2=partner)
+                return int(get_team_visible_rating(tournament, team) or 0)
+            except Exception:
+                return 0
+
+        # Иначе одиночка (или looking_for_partner)
+        return int(get_player_visible_rating(tournament, player).rating or 0)
+
+    def get_visible_place(self, obj):
+        from apps.tournaments.services.rating_visible import get_player_visible_rating
+
+        tournament = getattr(obj, "tournament", None)
+        player = getattr(obj, "player", None)
+        partner = getattr(obj, "partner", None)
+        if not tournament or not player:
+            return None
+
+        # place отображаем только для одиночек
+        if partner:
+            return None
+
+        return get_player_visible_rating(tournament, player).place
+
+    def get_rating_label(self, obj) -> str:
+        tournament = getattr(obj, "tournament", None)
+        if not tournament:
+            return "BP"
+        if tournament.rating_visible == Tournament.RatingVisible.BEACHPLAY:
+            return "BP"
+        return "РПТТ"
 
 
 class PairInvitationSerializer(serializers.Serializer):

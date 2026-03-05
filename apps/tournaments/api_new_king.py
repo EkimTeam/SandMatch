@@ -14,6 +14,15 @@ def new_king(request):
     if missing:
         return Response({"ok": False, "error": f"Не заполнены поля: {', '.join(missing)}"}, status=400)
 
+    rating_visible = data.get("rating_visible") or Tournament.RatingVisible.BEACHPLAY
+    if rating_visible not in {
+        Tournament.RatingVisible.BEACHPLAY,
+        Tournament.RatingVisible.BTR_MW,
+        Tournament.RatingVisible.BTR_MIXED,
+        Tournament.RatingVisible.BTR_UNDER,
+    }:
+        return Response({"ok": False, "error": "Недопустимое значение rating_visible"}, status=400)
+
     try:
         groups_count = int(data.get("groups_count") or 1)
         planned_participants = int(data.get("participants") or 0) or None
@@ -78,6 +87,7 @@ def new_king(request):
             king_calculation_mode='g_minus',  # Режим по умолчанию
             created_by=request.user if request.user.is_authenticated else None,
             is_rating_calc=bool(data.get("is_rating_calc", True)),
+            rating_visible=rating_visible,
             prize_fund=data.get("prize_fund") or None,
         )
     except Exception as e:

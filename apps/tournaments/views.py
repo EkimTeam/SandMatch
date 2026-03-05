@@ -130,6 +130,22 @@ class TournamentDetailView(DetailView):
         t: Tournament = self.object
         planned = t.planned_participants or 0
 
+        def _rating_label() -> str:
+            if t.rating_visible == Tournament.RatingVisible.BEACHPLAY:
+                return "BP"
+            return "РПТТ"
+
+        def _format_rating(rating: int, place):
+            label = _rating_label()
+            if place is not None:
+                return f"#{place} • {int(rating)} {label}"
+            return f"{int(rating)} {label}"
+
+        # функция: порядки игр для круговой
+        def _build_orders(size:int):
+            # стандартный круговой алгоритм: фиксируем 1, вращаем остальных
+            arr = list(range(1, size+1))
+
         # Ветка круговой системы — готовим группы как раньше
         if t.system == Tournament.System.ROUND_ROBIN:
             groups = max(1, t.groups_count)
@@ -177,15 +193,40 @@ class TournamentDetailView(DetailView):
         # Соберём участников в словарь по позициям для точного восстановления
         participants_map = {}
         for e in entries:
+            from apps.tournaments.services.rating_visible import (
+                get_player_visible_rating,
+                get_team_visible_rating,
+            )
+
             team = e.team
             p1 = team.player_1
             p2 = team.player_2
+
+            p1_vr = get_player_visible_rating(t, p1)
+            p2_vr = get_player_visible_rating(t, p2) if p2 else None
+            team_rating = get_team_visible_rating(t, team)
             if p2 is None:
-                display = p1.display_name or p1.first_name
-                title = str(p1)
+                display_name = p1.display_name or p1.first_name
+                full_name = str(p1)
+                display = f"{display_name} ({_format_rating(p1_vr.rating, p1_vr.place)})"
+                title = f"{full_name} ({_format_rating(p1_vr.rating, p1_vr.place)})"
             else:
-                display = f"{p1.display_name or p1.first_name} / {p2.display_name or p2.first_name}"
-                title = f"{p1} / {p2}"
+                p1_display = p1.display_name or p1.first_name
+                p2_display = p2.display_name or p2.first_name
+                p1_full = str(p1)
+                p2_full = str(p2)
+
+                display = (
+                    f"{p1_display} / {p2_display} ("
+                    f"{_format_rating(team_rating, None)}; "
+                    f"{_format_rating(p1_vr.rating, p1_vr.place)}; "
+                    f"{_format_rating(p2_vr.rating, p2_vr.place)}"
+                    f")"
+                )
+                title = (
+                    f"{p1_full} ({_format_rating(p1_vr.rating, p1_vr.place)}) / "
+                    f"{p2_full} ({_format_rating(p2_vr.rating, p2_vr.place)})"
+                )
             
             participants_map[(e.group_index, e.row_index)] = {
                 "display": display,

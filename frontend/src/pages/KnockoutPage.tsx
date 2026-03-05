@@ -673,6 +673,9 @@ export const KnockoutPage: React.FC = () => {
           teamId: p.team_id,
           isInBracket: false, // будет обновлено при проверке слотов
           currentRating: typeof p.rating === 'number' ? p.rating : undefined,
+          rating: typeof p.rating === 'number' ? p.rating : undefined,
+          place: (typeof p.place === 'number') ? p.place : null,
+          ratingLabel: typeof p.rating_label === 'string' ? p.rating_label : undefined,
           listStatus: p.list_status || 'main',
           registrationOrder: p.registration_order
         }));
@@ -1387,7 +1390,12 @@ export const KnockoutPage: React.FC = () => {
             <>
               Статус: {tMeta.status === 'created' ? 'Регистрация' : tMeta.status === 'active' ? 'Идёт' : 'Завершён'}
               {typeof tMeta.participants_count === 'number' ? ` • Участников: ${tMeta.participants_count}` : ''}
-              {tMeta.status !== 'created' && typeof tMeta.avg_rating_bp === 'number' ? ` • средний рейтинг турнира по BP: ${Math.round(tMeta.avg_rating_bp)}` : ''}
+              {tMeta.status !== 'created' && typeof tMeta.avg_rating_bp === 'number'
+                ? ` • средний рейтинг турнира по BP: ${Math.round(tMeta.avg_rating_bp)}`
+                : ''}
+              {tMeta.status !== 'created' && typeof (tMeta as any).avg_rating_visible === 'number'
+                ? ` • средний видимый рейтинг: ${Math.round((tMeta as any).avg_rating_visible)}`
+                : ''}
               {tMeta.status !== 'created' && typeof tMeta.rating_coefficient === 'number' ? ` • Коэффициент турнира: ${tMeta.rating_coefficient.toFixed(1)}` : ''}
               {tMeta.prize_fund ? ` • Призовой фонд: ${tMeta.prize_fund}` : ''}
             </>
@@ -1455,6 +1463,7 @@ export const KnockoutPage: React.FC = () => {
               showFullNames={showFullNames}
               onMatchClick={handleMatchClick}
               byePositions={byePositions}
+              ratingVisible={(tMeta as any)?.rating_visible || null}
             />
           )}
 

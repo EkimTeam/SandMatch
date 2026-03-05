@@ -1,4 +1,4 @@
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, serializers
 from rest_framework.decorators import action, api_view, permission_classes, authentication_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
@@ -43,10 +43,6 @@ from .serializers import (
 from apps.telegram_bot.models import TelegramUser
 from apps.tournaments.registration_models import TournamentRegistration
 from apps.tournaments.services.registration_service import RegistrationService
-from apps.telegram_bot.api_serializers import (
-    TournamentRegistrationSerializer as MiniAppTournamentRegistrationSerializer,
-    TournamentParticipantsSerializer as MiniAppTournamentParticipantsSerializer,
-)
 from apps.tournaments.services.knockout import (
     validate_bracket_size,
     calculate_rounds_structure,
@@ -1191,6 +1187,17 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if isinstance(is_rating_calc, bool):
             tournament.is_rating_calc = is_rating_calc
 
+        rating_visible = data.get("rating_visible")
+        if rating_visible is not None:
+            if rating_visible not in {
+                Tournament.RatingVisible.BEACHPLAY,
+                Tournament.RatingVisible.BTR_MW,
+                Tournament.RatingVisible.BTR_MIXED,
+                Tournament.RatingVisible.BTR_UNDER,
+            }:
+                return Response({"ok": False, "error": "Недопустимое значение rating_visible"}, status=400)
+            tournament.rating_visible = rating_visible
+
         has_prize_fund = data.get("has_prize_fund")
         prize_fund = data.get("prize_fund")
         if has_prize_fund:
@@ -1661,17 +1668,10 @@ class TournamentViewSet(viewsets.ModelViewSet):
         planned_count = tournament.planned_participants or len(all_entries)
         
         # Сортировка по рейтингу
+        from apps.tournaments.services.rating_visible import get_entry_visible_rating
+
         def get_rating(entry):
-            team = entry.team
-            if team.player_1 and team.player_2:
-                # Для пар - средний рейтинг
-                r1 = int(team.player_1.current_rating or 0)
-                r2 = int(team.player_2.current_rating or 0)
-                return (r1 + r2) / 2 if (r1 > 0 or r2 > 0) else 0
-            elif team.player_1:
-                # Для одиночек - рейтинг игрока
-                return int(team.player_1.current_rating or 0)
-            return 0
+            return get_entry_visible_rating(tournament, entry)
         
         all_entries.sort(key=get_rating, reverse=True)
         
@@ -1725,25 +1725,39 @@ class TournamentViewSet(viewsets.ModelViewSet):
             full_name = name
             rating = 0
 
+            from apps.tournaments.services.rating_visible import get_team_visible_rating
+
             if team.player_1:
                 p1 = team.player_1
-                p1_rating = _player_base_rating(p1)
                 if team.player_2:
                     # Пара: считаем средний рейтинг двух игроков
                     p2 = team.player_2
-                    p2_rating = _player_base_rating(p2)
-                    try:
-                        rating = int(round((float(p1_rating) + float(p2_rating)) / 2.0))
-                    except Exception:
-                        rating = int(p1_rating) if p1_rating is not None else 0
+
+                    # Для завершённых турниров в BP оставляем исторический рейтинг ДО турнира,
+                    # для остальных случаев — используем видимый рейтинг турнира.
+                    if use_before_rating and tournament.rating_visible == Tournament.RatingVisible.BEACHPLAY:
+                        p1_rating = _player_base_rating(p1)
+                        p2_rating = _player_base_rating(p2)
+                        try:
+                            rating = int(round((float(p1_rating) + float(p2_rating)) / 2.0))
+                        except Exception:
+                            rating = int(p1_rating) if p1_rating is not None else 0
+                    else:
+                        rating = int(get_team_visible_rating(tournament, team))
+
                     display_name = f"{p1.display_name or p1.first_name} / {p2.display_name or p2.first_name}"
                     full_name = f"{p1.last_name} {p1.first_name} / {p2.last_name} {p2.first_name}"
                 else:
                     # Одиночка: используем рейтинг единственного игрока
-                    try:
-                        rating = int(p1_rating)
-                    except Exception:
-                        rating = 0
+                    if use_before_rating and tournament.rating_visible == Tournament.RatingVisible.BEACHPLAY:
+                        p1_rating = _player_base_rating(p1)
+                        try:
+                            rating = int(p1_rating)
+                        except Exception:
+                            rating = 0
+                    else:
+                        rating = int(get_team_visible_rating(tournament, team))
+
                     display_name = p1.display_name or p1.first_name
                     full_name = f"{p1.last_name} {p1.first_name}"
 
@@ -2136,7 +2150,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         reserve_list = registrations_qs.filter(status=TournamentRegistration.Status.RESERVE_LIST)
         looking_for_partner = registrations_qs.filter(status=TournamentRegistration.Status.LOOKING_FOR_PARTNER)
 
-        participants_payload = MiniAppTournamentParticipantsSerializer(
+        participants_payload = WebTournamentParticipantsSerializer(
             {
                 "main_list": main_list,
                 "reserve_list": reserve_list,
@@ -2149,7 +2163,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if player:
             my_reg = registrations_qs.filter(player=player).first()
             if my_reg:
-                my_registration_data = MiniAppTournamentRegistrationSerializer(my_reg).data
+                my_registration_data = WebTournamentRegistrationSerializer(my_reg).data
 
         # Количество участников считаем по TournamentEntry (реальные команды),
         # а не по числу регистраций (чтобы "ищу пару" не засчитывались как занятое место)
@@ -2199,7 +2213,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         reserve_list = registrations_qs.filter(status=TournamentRegistration.Status.RESERVE_LIST)
         looking_for_partner = registrations_qs.filter(status=TournamentRegistration.Status.LOOKING_FOR_PARTNER)
 
-        participants_payload = MiniAppTournamentParticipantsSerializer(
+        participants_payload = WebTournamentParticipantsSerializer(
             {
                 "main_list": main_list,
                 "reserve_list": reserve_list,
@@ -2458,16 +2472,27 @@ class TournamentViewSet(viewsets.ModelViewSet):
         partner_ids = base_qs.filter(partner_id__in=candidate_ids).values_list("partner_id", flat=True)
         registered_ids = set(player_ids) | set(partner_ids)
 
+        from apps.tournaments.services.rating_visible import get_player_visible_rating
+
+        def _rating_label() -> str:
+            if tournament.rating_visible == Tournament.RatingVisible.BEACHPLAY:
+                return "BP"
+            return "РПТТ"
+
         players_payload = []
         for p in players_qs:
             rating = getattr(p, "current_rating", None)
             rating_bp = int(rating) if rating is not None else None
+            vr = get_player_visible_rating(tournament, p)
             players_payload.append(
                 {
                     "id": p.id,
                     "full_name": str(p),
                     "is_registered": p.id in registered_ids,
                     "rating_bp": rating_bp,
+                    "visible_rating": int(vr.rating or 0),
+                    "visible_place": vr.place,
+                    "rating_label": _rating_label(),
                 }
             )
 
@@ -2575,16 +2600,27 @@ class TournamentViewSet(viewsets.ModelViewSet):
         partner_ids = base_qs.filter(partner_id__in=candidate_ids).values_list("partner_id", flat=True)
         registered_ids = set(player_ids) | set(partner_ids)
 
+        from apps.tournaments.services.rating_visible import get_player_visible_rating
+
+        def _rating_label() -> str:
+            if tournament.rating_visible == Tournament.RatingVisible.BEACHPLAY:
+                return "BP"
+            return "РПТТ"
+
         players_payload = []
         for p in players_list:
             rating = getattr(p, "current_rating", None)
             rating_bp = int(rating) if rating is not None else None
+            vr = get_player_visible_rating(tournament, p)
             players_payload.append(
                 {
                     "id": p.id,
                     "full_name": str(p),
                     "is_registered": p.id in registered_ids,
                     "rating_bp": rating_bp,
+                    "visible_rating": int(vr.rating or 0),
+                    "visible_place": vr.place,
+                    "rating_label": _rating_label(),
                 }
             )
 
@@ -4080,6 +4116,14 @@ class TournamentViewSet(viewsets.ModelViewSet):
 
         try:
             system = data["system"]
+            rating_visible = data.get("rating_visible") or Tournament.RatingVisible.BEACHPLAY
+            if rating_visible not in {
+                Tournament.RatingVisible.BEACHPLAY,
+                Tournament.RatingVisible.BTR_MW,
+                Tournament.RatingVisible.BTR_MIXED,
+                Tournament.RatingVisible.BTR_UNDER,
+            }:
+                return Response({"ok": False, "error": "Недопустимое значение rating_visible"}, status=400)
             # brackets_count только для олимпийки, иначе None
             brackets_count = None
             if system == Tournament.System.KNOCKOUT:
@@ -4097,6 +4141,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 brackets_count=brackets_count,
                 status=Tournament.Status.CREATED,
                 is_rating_calc=bool(data.get("is_rating_calc", True)),
+                rating_visible=rating_visible,
                 prize_fund=data.get("prize_fund") or None,
             )
         except Exception as e:
@@ -4116,6 +4161,17 @@ class TournamentViewSet(viewsets.ModelViewSet):
         
         tournament: Tournament = self.get_object()
         participants = []
+
+        def _rating_label() -> str:
+            if tournament.rating_visible == Tournament.RatingVisible.BEACHPLAY:
+                return "BP"
+            if tournament.rating_visible == Tournament.RatingVisible.BTR_MW:
+                return "РПТТ"
+            if tournament.rating_visible == Tournament.RatingVisible.BTR_MIXED:
+                return "РПТТ"
+            if tournament.rating_visible == Tournament.RatingVisible.BTR_UNDER:
+                return "РПТТ"
+            return "BP"
         
         # Если это стадия турнира, берём участников из TournamentEntry
         if tournament.parent_tournament_id:
@@ -4135,24 +4191,21 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     full_name = f"{team.player_1.last_name} {team.player_1.first_name}"
                 
                 # Рейтинг
-                rating = 0
-                try:
-                    if team.player_2:
-                        # Для пар - средний рейтинг
-                        r1 = int(team.player_1.current_rating or 0)
-                        r2 = int(team.player_2.current_rating or 0)
-                        rating = round((r1 + r2) / 2) if (r1 > 0 or r2 > 0) else 0
-                    else:
-                        # Для одиночек - рейтинг игрока
-                        rating = int(team.player_1.current_rating or 0)
-                except Exception:
-                    rating = 0
+                from apps.tournaments.services.rating_visible import get_team_visible_rating
+                rating = int(get_team_visible_rating(tournament, team) or 0)
+
+                place = None
+                if team.player_1 and not team.player_2:
+                    from apps.tournaments.services.rating_visible import get_player_visible_rating
+                    place = get_player_visible_rating(tournament, team.player_1).place
                 
                 participants.append({
                     'id': entry.id,
                     'name': full_name,
                     'team_id': team.id,
                     'rating': rating,
+                    'place': place,
+                    'rating_label': _rating_label(),
                     'list_status': 'main',  # Все участники стадии в основном составе
                     'registration_order': entry.id,  # Используем ID для сортировки
                     'isInBracket': False
@@ -4186,17 +4239,6 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 
                 # Рейтинг
                 rating = 0
-                try:
-                    if reg.partner:
-                        # Для пар - средний рейтинг
-                        r1 = int(reg.player.current_rating or 0)
-                        r2 = int(reg.partner.current_rating or 0)
-                        rating = round((r1 + r2) / 2) if (r1 > 0 or r2 > 0) else 0
-                    else:
-                        # Для одиночек - рейтинг игрока
-                        rating = int(reg.player.current_rating or 0)
-                except Exception:
-                    rating = 0
                 
                 # Находим соответствующий TournamentEntry для получения entry.id
                 entry_id = None
@@ -4207,6 +4249,12 @@ class TournamentViewSet(viewsets.ModelViewSet):
                         if entry:
                             entry_id = entry.id
                             team_id = entry.team_id
+                            from apps.tournaments.services.rating_visible import get_team_visible_rating
+                            rating = int(get_team_visible_rating(tournament, entry.team) or 0)
+                            place = None
+                            if entry.team and entry.team.player_1 and not entry.team.player_2:
+                                from apps.tournaments.services.rating_visible import get_player_visible_rating
+                                place = get_player_visible_rating(tournament, entry.team.player_1).place
                     except Exception:
                         pass
                 
@@ -4219,6 +4267,8 @@ class TournamentViewSet(viewsets.ModelViewSet):
                     'name': full_name,
                     'team_id': team_id,
                     'rating': rating,
+                    'place': place,
+                    'rating_label': _rating_label(),
                     'list_status': 'main' if reg.status == TournamentRegistration.Status.MAIN_LIST else 'reserve',
                     'registration_order': reg.registration_order,  # Для сортировки резервного списка
                     'isInBracket': False
@@ -5000,23 +5050,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 if not entries:
                     return Response({'ok': False, 'error': 'Нет участников в основном составе для посева'}, status=400)
             
-            # Функция для вычисления рейтинга участника (BP)
-            def get_entry_rating(entry):
-                team = entry.team
-                if not team:
-                    return 0
-                
-                # Для одиночек
-                if team.player_1 and not team.player_2:
-                    return team.player_1.current_rating or 0
-                
-                # Для пар - средний рейтинг
-                if team.player_1 and team.player_2:
-                    r1 = team.player_1.current_rating or 0
-                    r2 = team.player_2.current_rating or 0
-                    return (r1 + r2) / 2
-                
-                return 0
+            from apps.tournaments.services.rating_visible import get_entry_visible_rating
             
             # Функция для подсчета профи в команде
             def count_profi(entry):
@@ -5032,58 +5066,14 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 
                 return count
             
-            # Функция для получения рейтинга BTR
-            def get_btr_rating(entry):
-                team = entry.team
-                if not team:
-                    return 0
-                
-                def get_player_btr(player):
-                    """Получить последний BTR рейтинг игрока в категории men_double или women_double"""
-                    if not player or not hasattr(player, 'btr_player') or not player.btr_player:
-                        return 0
-                    
-                    # Определяем категорию по полу игрока
-                    if player.gender == 'male':
-                        category = 'men_double'
-                    elif player.gender == 'female':
-                        category = 'women_double'
-                    else:
-                        return 0
-                    
-                    # Получаем последний снимок рейтинга в нужной категории
-                    try:
-                        from apps.btr.models import BtrRatingSnapshot
-                        snapshot = BtrRatingSnapshot.objects.filter(
-                            player=player.btr_player,
-                            category=category
-                        ).order_by('-rating_date').first()
-                        
-                        return snapshot.rating_value if snapshot else 0
-                    except Exception:
-                        return 0
-                
-                # Для одиночек
-                if team.player_1 and not team.player_2:
-                    return get_player_btr(team.player_1)
-                
-                # Для пар - средний рейтинг BTR
-                if team.player_1 and team.player_2:
-                    r1 = get_player_btr(team.player_1)
-                    r2 = get_player_btr(team.player_2)
-                    return (r1 + r2) / 2
-                
-                return 0
-            
             # Сортировка участников
             def sort_key(entry):
-                rating = get_entry_rating(entry)
+                rating = get_entry_visible_rating(tournament, entry)
                 profi_count = count_profi(entry)
-                btr = get_btr_rating(entry)
                 rand = random.random()  # Для случайного порядка при равных показателях
-                
-                # Сортируем по убыванию: (-rating, -profi_count, -btr, rand)
-                return (-rating, -profi_count, -btr, rand)
+
+                # Сортируем по убыванию: (-rating, -profi_count, rand)
+                return (-rating, -profi_count, rand)
             
             sorted_entries = sorted(entries, key=sort_key)
             
@@ -5092,10 +5082,9 @@ class TournamentViewSet(viewsets.ModelViewSet):
             logger = logging.getLogger(__name__)
             logger.info(f"Auto-seed: {len(sorted_entries)} entries")
             for idx, entry in enumerate(sorted_entries[:5]):  # Первые 5 для примера
-                rating = get_entry_rating(entry)
+                rating = get_entry_visible_rating(tournament, entry)
                 profi = count_profi(entry)
-                btr = get_btr_rating(entry)
-                logger.info(f"  {idx+1}. {entry.team} - Rating: {rating}, Profi: {profi}, BTR: {btr}")
+                logger.info(f"  {idx+1}. {entry.team} - Rating: {rating}, Profi: {profi}")
             
             groups_count = tournament.groups_count or 1
             
@@ -5425,6 +5414,22 @@ def tournament_list(request):
                 if cnt > 0:
                     avg_rating = round(total / cnt, 1)
 
+        # Средний видимый рейтинг турнира (по командам/участникам)
+        avg_rating_visible = None
+        try:
+            from apps.tournaments.services.rating_visible import get_team_visible_rating
+
+            ratings = []
+            for e in t.entries.select_related("team", "team__player_1", "team__player_2").all():
+                team = getattr(e, "team", None)
+                if not team:
+                    continue
+                ratings.append(int(get_team_visible_rating(t, team) or 0))
+            if ratings:
+                avg_rating_visible = round(sum(ratings) / len(ratings), 1)
+        except Exception:
+            avg_rating_visible = None
+
         # Победитель турнира (только для завершённых)
         winner: str | None = None
         if t.status == Tournament.Status.COMPLETED:
@@ -5465,7 +5470,9 @@ def tournament_list(request):
             "get_participant_mode_display": t.get_participant_mode_display(),
             "participants_count": participants_count,
             "planned_participants": t.planned_participants,
+            "rating_visible": t.rating_visible,
             "avg_rating_bp": avg_rating,
+            "avg_rating_visible": avg_rating_visible,
             "groups_count": getattr(t, "groups_count", None),
             "rating_coefficient": t.rating_coefficient,
             "prize_fund": t.prize_fund,
