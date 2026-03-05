@@ -780,7 +780,7 @@ const ProfilePage: React.FC = () => {
                 {profile.player.city && <p><strong>Город:</strong> {profile.player.city}</p>}
                 <p><strong>Рейтинг:</strong> {profile.player.current_rating}</p>
                 {profile.player.is_profi && (
-                  <p className="text-blue-600 font-medium mt-2">🏆 Профессиональный игрок (BTR)</p>
+                  <p className="text-blue-600 font-medium mt-2">🏆 Профессиональный игрок (РПТТ)</p>
                 )}
               </div>
             </div>
@@ -937,7 +937,7 @@ const ProfilePage: React.FC = () => {
                             </div>
                             {player.is_profi && (
                               <span className="inline-block mt-1 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                                🏆 BTR Профи
+                                🏆 РПТТ Профи
                               </span>
                             )}
                             {player.is_occupied && (

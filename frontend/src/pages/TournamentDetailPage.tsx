@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { formatDate } from '../services/date';
-import api, { matchApi, tournamentApi, Ruleset as ApiRuleset, ratingApi } from '../services/api';
+import api, { matchApi, tournamentApi, Ruleset as ApiRuleset } from '../services/api';
 import { getAccessToken } from '../services/auth';
 import { useAuth } from '../context/AuthContext';
 import { ParticipantPickerModal } from '../components/ParticipantPickerModal';
@@ -13,7 +13,6 @@ import { DraggableParticipantList } from '../components/DraggableParticipantList
 import { SimplifiedGroupTable, SimplifiedDropSlot } from '../components/SimplifiedGroupTable';
 import { DraggableParticipant, DragDropState } from '../types/dragdrop';
 import '../styles/knockout-dragdrop.css';
-import html2canvas from 'html2canvas';
 import { EditTournamentModal } from '../components/EditTournamentModal';
 import { InitialRatingModal } from '../components/InitialRatingModal';
 import { TournamentStageSelector, StageInfo } from '../components/TournamentStageSelector';
@@ -39,6 +38,21 @@ type Participant = {
   team?: { id: number; name: string; display_name?: string; full_name?: string; player_1?: number | { id: number }; player_2?: number | { id: number } } | null;
   group_index: number;
   row_index: number;
+  visible_rating?: number | null;
+  visible_place?: number | null;
+  rating_label?: string | null;
+  player_1_visible_rating?: number | null;
+  player_1_visible_place?: number | null;
+  player_2_visible_rating?: number | null;
+  player_2_visible_place?: number | null;
+};
+
+const getRatingLabelByVisible = (ratingVisible?: string | null) => {
+  if (ratingVisible === 'beachplay') return 'BP';
+  if (ratingVisible === 'btr_mw') return 'РПТТ';
+  if (ratingVisible === 'btr_mixed') return 'РПТТ';
+  if (ratingVisible === 'btr_under') return 'РПТТ';
+  return 'BP';
 };
 
 type MatchSetDTO = {
@@ -91,7 +105,6 @@ type TournamentDetail = {
 };
 
 type SetFormatDict = { id: number; name: string };
-type RulesetDict = { id: number; name: string };
 
 const toRoman = (num: number) => {
   const romans: [number, string][] = [
@@ -175,7 +188,6 @@ export const TournamentDetailPage: React.FC = () => {
   }>(null);
   // Расписание по группам: { [groupIndex]: [ [a,b], [c,d] ][] } — туры, каждый тур: массив пар [a,b]
   const [schedule, setSchedule] = useState<Record<number, [number, number][][]>>({});
-  const [scheduleLoaded, setScheduleLoaded] = useState(false);
   const canDeleteTournament = !!t?.can_delete;
   const [showEditModal, setShowEditModal] = useState(false);
   const [setFormats, setSetFormats] = useState<SetFormatDict[]>([]);
@@ -627,85 +639,6 @@ export const TournamentDetailPage: React.FC = () => {
     setPendingStart(readPendingStart());
   }, [t?.id, readPendingStart]);
 
-  const renderAnnouncementWithLinks = (text: string) => {
-    if (!text) return null;
-    const lines = text.split('\n');
-    return (
-      <>
-        {lines.map((line, idx) => {
-          // Обрабатываем markdown-ссылки [текст](url)
-          const markdownLinkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
-          const parts: Array<{ type: 'text' | 'link'; content: string; url?: string }> = [];
-          let lastIndex = 0;
-          let match;
-
-          while ((match = markdownLinkRegex.exec(line)) !== null) {
-            // Добавляем текст до ссылки
-            if (match.index > lastIndex) {
-              parts.push({ type: 'text', content: line.substring(lastIndex, match.index) });
-            }
-            // Добавляем ссылку
-            parts.push({ type: 'link', content: match[1], url: match[2] });
-            lastIndex = match.index + match[0].length;
-          }
-
-          // Добавляем оставшийся текст
-          if (lastIndex < line.length) {
-            parts.push({ type: 'text', content: line.substring(lastIndex) });
-          }
-
-          // Если не было markdown-ссылок, обрабатываем обычные URL
-          if (parts.length === 0) {
-            const urlRegex = /(https?:\/\/[^\s]+)/g;
-            const urlParts = line.split(urlRegex);
-            return (
-              <div key={idx}>
-                {urlParts.map((part, i) => {
-                  if (part.match(urlRegex)) {
-                    return (
-                      <a
-                        key={i}
-                        href={part}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ color: '#007bff', textDecoration: 'underline' }}
-                      >
-                        {part}
-                      </a>
-                    );
-                  }
-                  return <span key={i}>{part}</span>;
-                })}
-              </div>
-            );
-          }
-
-          // Рендерим части с markdown-ссылками
-          return (
-            <div key={idx}>
-              {parts.map((part, i) => {
-                if (part.type === 'link') {
-                  return (
-                    <a
-                      key={i}
-                      href={part.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{ color: '#007bff', textDecoration: 'underline' }}
-                    >
-                      {part.content}
-                    </a>
-                  );
-                }
-                return <span key={i}>{part.content}</span>;
-              })}
-            </div>
-          );
-        })}
-      </>
-    );
-  };
-
   // Универсальный поиск матча по паре ID команд в группе: учитывает разные формы сериализации
   const findGroupMatch = useCallback((groupIdx: number, teamAId?: number | null, teamBId?: number | null) => {
     if (!t || !teamAId || !teamBId) return undefined as any;
@@ -749,17 +682,11 @@ export const TournamentDetailPage: React.FC = () => {
           mapped[Number(key)] = rounds as [number, number][][];
         }
         setSchedule(mapped);
-        setScheduleLoaded(true);
       }
     } catch (e) {
       console.error('Не удалось загрузить расписание групп:', e);
     }
   }, [id]);
-
-  // Карта рейтингов игроков: playerId -> рейтинг (current или rating_before)
-  const [playerRatings, setPlayerRatings] = useState<Map<number, number>>(new Map());
-  // Карта позиций игроков в рейтинге: playerId -> rank (место в рейтинге)
-  const [playerRanks, setPlayerRanks] = useState<Map<number, number>>(new Map());
 
   // Справочники для модалки редактирования (форматы сетов)
   useEffect(() => {
@@ -775,90 +702,6 @@ export const TournamentDetailPage: React.FC = () => {
     loadDictionaries();
   }, []);
 
-  // Загрузка рейтингов всех игроков, участвующих в турнире
-  useEffect(() => {
-    const loadRatings = async () => {
-      try {
-        if (!t || !t.participants) return;
-        const ids = new Set<number>();
-        for (const p of t.participants) {
-          const team: any = p.team || {};
-          const p1 = team.player_1 && typeof team.player_1 === 'object' ? team.player_1.id : (typeof team.player_1 === 'number' ? team.player_1 : null);
-          const p2 = team.player_2 && typeof team.player_2 === 'object' ? team.player_2.id : (typeof team.player_2 === 'number' ? team.player_2 : null);
-          if (typeof p1 === 'number') ids.add(p1);
-          if (typeof p2 === 'number') ids.add(p2);
-        }
-        if (ids.size === 0) { setPlayerRatings(new Map()); setPlayerRanks(new Map()); return; }
-        const idArray = Array.from(ids);
-
-        // Для завершённых турниров используем рейтинг ДО турнира (rating_before)
-        if (t.status === 'completed') {
-          const map = new Map<number, number>();
-
-          // Сначала пытаемся получить rating_before по каждому игроку
-          await Promise.all(idArray.map(async (pid) => {
-            try {
-              const hist = await ratingApi.playerHistory(pid);
-              const rows = hist?.history || [];
-              const row = rows.find((r: any) => r.tournament_id === t.id && typeof r.rating_before === 'number');
-              if (row) {
-                map.set(pid, row.rating_before);
-              }
-            } catch {
-              // Игнорируем ошибки по отдельным игрокам, fallback сделаем ниже
-            }
-          }));
-
-          // Для тех, у кого нет rating_before, добираем current_rating как раньше
-          const missing = idArray.filter(pid => !map.has(pid));
-          if (missing.length > 0) {
-            try {
-              const respBriefs = await ratingApi.playerBriefs(missing);
-              for (const it of (respBriefs.results || [])) {
-                if (typeof it.id === 'number' && typeof it.current_rating === 'number' && !map.has(it.id)) {
-                  map.set(it.id, it.current_rating);
-                }
-              }
-            } catch {
-              // Если briefs не доступны, просто оставляем то, что удалось получить
-            }
-          }
-
-          // Вычисляем позиции в рейтинге по значениям map (чем больше рейтинг, тем выше позиция)
-          const ranks = new Map<number, number>();
-          const sorted = Array.from(map.entries()).sort((a, b) => b[1] - a[1]);
-          sorted.forEach(([pid], idx) => {
-            ranks.set(pid, idx + 1);
-          });
-
-          setPlayerRatings(map);
-          setPlayerRanks(ranks);
-        } else {
-          // Для незавершённых турниров используем текущий рейтинг и глобальную позицию из briefs
-          const resp = await ratingApi.playerBriefs(idArray);
-          const map = new Map<number, number>();
-          const ranks = new Map<number, number>();
-          for (const it of (resp.results || [])) {
-            if (typeof it.id === 'number') {
-              if (typeof it.current_rating === 'number') {
-                map.set(it.id, it.current_rating);
-              }
-              if (typeof it.rank === 'number') {
-                ranks.set(it.id, it.rank);
-              }
-            }
-          }
-
-          setPlayerRatings(map);
-          setPlayerRanks(ranks);
-        }
-      } catch {
-        setPlayerRatings(new Map());
-        setPlayerRanks(new Map());
-      }
-    };
-    loadRatings();
-  }, [t]);
   // Данные групп с бэкенда: { [group_index]: { stats: { [team_id]: {...} }, placements: { [team_id]: place } } }
   const [groupStats, setGroupStats] = useState<Record<number, { stats: Record<number, { wins: number; sets_won: number; sets_lost: number; sets_drawn?: number; games_won: number; games_lost: number }>; placements: Record<number, number> }>>({});
   const exportRef = useRef<HTMLDivElement | null>(null);
@@ -899,14 +742,6 @@ export const TournamentDetailPage: React.FC = () => {
       console.warn('Не удалось загрузить агрегаты групп:', e);
     }
   };
-
-  const loadImage = (src: string): Promise<HTMLImageElement> => new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('Не удалось загрузить изображение'));
-    img.src = src;
-  });
 
   const handleShare = async () => {
     try {
@@ -1054,15 +889,14 @@ export const TournamentDetailPage: React.FC = () => {
         
         // Вычисляем рейтинг
         let rating: number | undefined = undefined;
+        let ratingLabel: string | undefined = undefined;
         if (participant?.team) {
           const team: any = participant.team as any;
-          if (tournamentData.participant_mode === 'doubles' && team.player_1 && team.player_2) {
-            // Для пар - средний рейтинг игроков
-            const r1 = team.player_1?.current_rating || 0;
-            const r2 = team.player_2?.current_rating || 0;
-            rating = r1 > 0 || r2 > 0 ? Math.round((r1 + r2) / 2) : undefined;
-          } else if (tournamentData.participant_mode === 'singles' && team.player_1) {
-            rating = typeof team.player_1 === 'object' ? team.player_1.current_rating : undefined;
+          if (typeof team.rating === 'number') {
+            rating = team.rating;
+          }
+          if (typeof team.rating_label === 'string') {
+            ratingLabel = team.rating_label;
           }
         }
         
@@ -1075,7 +909,8 @@ export const TournamentDetailPage: React.FC = () => {
             fullName: participant.team.full_name,
             teamId: participant.team.id,
             isInBracket: true,
-            currentRating: rating
+            rating: rating,
+            ratingLabel: ratingLabel
           } : null
         });
       }
@@ -1096,6 +931,9 @@ export const TournamentDetailPage: React.FC = () => {
           teamId: p.team_id,
           isInBracket: participantsInSlots.has(p.id), // Флаг: участник в таблице или нет
           currentRating: typeof p.rating === 'number' ? p.rating : undefined,
+          rating: typeof p.rating === 'number' ? p.rating : undefined,
+          place: (typeof p.place === 'number') ? p.place : null,
+          ratingLabel: typeof p.rating_label === 'string' ? p.rating_label : undefined,
           listStatus: p.list_status || 'main', // Статус списка: main или reserve
           registrationOrder: p.registration_order // Порядок регистрации для сортировки резерва
         }));
@@ -1426,8 +1264,6 @@ export const TournamentDetailPage: React.FC = () => {
     let gamesWon = 0;
     let gamesLost = 0;
     // Признак формата "только тай-брейк" (эвристика: один сет и он TB-only). При нём оставляем поведение игр как есть.
-    const sf: any = (t as any)?.set_format || {};
-    const onlyTiebreakMode = (sf?.max_sets === 1) && !!sf?.allow_tiebreak_only_set;
     for (const cIdx of g.cols) {
       if (cIdx === rIdx) continue;
       const pairs = getCellPairs(g, rIdx, cIdx, rI);
@@ -1998,9 +1834,6 @@ export const TournamentDetailPage: React.FC = () => {
   const filledEntries = (t.participants || []).filter(p => p.team).length;
   const planned = t.planned_participants || 0;
   const isDoubles = t.participant_mode === 'doubles';
-  const canLock = isDoubles ? (distinctPlayerIds.size >= planned && planned > 0) : (filledEntries >= planned && planned > 0);
-  const lockDisabled = completed || !canLock;
-
   return (
     <div>
       {groups.length === 0 && (
@@ -3046,80 +2879,56 @@ export const TournamentDetailPage: React.FC = () => {
                     >
                       {(() => {
                         const team: any = g.entries[rI]?.team || {};
-                        const name = showFullName ? (team.full_name || '—') : (team.display_name || team.name || '—');
-                        // Получим рейтинги по id игроков
-                        const id1 = team.player_1 && typeof team.player_1 === 'object' ? team.player_1.id : (typeof team.player_1 === 'number' ? team.player_1 : null);
-                        const id2 = team.player_2 && typeof team.player_2 === 'object' ? team.player_2.id : (typeof team.player_2 === 'number' ? team.player_2 : null);
-                        const r1 = (typeof id1 === 'number' && playerRatings.has(id1)) ? playerRatings.get(id1)! : (typeof team?.player_1 === 'object' && typeof team.player_1?.rating === 'number' ? team.player_1.rating : null);
-                        const r2 = (typeof id2 === 'number' && playerRatings.has(id2)) ? playerRatings.get(id2)! : (typeof team?.player_2 === 'object' && typeof team.player_2?.rating === 'number' ? team.player_2.rating : null);
-                        let rating: number | null = null;
-                        if (typeof r1 === 'number' && typeof r2 === 'number') {
-                          rating = Math.round((r1 + r2) / 2);
-                        } else if (typeof r1 === 'number') {
-                          rating = Math.round(r1);
-                        } else if (typeof r2 === 'number') {
-                          rating = Math.round(r2);
-                        } else if (typeof team.rating === 'number') {
-                          rating = Math.round(team.rating);
-                        } else if (typeof team.rating_sum === 'number') {
-                          const cnt = (team.player_1 ? 1 : 0) + (team.player_2 ? 1 : 0);
-                          rating = cnt > 0 ? Math.round(team.rating_sum / cnt) : Math.round(team.rating_sum);
-                        }
+                        const baseName = showFullName ? (team.full_name || '—') : (team.display_name || team.name || '—');
+                        const entry: any = g.entries[rI] || {};
+                        const rating = (typeof entry.visible_rating === 'number') ? Math.round(entry.visible_rating) : null;
+                        const label = (typeof entry.rating_label === 'string' && entry.rating_label.trim())
+                          ? entry.rating_label
+                          : getRatingLabelByVisible((t as any)?.rating_visible);
 
-                        const isDoublesWithNames =
-                          !!t && (t.status === 'active' || t.status === 'completed') &&
-                          (t as any).participant_mode === 'doubles' && !showFullName;
+                        const p1Rating = (typeof entry.player_1_visible_rating === 'number') ? Math.round(entry.player_1_visible_rating) : null;
+                        const p1Place = (typeof entry.player_1_visible_place === 'number') ? entry.player_1_visible_place : null;
+                        const p2Rating = (typeof entry.player_2_visible_rating === 'number') ? Math.round(entry.player_2_visible_rating) : null;
+                        const p2Place = (typeof entry.player_2_visible_place === 'number') ? entry.player_2_visible_place : null;
 
-                        if (isDoublesWithNames && (team.player_1 || team.player_2)) {
-                          const p1: any = typeof team.player_1 === 'object' ? team.player_1 : null;
-                          const p2: any = typeof team.player_2 === 'object' ? team.player_2 : null;
-                          const p1Name = p1 ? (p1.display_name || `${p1.last_name} ${p1.first_name}`) : null;
-                          const p2Name = p2 ? (p2.display_name || `${p2.last_name} ${p2.first_name}`) : null;
+                        const pTxt = (place: number | null, r: number | null) => {
+                          if (typeof r !== 'number') return null;
+                          return (typeof place === 'number') ? `#${place} • ${r} ${label}` : `${r} ${label}`;
+                        };
 
-                          const rank1 = (typeof id1 === 'number' && playerRanks.has(id1)) ? playerRanks.get(id1)! : null;
-                          const rank2 = (typeof id2 === 'number' && playerRanks.has(id2)) ? playerRanks.get(id2)! : null;
-                          const showRanks = t.status === 'active';
+                        const splitNames = (s: string) => {
+                          const parts = (s || '').split('/').map((p: string) => p.trim()).filter(Boolean);
+                          return { a: parts[0] || '—', b: parts[1] || '—', isPair: parts.length >= 2 };
+                        };
 
-                          return (
-                            <>
-                              {p1Name && (
-                                <span>
-                                  {p1Name}
-                                  {typeof r1 === 'number' && (
-                                    <span style={{ marginLeft: 4, fontSize: 10, opacity: 0.75 }}>
-                                      ({showRanks && typeof rank1 === 'number' ? `#${rank1} • ${Math.round(r1)} BP` : `${Math.round(r1)} BP`})
-                                    </span>
-                                  )}
-                                </span>
-                              )}
-                              {p1Name && p2Name && (
-                                <span style={{ margin: '0 4px' }}>/</span>
-                              )}
-                              {p2Name && (
-                                <span>
-                                  {p2Name}
-                                  {typeof r2 === 'number' && (
-                                    <span style={{ marginLeft: 4, fontSize: 10, opacity: 0.75 }}>
-                                      ({showRanks && typeof rank2 === 'number' ? `#${rank2} • ${Math.round(r2)} BP` : `${Math.round(r2)} BP`})
-                                    </span>
-                                  )}
-                                </span>
-                              )}
-                              {typeof rating === 'number' && (
-                                <span style={{ marginLeft: 6, fontSize: 10, opacity: 0.75 }}>
-                                  {rating} <span style={{ fontSize: 9 }}>BP</span>
-                                </span>
-                              )}
-                            </>
-                          );
-                        }
+                        const { a: n1, b: n2, isPair } = splitNames(baseName);
+                        const p1Inline = (!showFullName && isPair) ? pTxt(p1Place, p1Rating) : null;
+                        const p2Inline = (!showFullName && isPair) ? pTxt(p2Place, p2Rating) : null;
 
                         return (
                           <>
-                            <span>{name}</span>
+                            {isPair ? (
+                              <span>
+                                {n1}
+                                {!showFullName && p1Inline && (
+                                  <span style={{ marginLeft: 6, fontSize: 10, opacity: 0.75 }}>
+                                    ({p1Inline})
+                                  </span>
+                                )}
+                                {' / '}
+                                {n2}
+                                {!showFullName && p2Inline && (
+                                  <span style={{ marginLeft: 6, fontSize: 10, opacity: 0.75 }}>
+                                    ({p2Inline})
+                                  </span>
+                                )}
+                              </span>
+                            ) : (
+                              <span>{baseName}</span>
+                            )}
                             {typeof rating === 'number' && (
                               <span style={{ marginLeft: 6, fontSize: 10, opacity: 0.75 }}>
-                                {rating} <span style={{ fontSize: 9 }}>BP</span>
+                                {rating} {label}
                               </span>
                             )}
                           </>

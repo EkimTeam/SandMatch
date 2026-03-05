@@ -60,6 +60,13 @@ class ParticipantSerializer(serializers.ModelSerializer):
     team = TeamSerializer(read_only=True)
     team_id = serializers.IntegerField(write_only=True)
     list_status = serializers.SerializerMethodField()
+    visible_rating = serializers.SerializerMethodField()
+    visible_place = serializers.SerializerMethodField()
+    rating_label = serializers.SerializerMethodField()
+    player_1_visible_rating = serializers.SerializerMethodField()
+    player_1_visible_place = serializers.SerializerMethodField()
+    player_2_visible_rating = serializers.SerializerMethodField()
+    player_2_visible_place = serializers.SerializerMethodField()
 
     class Meta:
         model = TournamentEntry
@@ -71,6 +78,13 @@ class ParticipantSerializer(serializers.ModelSerializer):
             "row_index",
             "is_out_of_competition",
             "list_status",
+            "visible_rating",
+            "visible_place",
+            "rating_label",
+            "player_1_visible_rating",
+            "player_1_visible_place",
+            "player_2_visible_rating",
+            "player_2_visible_place",
         ]
     
     def get_list_status(self, obj: TournamentEntry) -> str:
@@ -83,7 +97,7 @@ class ParticipantSerializer(serializers.ModelSerializer):
         
         if not team:
             return "main"  # По умолчанию основной список
-        
+
         # Ищем регистрации игроков этой команды
         player_ids = []
         if team.player_1_id:
@@ -111,6 +125,66 @@ class ParticipantSerializer(serializers.ModelSerializer):
                 return "reserve"
         
         return "main"  # По умолчанию основной список
+
+    def get_visible_rating(self, obj: TournamentEntry):
+        from apps.tournaments.services.rating_visible import get_entry_visible_rating
+
+        tournament = getattr(obj, "tournament", None)
+        if not tournament:
+            return 0
+        return int(get_entry_visible_rating(tournament, obj) or 0)
+
+    def get_visible_place(self, obj: TournamentEntry):
+        from apps.tournaments.services.rating_visible import get_player_visible_rating
+
+        tournament = getattr(obj, "tournament", None)
+        team = getattr(obj, "team", None)
+        if not tournament or not team:
+            return None
+
+        if getattr(team, "player_1", None) is not None and getattr(team, "player_2", None) is None:
+            res = get_player_visible_rating(tournament, team.player_1)
+            return res.place
+
+        return None
+
+    def get_rating_label(self, obj: TournamentEntry) -> str:
+        tournament = getattr(obj, "tournament", None)
+        if not tournament:
+            return "BP"
+        if tournament.rating_visible == Tournament.RatingVisible.BEACHPLAY:
+            return "BP"
+        return "РПТТ"
+
+    def _player_visible(self, obj: TournamentEntry, which: int):
+        from apps.tournaments.services.rating_visible import get_player_visible_rating
+
+        tournament = getattr(obj, "tournament", None)
+        team = getattr(obj, "team", None)
+        if not tournament or not team:
+            return None
+
+        player = getattr(team, "player_1", None) if which == 1 else getattr(team, "player_2", None)
+        if not player:
+            return None
+
+        return get_player_visible_rating(tournament, player)
+
+    def get_player_1_visible_rating(self, obj: TournamentEntry):
+        res = self._player_visible(obj, 1)
+        return int(res.rating or 0) if res else 0
+
+    def get_player_1_visible_place(self, obj: TournamentEntry):
+        res = self._player_visible(obj, 1)
+        return res.place if res else None
+
+    def get_player_2_visible_rating(self, obj: TournamentEntry):
+        res = self._player_visible(obj, 2)
+        return int(res.rating or 0) if res else 0
+
+    def get_player_2_visible_place(self, obj: TournamentEntry):
+        res = self._player_visible(obj, 2)
+        return res.place if res else None
 
 
 class MatchSerializer(serializers.ModelSerializer):
@@ -244,6 +318,7 @@ class TournamentSerializer(serializers.ModelSerializer):
             "get_system_display",
             "get_participant_mode_display",
             "planned_participants",
+            "rating_visible",
             "used_player_ids",
             "group_schedule_patterns",
             "king_calculation_mode",

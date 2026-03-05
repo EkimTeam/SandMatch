@@ -6,6 +6,9 @@ interface Player {
   full_name: string;
   is_registered: boolean;
   rating_bp?: number | null;
+  visible_rating?: number | null;
+  visible_place?: number | null;
+  rating_label?: string | null;
 }
 
 interface PartnerSearchModalWebProps {
@@ -21,6 +24,16 @@ const PartnerSearchModalWeb: React.FC<PartnerSearchModalWebProps> = ({ tournamen
   const [searched, setSearched] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const getRatingText = (p: Player) => {
+    const rating = (p.visible_rating ?? p.rating_bp);
+    if (rating === null || rating === undefined) return null;
+    const label = (p.rating_label || '').trim() || 'BP';
+    const place = (p.visible_place ?? null);
+    return (typeof place === 'number')
+      ? `(#${place} • ${rating} ${label})`
+      : `(${rating} ${label})`;
+  };
   const [recentPartners, setRecentPartners] = useState<Player[]>([]);
   const [recentLoading, setRecentLoading] = useState(false);
 
@@ -144,9 +157,11 @@ const PartnerSearchModalWeb: React.FC<PartnerSearchModalWebProps> = ({ tournamen
                       <div className="flex-1">
                         <div className="font-medium text-gray-900">
                           {player.full_name}
-                          {typeof player.rating_bp === 'number' && (
-                            <span className="ml-2 text-xs text-gray-500">BP {player.rating_bp}</span>
-                          )}
+                          {(() => {
+                            const txt = getRatingText(player);
+                            if (!txt) return null;
+                            return <span className="ml-2 text-xs text-gray-500">{txt}</span>;
+                          })()}
                         </div>
                         {player.is_registered && (
                           <div className="text-xs text-gray-500 mt-1">Уже зарегистрирован на турнир</div>
@@ -190,9 +205,11 @@ const PartnerSearchModalWeb: React.FC<PartnerSearchModalWebProps> = ({ tournamen
                         <div className="flex-1">
                           <div className="font-medium text-gray-900">
                             {player.full_name}
-                            {typeof player.rating_bp === 'number' && (
-                              <span className="ml-2 text-xs text-gray-500">BP {player.rating_bp}</span>
-                            )}
+                            {(() => {
+                              const txt = getRatingText(player);
+                              if (!txt) return null;
+                              return <span className="ml-2 text-xs text-gray-500">{txt}</span>;
+                            })()}
                           </div>
                           {player.is_registered && (
                             <div className="text-xs text-gray-500 mt-1">Уже зарегистрирован на турнир</div>
@@ -223,9 +240,11 @@ const PartnerSearchModalWeb: React.FC<PartnerSearchModalWebProps> = ({ tournamen
               <p className="mb-2">Зарегистрироваться на турнир в паре с:</p>
               <p className="px-2 py-1 rounded bg-green-50 inline-block font-semibold text-gray-900">
                 {selectedPlayer.full_name}
-                {typeof selectedPlayer.rating_bp === 'number' && (
-                  <span className="ml-2 text-xs text-gray-600">BP {selectedPlayer.rating_bp}</span>
-                )}
+                {(() => {
+                  const txt = getRatingText(selectedPlayer);
+                  if (!txt) return null;
+                  return <span className="ml-2 text-xs text-gray-600">{txt}</span>;
+                })()}
               </p>
             </div>
           )}

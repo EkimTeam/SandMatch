@@ -254,6 +254,12 @@ class Tournament(models.Model):
         M_PLUS = "m_plus", "M+ (добавить средние за недостающие)"
         NO = "no", "NO (без компенсации)"
 
+    class RatingVisible(models.TextChoices):
+        BEACHPLAY = "beachplay", "BeachPlay"
+        BTR_MW = "btr_mw", "РПТТ (м/ж)"
+        BTR_MIXED = "btr_mixed", "РПТТ (микст)"
+        BTR_UNDER = "btr_under", "РПТТ (юн.)"
+
     name = models.CharField(max_length=200)
     date = models.DateField()
     start_time = models.TimeField(null=True, blank=True, verbose_name="Время начала")
@@ -270,6 +276,12 @@ class Tournament(models.Model):
         null=True, blank=True, help_text="Планируемое число участников (для UI)")
     rating_coefficient = models.FloatField(default=1.0)
     is_rating_calc = models.BooleanField(default=True)
+    rating_visible = models.CharField(
+        max_length=16,
+        choices=RatingVisible.choices,
+        default=RatingVisible.BEACHPLAY,
+        db_index=True,
+    )
     prize_fund = models.CharField(
         max_length=100,
         blank=True,

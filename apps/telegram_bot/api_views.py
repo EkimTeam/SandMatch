@@ -910,13 +910,26 @@ def search_players(request, tournament_id):
     partner_ids = base_qs.filter(partner_id__in=candidate_ids).values_list('partner_id', flat=True)
     registered_ids = set(player_ids) | set(partner_ids)
     
+    from apps.tournaments.services.rating_visible import get_player_visible_rating
+
+    def _rating_label() -> str:
+        if tournament.rating_visible == Tournament.RatingVisible.BEACHPLAY:
+            return "BP"
+        return "РПТТ"
+
     result = []
     for player in players_qs:
+        rating = getattr(player, 'current_rating', None)
+        rating_bp = int(rating) if rating is not None else None
+        vr = get_player_visible_rating(tournament, player)
         result.append({
             'id': player.id,
             'full_name': str(player),
             'is_registered': player.id in registered_ids,
-            'rating_bp': player.current_rating if player.current_rating else None
+            'rating_bp': rating_bp,
+            'visible_rating': int(vr.rating or 0),
+            'visible_place': vr.place,
+            'rating_label': _rating_label(),
         })
     
     return Response({'players': result})
@@ -1013,15 +1026,26 @@ def recent_partners(request, tournament_id):
     partner_ids = base_qs.filter(partner_id__in=candidate_ids).values_list('partner_id', flat=True)
     registered_ids = set(player_ids) | set(partner_ids)
     
+    from apps.tournaments.services.rating_visible import get_player_visible_rating
+
+    def _rating_label() -> str:
+        if tournament.rating_visible == Tournament.RatingVisible.BEACHPLAY:
+            return "BP"
+        return "РПТТ"
+
     players_payload = []
     for p in players_list:
         rating = getattr(p, 'current_rating', None)
         rating_bp = int(rating) if rating is not None else None
+        vr = get_player_visible_rating(tournament, p)
         players_payload.append({
             'id': p.id,
             'full_name': str(p),
             'is_registered': p.id in registered_ids,
             'rating_bp': rating_bp,
+            'visible_rating': int(vr.rating or 0),
+            'visible_place': vr.place,
+            'rating_label': _rating_label(),
         })
     
     return Response({'players': players_payload})

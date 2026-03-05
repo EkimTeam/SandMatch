@@ -19,6 +19,15 @@ def new_knockout(request):
     """
     data = request.data or {}
 
+    rating_visible = data.get("rating_visible") or Tournament.RatingVisible.BEACHPLAY
+    if rating_visible not in {
+        Tournament.RatingVisible.BEACHPLAY,
+        Tournament.RatingVisible.BTR_MW,
+        Tournament.RatingVisible.BTR_MIXED,
+        Tournament.RatingVisible.BTR_UNDER,
+    }:
+        return Response({"ok": False, "error": "Недопустимое значение rating_visible"}, status=400)
+
     # 1) Входные параметры
     required = ["name", "date", "participant_mode", "set_format_id"]
     missing = [k for k in required if not data.get(k)]
@@ -61,6 +70,7 @@ def new_knockout(request):
                 status=Tournament.Status.CREATED,
                 created_by=request.user if request.user.is_authenticated else None,
                 is_rating_calc=bool(data.get("is_rating_calc", True)),
+                rating_visible=rating_visible,
                 prize_fund=data.get("prize_fund") or None,
             )
 

@@ -9,6 +9,7 @@ from django.db import transaction
 
 from apps.matches.models import Match
 from apps.tournaments.models import DrawPosition, KnockoutBracket, TournamentEntry
+from apps.tournaments.services.rating_visible import get_entry_visible_rating
 
 
 # ----------------------
@@ -389,19 +390,15 @@ def auto_seed_participants(bracket: KnockoutBracket, entries: List[TournamentEnt
 
 def _get_team_rating(entry: TournamentEntry) -> int:
     """Получить рейтинг команды для сортировки.
-    Для пар - среднее арифметическое с округлением.
-    Для одиночек - рейтинг игрока.
+    Использует видимый рейтинг турнира (Tournament.rating_visible).
+
+    - BeachPlay: одиночка=rating, пара=среднее (round)
+    - РПТТ: одиночка=rating, пара=сумма
     """
-    team = entry.team
-    rating = 0
-    if team:
-        if team.player_1 and team.player_2:
-            r1 = team.player_1.current_rating or 0
-            r2 = team.player_2.current_rating or 0
-            rating = round((r1 + r2) / 2)
-        elif team.player_1:
-            rating = team.player_1.current_rating or 0
-    return rating
+    tournament = getattr(entry, "tournament", None)
+    if not tournament:
+        return 0
+    return get_entry_visible_rating(tournament, entry)
 
 
 def _is_special_participant(entry: TournamentEntry) -> bool:

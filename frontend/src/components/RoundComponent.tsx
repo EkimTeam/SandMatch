@@ -30,7 +30,8 @@ export const RoundComponent: React.FC<{
   isLocked?: boolean;
   showFullNames?: boolean;
   byePositions?: Set<number>;
-}> = ({ round, matchWidth, onMatchClick, highlightIds, tops, totalHeight, preSpacer = 0, placeholderPrevCode, placeholderMode, dropSlots, onDrop, onRemoveFromSlot, isLocked, showFullNames, byePositions }) => {
+  ratingVisible?: string | null;
+}> = ({ round, matchWidth, onMatchClick, highlightIds, tops, totalHeight, preSpacer = 0, placeholderPrevCode, placeholderMode, dropSlots, onDrop, onRemoveFromSlot, isLocked, showFullNames, byePositions, ratingVisible }) => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minWidth: matchWidth }}>
       <h3 style={{ textAlign: 'center', fontWeight: 700, fontSize: 14, marginBottom: 8 }}>{round.round_name}</h3>
@@ -196,16 +197,25 @@ export const RoundComponent: React.FC<{
                     title={team1Tooltip || undefined}
                   >
                     <span>{team1Display}</span>
-                    {typeof (m as any)?.team_1?.rating === 'number' || typeof slot1?.currentParticipant?.currentRating === 'number' ? (
-                      <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 2 }}>
-                        <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1 }}>
-                          {typeof (m as any)?.team_1?.rating === 'number'
-                            ? (m as any).team_1.rating
-                            : slot1?.currentParticipant?.currentRating}
+                    {(() => {
+                      const rating = (typeof (m as any)?.team_1?.rating === 'number')
+                        ? (m as any).team_1.rating
+                        : (typeof slot1?.currentParticipant?.rating === 'number')
+                          ? slot1?.currentParticipant?.rating
+                          : (typeof slot1?.currentParticipant?.currentRating === 'number' ? slot1?.currentParticipant?.currentRating : undefined);
+                      if (typeof rating !== 'number') return null;
+                      const label = (typeof (m as any)?.team_1?.rating_label === 'string')
+                        ? (m as any).team_1.rating_label
+                        : (slot1?.currentParticipant?.ratingLabel
+                          || (ratingVisible && ratingVisible !== 'beachplay' ? 'РПТТ' : 'BP'));
+                      const place = (typeof slot1?.currentParticipant?.place === 'number') ? slot1?.currentParticipant?.place : null;
+                      const text = place ? `(#${place} • ${rating} ${label})` : `(${rating} ${label})`;
+                      return (
+                        <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1, opacity: 0.85 }}>
+                          {text}
                         </span>
-                        <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.7 }}>BP</span>
-                      </span>
-                    ) : null}
+                      );
+                    })()}
                   </span>
                 </div>
                 {canDrop && slot1?.currentParticipant && (
@@ -258,16 +268,25 @@ export const RoundComponent: React.FC<{
                     title={team2Tooltip || undefined}
                   >
                     <span>{team2Display}</span>
-                    {typeof (m as any)?.team_2?.rating === 'number' || typeof slot2?.currentParticipant?.currentRating === 'number' ? (
-                      <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 2 }}>
-                        <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1 }}>
-                          {typeof (m as any)?.team_2?.rating === 'number'
-                            ? (m as any).team_2.rating
-                            : slot2?.currentParticipant?.currentRating}
+                    {(() => {
+                      const rating = (typeof (m as any)?.team_2?.rating === 'number')
+                        ? (m as any).team_2.rating
+                        : (typeof slot2?.currentParticipant?.rating === 'number')
+                          ? slot2?.currentParticipant?.rating
+                          : (typeof slot2?.currentParticipant?.currentRating === 'number' ? slot2?.currentParticipant?.currentRating : undefined);
+                      if (typeof rating !== 'number') return null;
+                      const label = (typeof (m as any)?.team_2?.rating_label === 'string')
+                        ? (m as any).team_2.rating_label
+                        : (slot2?.currentParticipant?.ratingLabel
+                          || (ratingVisible && ratingVisible !== 'beachplay' ? 'РПТТ' : 'BP'));
+                      const place = (typeof slot2?.currentParticipant?.place === 'number') ? slot2?.currentParticipant?.place : null;
+                      const text = place ? `(#${place} • ${rating} ${label})` : `(${rating} ${label})`;
+                      return (
+                        <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1, opacity: 0.85 }}>
+                          {text}
                         </span>
-                        <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.7 }}>BP</span>
-                      </span>
-                    ) : null}
+                      );
+                    })()}
                   </span>
                 </div>
                 {canDrop && slot2?.currentParticipant && (

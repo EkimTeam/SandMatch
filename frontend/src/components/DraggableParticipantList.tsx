@@ -31,7 +31,6 @@ export const DraggableParticipantList: React.FC<Props> = ({
   isStage = false
 }) => {
   const [draggedParticipant, setDraggedParticipant] = useState<DraggableParticipant | null>(null);
-  const [touchStartY, setTouchStartY] = useState<number>(0);
   const [ghostPosition, setGhostPosition] = useState<{ x: number; y: number } | null>(null);
   const [sortBy, setSortBy] = useState<'name' | 'rating'>('name');
 
@@ -61,7 +60,6 @@ export const DraggableParticipantList: React.FC<Props> = ({
     }
     
     setDraggedParticipant(participant);
-    setTouchStartY(e.touches[0].clientY);
     
     // Добавляем данные в глобальный объект для передачи между компонентами
     (window as any).__draggedParticipant = participant;
@@ -179,12 +177,20 @@ export const DraggableParticipantList: React.FC<Props> = ({
     >
       <span className="participant-name" style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
         <span>{participant.name}</span>
-        {typeof participant.currentRating === 'number' && (
-          <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 2 }}>
-            <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1 }}>{participant.currentRating}</span>
-            <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.7 }}>BP</span>
-          </span>
-        )}
+        {(() => {
+          const rating = (typeof participant.rating === 'number')
+            ? participant.rating
+            : (typeof participant.currentRating === 'number' ? participant.currentRating : undefined);
+          if (typeof rating !== 'number') return null;
+          const label = participant.ratingLabel || 'BP';
+          const place = (typeof participant.place === 'number') ? participant.place : null;
+          const text = place ? `(#${place} • ${rating} ${label})` : `(${rating} ${label})`;
+          return (
+            <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1, opacity: 0.85 }}>
+              {text}
+            </span>
+          );
+        })()}
       </span>
       <div className="participant-actions">
         {participant.isInBracket ? (
@@ -329,11 +335,20 @@ export const DraggableParticipantList: React.FC<Props> = ({
           }}
         >
           {draggedParticipant.name}
-          {typeof draggedParticipant.currentRating === 'number' && (
-            <span style={{ marginLeft: 8, fontSize: 11, color: '#666' }}>
-              {draggedParticipant.currentRating} BP
-            </span>
-          )}
+          {(() => {
+            const rating = (typeof draggedParticipant.rating === 'number')
+              ? draggedParticipant.rating
+              : (typeof draggedParticipant.currentRating === 'number' ? draggedParticipant.currentRating : undefined);
+            if (typeof rating !== 'number') return null;
+            const label = draggedParticipant.ratingLabel || 'BP';
+            const place = (typeof draggedParticipant.place === 'number') ? draggedParticipant.place : null;
+            const text = place ? `(#${place} • ${rating} ${label})` : `(${rating} ${label})`;
+            return (
+              <span style={{ marginLeft: 8, fontSize: 11, color: '#666' }}>
+                {text}
+              </span>
+            );
+          })()}
         </div>
       )}
     </div>

@@ -169,7 +169,7 @@ export const InitialRatingModal: React.FC<Props> = ({ tournamentId, open, onClos
           Присвоить стартовый рейтинг участникам
         </div>
         <div style={{ padding: '12px 20px', borderBottom: '1px solid #eee', fontSize: 13, color: '#666' }}>
-          Игрокам с текущим рейтингом 0 будет предложен стартовый рейтинг. Можно выбрать прототип из BTR или ввести рейтинг вручную.
+          Игрокам с текущим рейтингом 0 будет предложен стартовый рейтинг. Можно выбрать прототип из РПТТ или ввести рейтинг вручную.
         </div>
         {error && (
           <div style={{ padding: '8px 20px', color: '#b91c1c', fontSize: 13 }}>
@@ -199,7 +199,7 @@ export const InitialRatingModal: React.FC<Props> = ({ tournamentId, open, onClos
               <thead>
                 <tr>
                   <th style={{ textAlign: 'left', padding: '6px 4px', borderBottom: '1px solid #eee' }}>Игрок</th>
-                  <th style={{ textAlign: 'left', padding: '6px 4px', borderBottom: '1px solid #eee' }}>BTR-прототип</th>
+                  <th style={{ textAlign: 'left', padding: '6px 4px', borderBottom: '1px solid #eee' }}>РПТТ-прототип</th>
                   <th style={{ textAlign: 'left', padding: '6px 4px', borderBottom: '1px solid #eee', width: 120 }}>Стартовый рейтинг</th>
                 </tr>
               </thead>
@@ -217,7 +217,7 @@ export const InitialRatingModal: React.FC<Props> = ({ tournamentId, open, onClos
                           onChange={e => handleChangeLink(p.player_id, e.target.value ? Number(e.target.value) : null)}
                           style={{ fontSize: 13, padding: '4px 6px', maxWidth: '100%' }}
                         >
-                          <option value="">Не связывать с BTR</option>
+                          <option value="">Не связывать с РПТТ</option>
                           {p.btr_candidates.map(c => (
                             <option key={c.id} value={c.id}>
                               {c.full_name} (РНИ {c.rni}{c.city ? `, ${c.city}` : ''}{c.birth_date ? `, ${c.birth_date}` : ''})
@@ -225,7 +225,7 @@ export const InitialRatingModal: React.FC<Props> = ({ tournamentId, open, onClos
                           ))}
                         </select>
                       ) : (
-                        <span style={{ fontSize: 12, color: '#9ca3af' }}>Нет кандидатов BTR</span>
+                        <span style={{ fontSize: 12, color: '#9ca3af' }}>Нет кандидатов РПТТ</span>
                       )}
                     </td>
                     <td style={{ padding: '6px 4px', borderBottom: '1px solid #f3f4f6' }}>

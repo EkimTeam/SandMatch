@@ -123,14 +123,21 @@ export const SimplifiedGroupTable: React.FC<SimplifiedGroupTableProps> = ({
                           ? slot.currentParticipant.fullName 
                           : slot.currentParticipant.name}
                         </span>
-                        {typeof slot.currentParticipant.currentRating === 'number' && (
-                          <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 2 }}>
-                            <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1 }}>
-                              {slot.currentParticipant.currentRating}
+                        {(() => {
+                          const p = slot.currentParticipant;
+                          const rating = (typeof p.rating === 'number')
+                            ? p.rating
+                            : (typeof p.currentRating === 'number' ? p.currentRating : undefined);
+                          if (typeof rating !== 'number') return null;
+                          const label = p.ratingLabel || 'BP';
+                          const place = (typeof p.place === 'number') ? p.place : null;
+                          const text = place ? `(#${place} • ${rating} ${label})` : `(${rating} ${label})`;
+                          return (
+                            <span style={{ fontSize: 11, fontWeight: 600, lineHeight: 1, opacity: 0.85 }}>
+                              {text}
                             </span>
-                            <span style={{ fontSize: 9, lineHeight: 1, opacity: 0.7 }}>BP</span>
-                          </span>
-                        )}
+                          );
+                        })()}
                       </span>
                       {!isLocked && (
                         <button

@@ -122,7 +122,7 @@ export const BTRPlayerCardPage: React.FC = () => {
         <div className="text-center text-red-600">{error || 'Игрок не найден'}</div>
         <div className="text-center mt-4">
           <button onClick={() => navigate('/rating?type=btr')} className="text-blue-600 hover:underline">
-            ← Вернуться к рейтингу
+            ← Вернуться к рейтингу РПТТ
           </button>
         </div>
       </div>
@@ -138,7 +138,7 @@ export const BTRPlayerCardPage: React.FC = () => {
       {/* Навигация */}
       <div className="mb-6">
         <button onClick={() => navigate('/rating?type=btr')} className="text-blue-600 hover:underline">
-          ← Вернуться к рейтингу BTR
+          ← Вернуться к рейтингу РПТТ
         </button>
       </div>
 
