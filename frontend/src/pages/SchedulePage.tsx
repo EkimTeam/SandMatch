@@ -46,11 +46,58 @@ export const SchedulePage: React.FC = () => {
   const [matchDurationText, setMatchDurationText] = useState<string>('40');
   const [startTime, setStartTime] = useState<string>('10:00');
   const [tournamentSystem, setTournamentSystem] = useState<string | null>(null);
+  const [tournamentName, setTournamentName] = useState<string>('');
   const [rrTeamRowById, setRrTeamRowById] = useState<Map<number, number>>(new Map());
   const [rrTeamByGroupRow, setRrTeamByGroupRow] = useState<Map<string, any>>(new Map());
   const [rrPairByMatchId, setRrPairByMatchId] = useState<Map<number, [number, number]>>(new Map());
   const [kingLetterByGroupPlayerId, setKingLetterByGroupPlayerId] = useState<Map<string, string>>(new Map());
   const [surnameCounts, setSurnameCounts] = useState<Map<string, number>>(new Map());
+
+  const isProAmRoundRobin = useMemo(() => {
+    if (tournamentSystem !== 'round_robin') return false;
+    const name = (tournamentName || '').toLowerCase();
+    return name.includes('proam') || name.includes('проам');
+  }, [tournamentName, tournamentSystem]);
+
+  const proAmGroupLetter = useMemo(() => {
+    const letters = [
+      'А',
+      'Б',
+      'В',
+      'Г',
+      'Д',
+      'Е',
+      'Ж',
+      'З',
+      'И',
+      'Й',
+      'К',
+      'Л',
+      'М',
+      'Н',
+      'О',
+      'П',
+      'Р',
+      'С',
+      'Т',
+      'У',
+      'Ф',
+      'Х',
+      'Ц',
+      'Ч',
+      'Ш',
+      'Щ',
+      'Э',
+      'Ю',
+      'Я',
+    ];
+
+    return (groupIndex: any): string => {
+      const n = Number(groupIndex);
+      if (!Number.isFinite(n) || n <= 0) return String(groupIndex ?? '');
+      return n <= letters.length ? letters[n - 1] : String(groupIndex);
+    };
+  }, []);
 
   const [isBacklogCollapsed, setIsBacklogCollapsed] = useState<boolean>(false);
 
@@ -394,7 +441,11 @@ export const SchedulePage: React.FC = () => {
   const matchMetaLabel = (m: any): string => {
     if (!m) return '';
     const gi = m?.group_index;
-    const group = gi !== null && gi !== undefined && gi !== '' ? `гр.${gi}` : '';
+
+    const group =
+      gi !== null && gi !== undefined && gi !== ''
+        ? `гр.${isProAmRoundRobin ? proAmGroupLetter(gi) : gi}`
+        : '';
 
     if (tournamentSystem === 'round_robin') {
       const t1id = m?.team_1?.id;
@@ -407,7 +458,13 @@ export const SchedulePage: React.FC = () => {
       // Draft RR matches may have no team ids. In this case backend encodes virtual pairing
       // into round_name like "гр.1 • 2-3".
       const rn = String(m?.round_name || '').trim();
-      if (isDraftMode && rn) return rn;
+      if (isDraftMode && rn) {
+        if (isProAmRoundRobin) {
+          const replaced = rn.replace(/\bгр\.(\d+)\b/g, (_m, d) => `гр.${proAmGroupLetter(d)}`);
+          return replaced;
+        }
+        return rn;
+      }
       return group;
     }
     if (tournamentSystem === 'king') {
@@ -445,53 +502,6 @@ export const SchedulePage: React.FC = () => {
       return String(m?.round_name || '').trim() || `Раунд ${m?.round_index ?? ''}`.trim();
     }
     return group;
-  };
-
-  const renderMatchTiny = (m: any) => {
-    if (isDraftMode) {
-      if (isDraftPreviewMode && tournamentSystem === 'round_robin') {
-        const gi = m?.group_index;
-        const group = gi != null && gi !== '' ? Number(gi) : NaN;
-        const pair = m?.id != null ? rrPairByMatchId.get(Number(m.id)) : undefined;
-        const aPos = pair ? Number(pair[0]) : NaN;
-        const bPos = pair ? Number(pair[1]) : NaN;
-
-        const ta = Number.isFinite(group) && Number.isFinite(aPos) ? rrTeamByGroupRow.get(`rr:${group}:${aPos}`) : null;
-        const tb = Number.isFinite(group) && Number.isFinite(bPos) ? rrTeamByGroupRow.get(`rr:${group}:${bPos}`) : null;
-
-        const s1 = teamSurnames(ta);
-        const s2 = teamSurnames(tb);
-        const a = s1.length ? s1.join(' / ') : 'TBD';
-        const b = s2.length ? s2.join(' / ') : 'TBD';
-
-        return (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 1, lineHeight: 1.05 }}>
-            <div style={{ fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {Number.isFinite(group) && pair ? `гр.${group} • ${aPos}-${bPos}` : matchMetaLabel(m) || (m?.id ? `Матч #${m.id}` : 'Матч')}
-            </div>
-            <div style={{ fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a}</div>
-            <div style={{ fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b}</div>
-          </div>
-        );
-      }
-      return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 1, lineHeight: 1.05 }}>
-          <div style={{ fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {matchMetaLabel(m) || (m?.id ? `Матч #${m.id}` : 'Матч')}
-          </div>
-        </div>
-      );
-    }
-    const s1 = tournamentSystem === 'king' ? kingTeamPlayerLabels(m?.team_1) : teamSurnames(m?.team_1);
-    const s2 = tournamentSystem === 'king' ? kingTeamPlayerLabels(m?.team_2) : teamSurnames(m?.team_2);
-    const a = s1.length ? s1.join(' / ') : 'TBD';
-    const b = s2.length ? s2.join(' / ') : 'TBD';
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 1, lineHeight: 1.05 }}>
-        <div style={{ fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a}</div>
-        <div style={{ fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b}</div>
-      </div>
-    );
   };
 
   const matchScoreLabel = (m: any): string => {
@@ -1148,6 +1158,19 @@ export const SchedulePage: React.FC = () => {
     return surnames.length ? surnames.slice(0, 2) : ['TBD'];
   };
 
+  const renderMatchTiny = (m: any) => {
+    const s1 = tournamentSystem === 'king' ? kingTeamPlayerLabels(m?.team_1) : teamSurnames(m?.team_1);
+    const s2 = tournamentSystem === 'king' ? kingTeamPlayerLabels(m?.team_2) : teamSurnames(m?.team_2);
+    const a = s1.length ? s1.join(' / ') : 'TBD';
+    const b = s2.length ? s2.join(' / ') : 'TBD';
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 1, lineHeight: 1.05 }}>
+        <div style={{ fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a}</div>
+        <div style={{ fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b}</div>
+      </div>
+    );
+  };
+
   const renderMatchCompact = (m: any, variant: 'backlog' | 'schedule') => {
     if (isDraftMode) {
       const gi = m?.group_index;
@@ -1568,6 +1591,7 @@ export const SchedulePage: React.FC = () => {
     try {
       const t = await tournamentApi.getById(tournamentId);
       if (t?.system) setTournamentSystem(String(t.system));
+      if (t?.name) setTournamentName(String(t.name));
 
       // For RR label like "1-2" we need row_index of teams (same logic as in TournamentDetailPage)
       const nextMap = new Map<number, number>();

@@ -110,7 +110,65 @@ class ScheduleViewSet(viewsets.ModelViewSet):
             return ""
 
         gi = getattr(m, "group_index", None)
-        group = f"гр.{gi}" if gi is not None else ""
+
+        def _is_proam_rr(match_obj: Any) -> bool:
+            try:
+                t = getattr(match_obj, "tournament", None)
+                if not t:
+                    return False
+                if getattr(t, "system", None) != Tournament.System.ROUND_ROBIN:
+                    return False
+                name = str(getattr(t, "name", "") or "").lower()
+                return ("proam" in name) or ("проам" in name)
+            except Exception:
+                return False
+
+        def _group_letter(i: Any) -> str:
+            try:
+                n = int(i)
+            except Exception:
+                return ""
+            letters = [
+                "А",
+                "Б",
+                "В",
+                "Г",
+                "Д",
+                "Е",
+                "Ж",
+                "З",
+                "И",
+                "Й",
+                "К",
+                "Л",
+                "М",
+                "Н",
+                "О",
+                "П",
+                "Р",
+                "С",
+                "Т",
+                "У",
+                "Ф",
+                "Х",
+                "Ц",
+                "Ч",
+                "Ш",
+                "Щ",
+                "Э",
+                "Ю",
+                "Я",
+            ]
+            if n <= 0:
+                return ""
+            if n <= len(letters):
+                return letters[n - 1]
+            return str(n)
+
+        if gi is None:
+            group = ""
+        else:
+            group = f"гр.{_group_letter(gi)}" if _is_proam_rr(m) else f"гр.{gi}"
 
         try:
             system = getattr(getattr(m, "tournament", None), "system", "")
