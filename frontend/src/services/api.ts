@@ -884,7 +884,13 @@ export const scheduleApi = {
     scheduleId: number,
   ): Promise<{
     ok: boolean;
-    matches: Array<{ id: number; status: string; started_at: string | null; finished_at: string | null }>;
+    matches: Array<{
+      id: number;
+      status: string;
+      started_at: string | null;
+      finished_at: string | null;
+      sets?: Array<{ games_1: number | null; games_2: number | null; tb_1?: number | null; tb_2?: number | null; is_tiebreak_only?: boolean }>;
+    }>;
   }> => {
     const { data } = await api.get(`/schedules/${scheduleId}/live_state/`);
     return data;

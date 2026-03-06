@@ -461,21 +461,13 @@ def rank_group_with_ruleset(tournament: Tournament, group_index: int, agg: Dict[
         sets_ratio_all[team_id] = (d["sets_won"] / st) if st > 0 else 0.0
         games_ratio_all[team_id] = (d["games_won"] / gt) if gt > 0 else 0.0
 
-        # Суммарный рейтинг команды (если поля rating нет — считаем 0)
-        r1 = 0.0
-        r2 = 0.0
+        # Финальный тай-брейкер по рейтингу должен соответствовать tournament.rating_visible
         try:
-            p1 = getattr(team, "player_1", None)
-            p2 = getattr(team, "player_2", None)
-            r1 = float(getattr(p1, "rating", 0) or 0)
-            r2 = float(getattr(p2, "rating", 0) or 0)
+            from apps.tournaments.services.rating_visible import get_entry_visible_rating
+
+            team_rating[team_id] = float(get_entry_visible_rating(tournament, e) or 0)
         except Exception:
-            r1 = r2 = 0.0
-        # Для пар — среднее арифметическое, для одиночек — рейтинг игрока
-        if p2:
-            team_rating[team_id] = (r1 + r2) / 2.0
-        else:
-            team_rating[team_id] = r1
+            team_rating[team_id] = 0.0
 
     has_special: Dict[int, bool] = {}
     def _is_special_player(p) -> bool:

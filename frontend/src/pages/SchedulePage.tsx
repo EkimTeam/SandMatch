@@ -140,7 +140,23 @@ export const SchedulePage: React.FC = () => {
 
   const [viewMode, setViewMode] = useState<'grid' | 'timeline'>('grid');
   const [showFact, setShowFact] = useState<boolean>(true);
-  const [liveState, setLiveState] = useState<Map<number, { status: string; started_at: string | null; finished_at: string | null }>>(new Map());
+  const [liveState, setLiveState] = useState<
+    Map<
+      number,
+      {
+        status: string;
+        started_at: string | null;
+        finished_at: string | null;
+        sets?: Array<{
+          games_1: number | null;
+          games_2: number | null;
+          tb_1?: number | null;
+          tb_2?: number | null;
+          is_tiebreak_only?: boolean;
+        }>;
+      }
+    >
+  >(new Map());
 
   const conflictsSlotIds = useMemo(() => {
     const ids = new Set<number>();
@@ -897,6 +913,7 @@ export const SchedulePage: React.FC = () => {
             status: String(m.status || ''),
             started_at: m.started_at ?? null,
             finished_at: m.finished_at ?? null,
+            sets: (m as any)?.sets ?? [],
           });
         }
         setLiveState(map);
@@ -2883,7 +2900,9 @@ export const SchedulePage: React.FC = () => {
 
                         const statusLine = (() => {
                           if (st === 'completed') {
-                            const sc = matchScoreLabel(m);
+                            const live = liveState.get(Number(it.matchId));
+                            const merged = live ? { ...m, sets: live.sets ?? m?.sets } : m;
+                            const sc = matchScoreLabel(merged);
                             return sc ? `завершен ${sc}` : 'завершен';
                           }
                           if (st === 'live') {
