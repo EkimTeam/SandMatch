@@ -5,6 +5,7 @@ import { DropSlot, DraggableParticipant } from '../types/dragdrop';
 
 export const BracketWithSVGConnectors: React.FC<{
   data: BracketData;
+  tournamentId?: number;
   onMatchClick?: (matchId: number) => void;
   highlightIds?: Set<number>;
   dropSlots?: DropSlot[];
@@ -14,7 +15,7 @@ export const BracketWithSVGConnectors: React.FC<{
   showFullNames?: boolean;
   byePositions?: Set<number>;
   ratingVisible?: string | null;
-}> = ({ data, onMatchClick, highlightIds, dropSlots, onDrop, onRemoveFromSlot, isLocked, showFullNames, byePositions, ratingVisible }) => {
+}> = ({ data, tournamentId, onMatchClick, highlightIds, dropSlots, onDrop, onRemoveFromSlot, isLocked, showFullNames, byePositions, ratingVisible }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [positions, setPositions] = useState<Map<number, DOMRect>>(new Map());
@@ -177,8 +178,6 @@ export const BracketWithSVGConnectors: React.FC<{
           // Теперь отрисуем каждый раунд, прокинув tops и высоту колонки
           data.rounds.forEach((round, idx) => {
             const tops = topsByRound[idx] || [];
-            const isFirstRound = idx === 0;
-            const roundDropSlots = isFirstRound ? dropSlots : undefined;
             // высота колонки: нижний край последней карточки + нижний отступ G0
             const totalHeight = tops.length
               ? tops[tops.length - 1] + H + G0
@@ -204,6 +203,7 @@ export const BracketWithSVGConnectors: React.FC<{
                 round={round}
                 matchWidth={data.visual_config.match_width}
                 matchGap={G0}
+                tournamentId={tournamentId}
                 onMatchClick={onMatchClick}
                 highlightIds={highlightIds}
                 tops={tops}
