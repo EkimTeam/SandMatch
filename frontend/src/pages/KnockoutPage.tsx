@@ -1476,6 +1476,7 @@ export const KnockoutPage: React.FC = () => {
           {data && (
             <BracketWithSVGConnectors
               data={data}
+              tournamentId={tournamentId}
               dropSlots={dragDropState.dropSlots}
               onDrop={handleDrop}
               onRemoveFromSlot={handleRemoveFromSlot}
@@ -2018,6 +2019,7 @@ export const KnockoutPage: React.FC = () => {
         {data && (
           <BracketWithSVGConnectors
             data={data}
+            tournamentId={tournamentId}
             dropSlots={[]}
             onDrop={() => {}}
             onRemoveFromSlot={() => {}}

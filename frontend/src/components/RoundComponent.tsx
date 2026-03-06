@@ -12,6 +12,7 @@ export const RoundComponent: React.FC<{
   round: BracketRound;
   matchWidth: number;
   matchGap?: number;
+  tournamentId?: number;
   onMatchClick?: (matchId: number) => void;
   highlightIds?: Set<number>;
   // Новый режим: задаём точные координаты по топам
@@ -31,7 +32,32 @@ export const RoundComponent: React.FC<{
   showFullNames?: boolean;
   byePositions?: Set<number>;
   ratingVisible?: string | null;
-}> = ({ round, matchWidth, onMatchClick, highlightIds, tops, totalHeight, preSpacer = 0, placeholderPrevCode, placeholderMode, dropSlots, onDrop, onRemoveFromSlot, isLocked, showFullNames, byePositions, ratingVisible }) => {
+}> = ({ round, matchWidth, tournamentId, onMatchClick, highlightIds, tops, totalHeight, preSpacer = 0, placeholderPrevCode, placeholderMode, dropSlots, onDrop, onRemoveFromSlot, isLocked, showFullNames, byePositions, ratingVisible }) => {
+  const seedLabel = (pos: number): string => {
+    if (tournamentId === 252) {
+      const map: Record<number, string> = {
+        1: 'В1',
+        2: '.',
+        3: 'Д2',
+        4: 'Е2',
+        5: 'Г2',
+        6: 'Б1',
+        7: '.',
+        8: 'А1',
+        9: 'Г1',
+        10: '.',
+        11: 'А2',
+        12: 'Е1',
+        13: 'Б2',
+        14: 'В2',
+        15: '.',
+        16: 'Д1',
+      };
+      return map[pos] ?? `${pos}.`;
+    }
+    return `${pos}.`;
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minWidth: matchWidth }}>
       <h3 style={{ textAlign: 'center', fontWeight: 700, fontSize: 14, marginBottom: 8 }}>{round.round_name}</h3>
@@ -191,7 +217,7 @@ export const RoundComponent: React.FC<{
                 onDrop={canDrop ? (e) => handleDrop(e, 'team_1') : undefined}
               >
                 <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
-                  {isFirstRound && <span style={{ marginRight: 6, color: '#6b7280', fontSize: 12 }}>{idx * 2 + 1}.</span>}
+                  {isFirstRound && <span style={{ marginRight: 6, color: '#6b7280', fontSize: 12 }}>{seedLabel(idx * 2 + 1)}</span>}
                   <span 
                     style={{ display: 'flex', alignItems: 'baseline', gap: 6, fontWeight: winnerId === m?.team_1?.id ? 600 : 400 }}
                     title={team1Tooltip || undefined}
@@ -262,7 +288,7 @@ export const RoundComponent: React.FC<{
                 onDrop={canDrop ? (e) => handleDrop(e, 'team_2') : undefined}
               >
                 <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
-                  {isFirstRound && <span style={{ marginRight: 6, color: '#6b7280', fontSize: 12 }}>{idx * 2 + 2}.</span>}
+                  {isFirstRound && <span style={{ marginRight: 6, color: '#6b7280', fontSize: 12 }}>{seedLabel(idx * 2 + 2)}</span>}
                   <span 
                     style={{ display: 'flex', alignItems: 'baseline', gap: 6, fontWeight: winnerId && m?.team_2?.id === winnerId ? 700 : 400, color: m ? undefined : '#9ca3af' }}
                     title={team2Tooltip || undefined}
