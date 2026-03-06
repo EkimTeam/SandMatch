@@ -624,9 +624,12 @@ export const tournamentApi = {
 
   seedBracket: async (
     id: number,
-    bracketId: number
+    bracketId: number,
+    params?: { first_player?: boolean }
   ): Promise<{ ok: boolean }> => {
-    const response = await api.post(`/tournaments/${id}/seed_bracket/`, { bracket_id: bracketId });
+    const payload: any = { bracket_id: bracketId };
+    if (params?.first_player) payload.first_player = true;
+    const response = await api.post(`/tournaments/${id}/seed_bracket/`, payload);
     return response.data;
   },
 

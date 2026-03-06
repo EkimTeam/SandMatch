@@ -9,6 +9,7 @@ interface Props {
   onAddParticipant: () => void;
   onAddFromPreviousStage?: () => void;
   onAutoSeed: () => void;
+  onAutoSeedFirstPlayer?: () => void;
   onClearTables: () => void;
   maxParticipants: number;
   canAddMore: boolean;
@@ -24,6 +25,7 @@ export const DraggableParticipantList: React.FC<Props> = ({
   onAddParticipant,
   onAddFromPreviousStage,
   onAutoSeed,
+  onAutoSeedFirstPlayer,
   onClearTables,
   maxParticipants,
   canAddMore,
@@ -229,7 +231,7 @@ export const DraggableParticipantList: React.FC<Props> = ({
             <option value="rating">по рейтингу</option>
           </select>
         </div>
-        <div className="participant-actions">
+        <div className="participant-actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {isStage ? (
             <button 
               className="btn btn-primary btn-sm"
@@ -254,6 +256,14 @@ export const DraggableParticipantList: React.FC<Props> = ({
           >
             Автопосев
           </button>
+          {onAutoSeedFirstPlayer && (
+            <button
+              className="btn btn-outline btn-sm"
+              onClick={onAutoSeedFirstPlayer}
+            >
+              Посев по 1му игроку
+            </button>
+          )}
           <button 
             className="btn btn-sm"
             onClick={onClearTables}

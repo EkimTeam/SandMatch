@@ -148,6 +148,11 @@ export const TournamentDetailPage: React.FC = () => {
   const [simplifiedDropSlots, setSimplifiedDropSlots] = useState<SimplifiedDropSlot[]>([]);
   const [dragDropPickerOpen, setDragDropPickerOpen] = useState(false);
   const [showTextResultsModal, setShowTextResultsModal] = useState(false);
+
+  const isProAmTournament = useMemo(() => {
+    const name = (t?.name || '').toLowerCase();
+    return name.includes('proam') || name.includes('проам');
+  }, [t?.name]);
   const [textResults, setTextResults] = useState<string>('');
   const [loadingTextResults, setLoadingTextResults] = useState(false);
   const [showAnnouncementModal, setShowAnnouncementModal] = useState(false);
@@ -215,6 +220,30 @@ export const TournamentDetailPage: React.FC = () => {
     } catch (e: any) {
       console.error('Failed to rollback tournament completion', e);
       alert(e?.response?.data?.error || 'Не удалось откатить завершение турнира');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAutoSeedFirstPlayer = async () => {
+    if (!t) return;
+
+    if (!confirm('Автоматически распределить участников по группам (посев по 1му игроку)?')) return;
+
+    try {
+      setSaving(true);
+      const { data } = await api.post(`/tournaments/${t.id}/auto_seed/`, { first_player: true });
+
+      if (data.ok) {
+        alert(`Успешно распределено участников: ${data.seeded_count}`);
+        await reload();
+      } else {
+        alert(data.error || 'Не удалось выполнить посев');
+      }
+    } catch (error: any) {
+      console.error('Error auto-seeding (first player):', error);
+      const errorMsg = error?.response?.data?.error || 'Не удалось выполнить посев';
+      alert(errorMsg);
     } finally {
       setSaving(false);
     }
@@ -2571,10 +2600,11 @@ export const TournamentDetailPage: React.FC = () => {
               onAddParticipant={() => setDragDropPickerOpen(true)}
               onAddFromPreviousStage={() => setShowAddFromStageModal(true)}
               onAutoSeed={handleAutoSeed}
+              onAutoSeedFirstPlayer={(t?.status === 'created' && isProAmTournament) ? handleAutoSeedFirstPlayer : undefined}
               onClearTables={handleClearTables}
               maxParticipants={t.planned_participants || 32}
               canAddMore={true}
-              isStage={!!t.parent_tournament}
+              tournamentSystem={(t.system as any) || 'round_robin'}
             />
           </div>
 

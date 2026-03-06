@@ -1631,6 +1631,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
         """Автоматическая расстановка участников в сетке (посевы + случайная раскладка)."""
         tournament: Tournament = self.get_object()
         bracket_id = request.data.get("bracket_id")
+        first_player_mode = bool(request.data.get("first_player", False))
         if not bracket_id:
             return Response({"ok": False, "error": "Не указан bracket_id"}, status=400)
         try:
@@ -1677,7 +1678,28 @@ class TournamentViewSet(viewsets.ModelViewSet):
         from apps.tournaments.services.rating_visible import get_entry_visible_rating
 
         def get_rating(entry):
-            return get_entry_visible_rating(tournament, entry)
+            if not first_player_mode:
+                return get_entry_visible_rating(tournament, entry)
+
+            team = getattr(entry, "team", None)
+            if not team:
+                return 0
+
+            from apps.tournaments.services.team_ordering import team_players_in_display_order
+            from apps.tournaments.services.rating_visible import get_player_visible_rating
+
+            players = team_players_in_display_order(tournament, team)
+            if not players:
+                return 0
+
+            profis = [p for p in players if bool(getattr(p, "is_profi", False))]
+
+            # Если ровно один профи — используем его рейтинг, иначе берём максимум из двух.
+            rating_players = profis if len(profis) == 1 else players
+            best = 0
+            for p in rating_players:
+                best = max(best, int(get_player_visible_rating(tournament, p).rating or 0))
+            return best
         
         all_entries.sort(key=get_rating, reverse=True)
         
@@ -5067,9 +5089,24 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 
                 return count
             
+            first_player_mode = bool(request.data.get("first_player", False))
+
             # Сортировка участников
             def sort_key(entry):
-                rating = get_entry_visible_rating(tournament, entry)
+                if first_player_mode:
+                    team = getattr(entry, "team", None)
+                    rating = 0
+                    if team:
+                        from apps.tournaments.services.team_ordering import team_players_in_display_order
+                        from apps.tournaments.services.rating_visible import get_player_visible_rating
+
+                        players = team_players_in_display_order(tournament, team)
+                        profis = [p for p in players if bool(getattr(p, "is_profi", False))]
+                        rating_players = profis if len(profis) == 1 else players
+                        for p in rating_players:
+                            rating = max(rating, int(get_player_visible_rating(tournament, p).rating or 0))
+                else:
+                    rating = get_entry_visible_rating(tournament, entry)
                 profi_count = count_profi(entry)
                 rand = random.random()  # Для случайного порядка при равных показателях
 
