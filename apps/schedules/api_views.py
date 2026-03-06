@@ -1288,6 +1288,198 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         resp["Content-Disposition"] = f'attachment; filename="schedule_{schedule.id}.docx"'
         return resp
 
+    @action(detail=True, methods=["get"], url_path="export/xlsx", permission_classes=[IsAuthenticated])
+    def export_xlsx(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Alignment, Font, PatternFill
+        except Exception:
+            return Response(
+                {
+                    "ok": False,
+                    "error": "xlsx_export_unavailable",
+                    "detail": "XLSX export is unavailable on this server (missing dependency: openpyxl)",
+                },
+                status=status.HTTP_501_NOT_IMPLEMENTED,
+            )
+
+        courts = list(schedule.courts.all().order_by("index"))
+        runs = list(schedule.runs.all().order_by("index"))
+        slots_qs = schedule.slots.select_related(
+            "run",
+            "court",
+            "match",
+            "match__tournament",
+            "match__team_1",
+            "match__team_2",
+        )
+        slots_map: dict[tuple[int, int], Any] = {}
+        for s in slots_qs:
+            slots_map[(s.run_id, s.court_id)] = s
+
+        breaks = list(schedule.global_breaks.all().order_by("position"))
+        breaks_by_pos: dict[int, list[Any]] = {}
+        for br in breaks:
+            breaks_by_pos.setdefault(int(br.position), []).append(br)
+
+        rr_row_by_team = self._compute_rr_row_by_team(slots_qs)
+
+        tournament_names = []
+        for scope in schedule.scopes.select_related("tournament").all():
+            if scope.tournament and scope.tournament.name:
+                tournament_names.append(str(scope.tournament.name))
+        title = " + ".join(tournament_names) if tournament_names else "Расписание"
+
+        def run_top_label(run_obj: Any) -> str:
+            return self._run_top_label(run_obj)
+
+        def match_meta_label(m: Any) -> str:
+            return self._match_meta_label(m, rr_row_by_team)
+
+        def slot_cell_text(run_obj: Any, slot: Any) -> str:
+            if not slot:
+                return ""
+            if getattr(slot, "slot_type", None) == "text":
+                return str(getattr(slot, "override_title", None) or getattr(slot, "text_title", None) or "").strip()
+            if getattr(slot, "slot_type", None) == "match" and getattr(slot, "match_id", None):
+                if getattr(slot, "override_title", None):
+                    return str(slot.override_title)
+                m = getattr(slot, "match", None)
+                if not m:
+                    return f"Матч #{getattr(slot, 'match_id', '')}".strip()
+                top = str(getattr(slot, "override_subtitle", None) or "").strip() or run_top_label(run_obj)
+                meta = match_meta_label(m)
+                t1 = (
+                    getattr(getattr(m, "team_1", None), "display_name", None)
+                    or getattr(getattr(m, "team_1", None), "name", None)
+                    or str(getattr(m, "team_1", None) or "TBD")
+                )
+                t2 = (
+                    getattr(getattr(m, "team_2", None), "display_name", None)
+                    or getattr(getattr(m, "team_2", None), "name", None)
+                    or str(getattr(m, "team_2", None) or "TBD")
+                )
+                parts = [p for p in [top, meta, t1, "против", t2] if str(p).strip()]
+                return "\n".join([str(p) for p in parts])
+            return ""
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Расписание"
+
+        header_fill = PatternFill("solid", fgColor="F3F4F6")
+        live_fill = PatternFill("solid", fgColor="D1FAE5")
+        completed_fill = PatternFill("solid", fgColor="E5E7EB")
+        break_fill = PatternFill("solid", fgColor="DBEAFE")
+
+        ws["A1"] = "Расписание"
+        ws["A1"].font = Font(bold=True, size=14)
+        ws["A2"] = title
+        ws["A3"] = str(schedule.date)
+
+        row = 5
+        ws.cell(row=row, column=1, value="Запуск").font = Font(bold=True)
+        ws.cell(row=row, column=1).fill = header_fill
+        ws.cell(row=row, column=1).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        for i, cobj in enumerate(courts, start=2):
+            name = str(getattr(cobj, "name", None) or f"Корт {getattr(cobj, 'index', i-1)}")
+            cell = ws.cell(row=row, column=i, value=name)
+            cell.font = Font(bold=True)
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        row += 1
+        run_index_to_obj = {int(r.index): r for r in runs}
+        current_run_idx = 1
+        while current_run_idx <= len(runs):
+            for br in breaks_by_pos.get(current_run_idx - 1, []):
+                t = br.time.strftime("%H:%M") if getattr(br, "time", None) else ""
+                msg = f"{t} — {br.text}".strip(" —")
+                ws.cell(row=row, column=1, value="")
+                if courts:
+                    ws.cell(row=row, column=2, value=msg)
+                    if len(courts) >= 2:
+                        ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=1 + len(courts))
+                ws.cell(row=row, column=2).fill = break_fill
+                ws.cell(row=row, column=2).alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+                row += 1
+
+            run_obj = run_index_to_obj.get(current_run_idx)
+            if run_obj is None:
+                current_run_idx += 1
+                continue
+
+            left = f"Запуск {run_obj.index}"
+            if getattr(run_obj, "start_time", None):
+                left += f"\nПлан: {run_obj.start_time.strftime('%H:%M')}"
+            ws.cell(row=row, column=1, value=left).alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+            for i, cobj in enumerate(courts, start=2):
+                slot = slots_map.get((run_obj.id, cobj.id))
+                txt = slot_cell_text(run_obj, slot)
+                c = ws.cell(row=row, column=i, value=txt)
+                c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+                try:
+                    if slot and slot.match and slot.match.status == Match.Status.LIVE:
+                        c.fill = live_fill
+                    elif slot and slot.match and slot.match.status == Match.Status.COMPLETED:
+                        c.fill = completed_fill
+                except Exception:
+                    pass
+
+            row += 1
+            current_run_idx += 1
+
+        for br in breaks_by_pos.get(len(runs), []):
+            t = br.time.strftime("%H:%M") if getattr(br, "time", None) else ""
+            msg = f"{t} — {br.text}".strip(" —")
+            ws.cell(row=row, column=1, value="")
+            if courts:
+                ws.cell(row=row, column=2, value=msg)
+                if len(courts) >= 2:
+                    ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=1 + len(courts))
+            ws.cell(row=row, column=2).fill = break_fill
+            ws.cell(row=row, column=2).alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+            row += 1
+
+        # Column widths (best-effort)
+        ws.column_dimensions["A"].width = 18
+        for i in range(2, 2 + max(1, len(courts))):
+            from openpyxl.utils import get_column_letter
+
+            ws.column_dimensions[get_column_letter(i)].width = 26
+
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        from django.http import HttpResponse
+
+        resp = HttpResponse(
+            buf.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        resp["Content-Disposition"] = f'attachment; filename="schedule_{schedule.id}.xlsx"'
+        return resp
+
+    @action(detail=True, methods=["get"], url_path="export/numbers", permission_classes=[IsAuthenticated])
+    def export_numbers(self, request, pk=None):
+        """Экспорт для Numbers (iPad/macOS): отдаём XLSX, который Numbers открывает и редактирует."""
+        # Переиспользуем XLSX-экспорт, но с другим именем файла.
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+        resp = self.export_xlsx(request, pk=pk)
+        try:
+            resp["Content-Disposition"] = f'attachment; filename="schedule_{schedule.id}_numbers.xlsx"'
+        except Exception:
+            pass
+        return resp
+
     @action(detail=True, methods=["get"], url_path="planned_times", permission_classes=[AllowAny])
     def planned_times(self, request, pk=None):
         schedule: Schedule = self.get_object()

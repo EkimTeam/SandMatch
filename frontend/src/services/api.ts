@@ -933,6 +933,16 @@ export const scheduleApi = {
     const resp = await api.get(`/schedules/${scheduleId}/export/docx/`, { responseType: 'blob' });
     return resp.data;
   },
+
+  exportXlsx: async (scheduleId: number): Promise<Blob> => {
+    const resp = await api.get(`/schedules/${scheduleId}/export/xlsx/`, { responseType: 'blob' });
+    return resp.data;
+  },
+
+  exportNumbers: async (scheduleId: number): Promise<Blob> => {
+    const resp = await api.get(`/schedules/${scheduleId}/export/numbers/`, { responseType: 'blob' });
+    return resp.data;
+  },
 };
 
 // API методы для игроков

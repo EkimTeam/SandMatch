@@ -76,7 +76,7 @@ export const SchedulePage: React.FC = () => {
   const [exporting, setExporting] = useState(false);
 
   const [showExportDialog, setShowExportDialog] = useState(false);
-  const [exportFormat, setExportFormat] = useState<'pdf' | 'docx'>('pdf');
+  const [exportFormat, setExportFormat] = useState<'pdf' | 'docx' | 'xlsx' | 'numbers'>('pdf');
 
   const [isDirty, setIsDirty] = useState(false);
   const [lastSavedSchedule, setLastSavedSchedule] = useState<ScheduleDTO | null>(null);
@@ -1900,23 +1900,36 @@ export const SchedulePage: React.FC = () => {
     }
   };
 
-  const doExport = async (format: 'pdf' | 'docx') => {
+  const doExport = async (format: 'pdf' | 'docx' | 'xlsx' | 'numbers') => {
     if (!schedule) return;
     setExporting(true);
     try {
-      const isDocx = format === 'docx';
-      const blob = isDocx ? await scheduleApi.exportDocx(schedule.id) : await scheduleApi.exportPdf(schedule.id);
-      const ext = isDocx ? 'docx' : 'pdf';
+      const blob =
+        format === 'pdf'
+          ? await scheduleApi.exportPdf(schedule.id)
+          : format === 'docx'
+            ? await scheduleApi.exportDocx(schedule.id)
+            : format === 'xlsx'
+              ? await scheduleApi.exportXlsx(schedule.id)
+              : await scheduleApi.exportNumbers(schedule.id);
+      const ext = format === 'docx' ? 'docx' : format === 'pdf' ? 'pdf' : 'xlsx';
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `schedule_${schedule.id}.${ext}`;
+      a.download = format === 'numbers' ? `schedule_${schedule.id}_numbers.${ext}` : `schedule_${schedule.id}.${ext}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 2000);
     } catch (e: any) {
-      const msg = format === 'docx' ? 'Не удалось экспортировать DOCX' : 'Не удалось экспортировать PDF';
+      const msg =
+        format === 'pdf'
+          ? 'Не удалось экспортировать PDF'
+          : format === 'docx'
+            ? 'Не удалось экспортировать DOCX'
+            : format === 'xlsx'
+              ? 'Не удалось экспортировать Excel'
+              : 'Не удалось экспортировать Numbers';
       alert(e?.response?.data?.detail || e?.message || msg);
     } finally {
       setExporting(false);
@@ -2014,7 +2027,7 @@ export const SchedulePage: React.FC = () => {
                     Экспорт...
                   </span>
                 ) : (
-                  'Экспорт PDF/DOCX'
+                  'Экспорт в файл'
                 )}
               </button>
             </>
@@ -2967,6 +2980,26 @@ export const SchedulePage: React.FC = () => {
                   disabled={exporting}
                 />
                 DOCX
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="radio"
+                  name="export-format"
+                  checked={exportFormat === 'xlsx'}
+                  onChange={() => setExportFormat('xlsx')}
+                  disabled={exporting}
+                />
+                Excel
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="radio"
+                  name="export-format"
+                  checked={exportFormat === 'numbers'}
+                  onChange={() => setExportFormat('numbers')}
+                  disabled={exporting}
+                />
+                Numbers
               </label>
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
