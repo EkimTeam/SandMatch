@@ -46,11 +46,58 @@ export const SchedulePage: React.FC = () => {
   const [matchDurationText, setMatchDurationText] = useState<string>('40');
   const [startTime, setStartTime] = useState<string>('10:00');
   const [tournamentSystem, setTournamentSystem] = useState<string | null>(null);
+  const [tournamentName, setTournamentName] = useState<string>('');
   const [rrTeamRowById, setRrTeamRowById] = useState<Map<number, number>>(new Map());
   const [rrTeamByGroupRow, setRrTeamByGroupRow] = useState<Map<string, any>>(new Map());
   const [rrPairByMatchId, setRrPairByMatchId] = useState<Map<number, [number, number]>>(new Map());
   const [kingLetterByGroupPlayerId, setKingLetterByGroupPlayerId] = useState<Map<string, string>>(new Map());
   const [surnameCounts, setSurnameCounts] = useState<Map<string, number>>(new Map());
+
+  const isProAmRoundRobin = useMemo(() => {
+    if (tournamentSystem !== 'round_robin') return false;
+    const name = (tournamentName || '').toLowerCase();
+    return name.includes('proam') || name.includes('проам');
+  }, [tournamentName, tournamentSystem]);
+
+  const proAmGroupLetter = useMemo(() => {
+    const letters = [
+      'А',
+      'Б',
+      'В',
+      'Г',
+      'Д',
+      'Е',
+      'Ж',
+      'З',
+      'И',
+      'Й',
+      'К',
+      'Л',
+      'М',
+      'Н',
+      'О',
+      'П',
+      'Р',
+      'С',
+      'Т',
+      'У',
+      'Ф',
+      'Х',
+      'Ц',
+      'Ч',
+      'Ш',
+      'Щ',
+      'Э',
+      'Ю',
+      'Я',
+    ];
+
+    return (groupIndex: any): string => {
+      const n = Number(groupIndex);
+      if (!Number.isFinite(n) || n <= 0) return String(groupIndex ?? '');
+      return n <= letters.length ? letters[n - 1] : String(groupIndex);
+    };
+  }, []);
 
   const [isBacklogCollapsed, setIsBacklogCollapsed] = useState<boolean>(false);
 
@@ -76,7 +123,7 @@ export const SchedulePage: React.FC = () => {
   const [exporting, setExporting] = useState(false);
 
   const [showExportDialog, setShowExportDialog] = useState(false);
-  const [exportFormat, setExportFormat] = useState<'pdf' | 'docx'>('pdf');
+  const [exportFormat, setExportFormat] = useState<'pdf' | 'docx' | 'xlsx' | 'numbers'>('pdf');
 
   const [isDirty, setIsDirty] = useState(false);
   const [lastSavedSchedule, setLastSavedSchedule] = useState<ScheduleDTO | null>(null);
@@ -394,7 +441,11 @@ export const SchedulePage: React.FC = () => {
   const matchMetaLabel = (m: any): string => {
     if (!m) return '';
     const gi = m?.group_index;
-    const group = gi !== null && gi !== undefined && gi !== '' ? `гр.${gi}` : '';
+
+    const group =
+      gi !== null && gi !== undefined && gi !== ''
+        ? `гр.${isProAmRoundRobin ? proAmGroupLetter(gi) : gi}`
+        : '';
 
     if (tournamentSystem === 'round_robin') {
       const t1id = m?.team_1?.id;
@@ -407,7 +458,13 @@ export const SchedulePage: React.FC = () => {
       // Draft RR matches may have no team ids. In this case backend encodes virtual pairing
       // into round_name like "гр.1 • 2-3".
       const rn = String(m?.round_name || '').trim();
-      if (isDraftMode && rn) return rn;
+      if (isDraftMode && rn) {
+        if (isProAmRoundRobin) {
+          const replaced = rn.replace(/\bгр\.(\d+)\b/g, (_m, d) => `гр.${proAmGroupLetter(d)}`);
+          return replaced;
+        }
+        return rn;
+      }
       return group;
     }
     if (tournamentSystem === 'king') {
@@ -445,53 +502,6 @@ export const SchedulePage: React.FC = () => {
       return String(m?.round_name || '').trim() || `Раунд ${m?.round_index ?? ''}`.trim();
     }
     return group;
-  };
-
-  const renderMatchTiny = (m: any) => {
-    if (isDraftMode) {
-      if (isDraftPreviewMode && tournamentSystem === 'round_robin') {
-        const gi = m?.group_index;
-        const group = gi != null && gi !== '' ? Number(gi) : NaN;
-        const pair = m?.id != null ? rrPairByMatchId.get(Number(m.id)) : undefined;
-        const aPos = pair ? Number(pair[0]) : NaN;
-        const bPos = pair ? Number(pair[1]) : NaN;
-
-        const ta = Number.isFinite(group) && Number.isFinite(aPos) ? rrTeamByGroupRow.get(`rr:${group}:${aPos}`) : null;
-        const tb = Number.isFinite(group) && Number.isFinite(bPos) ? rrTeamByGroupRow.get(`rr:${group}:${bPos}`) : null;
-
-        const s1 = teamSurnames(ta);
-        const s2 = teamSurnames(tb);
-        const a = s1.length ? s1.join(' / ') : 'TBD';
-        const b = s2.length ? s2.join(' / ') : 'TBD';
-
-        return (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 1, lineHeight: 1.05 }}>
-            <div style={{ fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {Number.isFinite(group) && pair ? `гр.${group} • ${aPos}-${bPos}` : matchMetaLabel(m) || (m?.id ? `Матч #${m.id}` : 'Матч')}
-            </div>
-            <div style={{ fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a}</div>
-            <div style={{ fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b}</div>
-          </div>
-        );
-      }
-      return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 1, lineHeight: 1.05 }}>
-          <div style={{ fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {matchMetaLabel(m) || (m?.id ? `Матч #${m.id}` : 'Матч')}
-          </div>
-        </div>
-      );
-    }
-    const s1 = tournamentSystem === 'king' ? kingTeamPlayerLabels(m?.team_1) : teamSurnames(m?.team_1);
-    const s2 = tournamentSystem === 'king' ? kingTeamPlayerLabels(m?.team_2) : teamSurnames(m?.team_2);
-    const a = s1.length ? s1.join(' / ') : 'TBD';
-    const b = s2.length ? s2.join(' / ') : 'TBD';
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 1, lineHeight: 1.05 }}>
-        <div style={{ fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a}</div>
-        <div style={{ fontSize: 9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b}</div>
-      </div>
-    );
   };
 
   const matchScoreLabel = (m: any): string => {
@@ -867,7 +877,10 @@ export const SchedulePage: React.FC = () => {
       setLiveState(new Map());
       return;
     }
-    if (viewMode !== 'timeline') return;
+    if (viewMode !== 'timeline' || !showFact) {
+      setLiveState(new Map());
+      return;
+    }
 
     let stopped = false;
     let timer: any = null;
@@ -890,7 +903,7 @@ export const SchedulePage: React.FC = () => {
       } catch {
         // noop
       } finally {
-        if (!stopped) timer = setTimeout(tick, 12000);
+        if (!stopped) timer = setTimeout(tick, 60000);
       }
     };
 
@@ -899,7 +912,7 @@ export const SchedulePage: React.FC = () => {
       stopped = true;
       if (timer) clearTimeout(timer);
     };
-  }, [schedule?.id, viewMode]);
+  }, [schedule?.id, viewMode, showFact]);
 
   const parseHmToDate = (dateStr: string, hm: string): Date | null => {
     if (!dateStr || !hm) return null;
@@ -1146,6 +1159,19 @@ export const SchedulePage: React.FC = () => {
       .filter(Boolean);
 
     return surnames.length ? surnames.slice(0, 2) : ['TBD'];
+  };
+
+  const renderMatchTiny = (m: any) => {
+    const s1 = tournamentSystem === 'king' ? kingTeamPlayerLabels(m?.team_1) : teamSurnames(m?.team_1);
+    const s2 = tournamentSystem === 'king' ? kingTeamPlayerLabels(m?.team_2) : teamSurnames(m?.team_2);
+    const a = s1.length ? s1.join(' / ') : 'TBD';
+    const b = s2.length ? s2.join(' / ') : 'TBD';
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 1, lineHeight: 1.05 }}>
+        <div style={{ fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a}</div>
+        <div style={{ fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b}</div>
+      </div>
+    );
   };
 
   const renderMatchCompact = (m: any, variant: 'backlog' | 'schedule') => {
@@ -1568,6 +1594,7 @@ export const SchedulePage: React.FC = () => {
     try {
       const t = await tournamentApi.getById(tournamentId);
       if (t?.system) setTournamentSystem(String(t.system));
+      if (t?.name) setTournamentName(String(t.name));
 
       // For RR label like "1-2" we need row_index of teams (same logic as in TournamentDetailPage)
       const nextMap = new Map<number, number>();
@@ -1900,23 +1927,36 @@ export const SchedulePage: React.FC = () => {
     }
   };
 
-  const doExport = async (format: 'pdf' | 'docx') => {
+  const doExport = async (format: 'pdf' | 'docx' | 'xlsx' | 'numbers') => {
     if (!schedule) return;
     setExporting(true);
     try {
-      const isDocx = format === 'docx';
-      const blob = isDocx ? await scheduleApi.exportDocx(schedule.id) : await scheduleApi.exportPdf(schedule.id);
-      const ext = isDocx ? 'docx' : 'pdf';
+      const blob =
+        format === 'pdf'
+          ? await scheduleApi.exportPdf(schedule.id)
+          : format === 'docx'
+            ? await scheduleApi.exportDocx(schedule.id)
+            : format === 'xlsx'
+              ? await scheduleApi.exportXlsx(schedule.id)
+              : await scheduleApi.exportNumbers(schedule.id);
+      const ext = format === 'docx' ? 'docx' : format === 'pdf' ? 'pdf' : 'xlsx';
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `schedule_${schedule.id}.${ext}`;
+      a.download = format === 'numbers' ? `schedule_${schedule.id}_numbers.${ext}` : `schedule_${schedule.id}.${ext}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 2000);
     } catch (e: any) {
-      const msg = format === 'docx' ? 'Не удалось экспортировать DOCX' : 'Не удалось экспортировать PDF';
+      const msg =
+        format === 'pdf'
+          ? 'Не удалось экспортировать PDF'
+          : format === 'docx'
+            ? 'Не удалось экспортировать DOCX'
+            : format === 'xlsx'
+              ? 'Не удалось экспортировать Excel'
+              : 'Не удалось экспортировать Numbers';
       alert(e?.response?.data?.detail || e?.message || msg);
     } finally {
       setExporting(false);
@@ -2014,7 +2054,7 @@ export const SchedulePage: React.FC = () => {
                     Экспорт...
                   </span>
                 ) : (
-                  'Экспорт PDF/DOCX'
+                  'Экспорт в файл'
                 )}
               </button>
             </>
@@ -2967,6 +3007,26 @@ export const SchedulePage: React.FC = () => {
                   disabled={exporting}
                 />
                 DOCX
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="radio"
+                  name="export-format"
+                  checked={exportFormat === 'xlsx'}
+                  onChange={() => setExportFormat('xlsx')}
+                  disabled={exporting}
+                />
+                Excel
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="radio"
+                  name="export-format"
+                  checked={exportFormat === 'numbers'}
+                  onChange={() => setExportFormat('numbers')}
+                  disabled={exporting}
+                />
+                Numbers
               </label>
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>

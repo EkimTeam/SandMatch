@@ -153,6 +153,47 @@ export const TournamentDetailPage: React.FC = () => {
     const name = (t?.name || '').toLowerCase();
     return name.includes('proam') || name.includes('проам');
   }, [t?.name]);
+
+  const isProAmRoundRobin = useMemo(() => {
+    return isProAmTournament && (t?.system === 'round_robin');
+  }, [isProAmTournament, t?.system]);
+
+  const proAmGroupLetter = useCallback((groupIndex1Based: number) => {
+    const letters = [
+      'А',
+      'Б',
+      'В',
+      'Г',
+      'Д',
+      'Е',
+      'Ж',
+      'З',
+      'И',
+      'Й',
+      'К',
+      'Л',
+      'М',
+      'Н',
+      'О',
+      'П',
+      'Р',
+      'С',
+      'Т',
+      'У',
+      'Ф',
+      'Х',
+      'Ц',
+      'Ч',
+      'Ш',
+      'Щ',
+      'Э',
+      'Ю',
+      'Я',
+    ];
+    const n = Number(groupIndex1Based);
+    if (!Number.isFinite(n) || n <= 0) return String(groupIndex1Based);
+    return n <= letters.length ? letters[n - 1] : String(groupIndex1Based);
+  }, []);
   const [textResults, setTextResults] = useState<string>('');
   const [loadingTextResults, setLoadingTextResults] = useState(false);
   const [showAnnouncementModal, setShowAnnouncementModal] = useState(false);
@@ -2624,6 +2665,7 @@ export const TournamentDetailPage: React.FC = () => {
             {Array.from({ length: t.groups_count || 1 }, (_, gi) => {
               const groupIndex = gi;
               const groupName = `Группа ${gi + 1}`;
+              const displayGroupName = isProAmRoundRobin ? `Группа ${proAmGroupLetter(gi + 1)}` : groupName;
               
               // Вычисляем размер группы с учетом остатка
               const totalParticipants = t.planned_participants || 0;
@@ -2638,7 +2680,7 @@ export const TournamentDetailPage: React.FC = () => {
                 <div key={groupIndex} style={{ marginBottom: 24 }}>
                   <SimplifiedGroupTable
                     groupIndex={groupIndex}
-                    groupName={groupName}
+                    groupName={displayGroupName}
                     plannedParticipants={plannedPerGroup}
                     dropSlots={groupSlots}
                     onDrop={handleDropParticipant}
@@ -2791,7 +2833,9 @@ export const TournamentDetailPage: React.FC = () => {
       {groups.map((g, gi) => (
         <div key={g.idx} style={{ marginBottom: 22 }}>
           <div style={{ marginBottom: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <strong>Группа {g.idx}</strong>
+            <strong>
+              {isProAmRoundRobin ? `Группа ${proAmGroupLetter(g.idx)}` : `Группа ${g.idx}`}
+            </strong>
             <button data-export-exclude="true" className={`toggle ${showTech[0] ? 'active' : ''}`} onClick={toggleTech}>
               Победы/Сеты/Сеты соот./Геймы соот.
             </button>
