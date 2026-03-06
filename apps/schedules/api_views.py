@@ -481,15 +481,34 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         if not match_ids:
             return Response({"ok": True, "matches": []})
 
-        qs = Match.objects.filter(id__in=match_ids).only("id", "status", "started_at", "finished_at")
+        qs = (
+            Match.objects.filter(id__in=match_ids)
+            .prefetch_related("sets")
+            .only("id", "status", "started_at", "finished_at")
+        )
         items = []
         for m in qs:
+            sets = []
+            try:
+                for s in m.sets.all():
+                    sets.append(
+                        {
+                            "games_1": s.games_1,
+                            "games_2": s.games_2,
+                            "tb_1": s.tb_1,
+                            "tb_2": s.tb_2,
+                            "is_tiebreak_only": getattr(s, "is_tiebreak_only", False),
+                        }
+                    )
+            except Exception:
+                sets = []
             items.append(
                 {
                     "id": m.id,
                     "status": m.status,
                     "started_at": m.started_at,
                     "finished_at": m.finished_at,
+                    "sets": sets,
                 }
             )
         return Response({"ok": True, "matches": items})
