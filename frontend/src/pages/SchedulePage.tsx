@@ -877,7 +877,10 @@ export const SchedulePage: React.FC = () => {
       setLiveState(new Map());
       return;
     }
-    if (viewMode !== 'timeline') return;
+    if (viewMode !== 'timeline' || !showFact) {
+      setLiveState(new Map());
+      return;
+    }
 
     let stopped = false;
     let timer: any = null;
@@ -900,7 +903,7 @@ export const SchedulePage: React.FC = () => {
       } catch {
         // noop
       } finally {
-        if (!stopped) timer = setTimeout(tick, 12000);
+        if (!stopped) timer = setTimeout(tick, 60000);
       }
     };
 
@@ -909,7 +912,7 @@ export const SchedulePage: React.FC = () => {
       stopped = true;
       if (timer) clearTimeout(timer);
     };
-  }, [schedule?.id, viewMode]);
+  }, [schedule?.id, viewMode, showFact]);
 
   const parseHmToDate = (dateStr: string, hm: string): Date | null => {
     if (!dateStr || !hm) return null;
