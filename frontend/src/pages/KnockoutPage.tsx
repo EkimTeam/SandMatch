@@ -53,6 +53,11 @@ export const KnockoutPage: React.FC = () => {
   const bracketExportRef = useRef<HTMLDivElement | null>(null);
   const canDeleteTournament = !!(tMeta && (tMeta as any).can_delete);
 
+  const isProAmTournament = useMemo(() => {
+    const name = String((tMeta as any)?.name || '').toLowerCase();
+    return name.includes('proam') || name.includes('проам');
+  }, [(tMeta as any)?.name]);
+
   // Состояние для Drag & Drop
   const [dragDropState, setDragDropState] = useState<DragDropState>({
     participants: [],
@@ -1078,6 +1083,7 @@ export const KnockoutPage: React.FC = () => {
   const handleAutoSeed = useCallback(async () => {
     if (!canManageStructure) return;
     if (!tournamentId || !bracketId) return;
+    if (!confirm('Автоматически расставить участников в сетке?')) return;
     try {
       await tournamentApi.seedBracket(tournamentId, bracketId);
       // Загружаем только сетку - useEffect автоматически обновит isInBracket для участников
@@ -1085,6 +1091,19 @@ export const KnockoutPage: React.FC = () => {
     } catch (error) {
       console.error('Failed to auto seed:', error);
       alert('Не удалось выполнить автопосев');
+    }
+  }, [tournamentId, bracketId, loadDraw, canManageStructure]);
+
+  const handleAutoSeedFirstPlayer = useCallback(async () => {
+    if (!canManageStructure) return;
+    if (!tournamentId || !bracketId) return;
+    if (!confirm('Автоматически расставить участников в сетке (посев по 1му игроку)?')) return;
+    try {
+      await tournamentApi.seedBracket(tournamentId, bracketId, { first_player: true });
+      await loadDraw();
+    } catch (error) {
+      console.error('Failed to auto seed (first player):', error);
+      alert('Не удалось выполнить посев');
     }
   }, [tournamentId, bracketId, loadDraw, canManageStructure]);
 
@@ -1428,6 +1447,7 @@ export const KnockoutPage: React.FC = () => {
             onAddParticipant={() => setPickerOpen(true)}
             onAddFromPreviousStage={tMeta?.parent_tournament ? () => setShowAddFromStageModal(true) : undefined}
             onAutoSeed={handleAutoSeed}
+            onAutoSeedFirstPlayer={(tMeta?.status === 'created' && isProAmTournament) ? handleAutoSeedFirstPlayer : undefined}
             onClearTables={handleClearBracket}
             maxParticipants={tMeta?.planned_participants || 32}
             canAddMore={true}
