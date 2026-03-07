@@ -133,6 +133,7 @@ export const TournamentDetailPage: React.FC = () => {
   const [checkingScheduleForStart, setCheckingScheduleForStart] = useState(false);
   const [pendingStart, setPendingStart] = useState(false);
   const [hasDraftSchedule, setHasDraftSchedule] = useState<boolean>(false);
+  const [hasOnlineSchedule, setHasOnlineSchedule] = useState<boolean>(false);
   const [creatingOfficialFromDraft, setCreatingOfficialFromDraft] = useState<boolean>(false);
   const [showTech, setShowTech] = useState<boolean[]>([]); // по группам
   const [showFullName, setShowFullName] = useState(false);
@@ -265,6 +266,27 @@ export const TournamentDetailPage: React.FC = () => {
       setSaving(false);
     }
   };
+
+  useEffect(() => {
+    if (!t?.id) {
+      setHasOnlineSchedule(false);
+      return;
+    }
+    let canceled = false;
+    (async () => {
+      try {
+        const res: any = await tournamentApi.getSchedule(Number(t.id));
+        if (canceled) return;
+        setHasOnlineSchedule(!!res?.schedule);
+      } catch {
+        if (canceled) return;
+        setHasOnlineSchedule(false);
+      }
+    })();
+    return () => {
+      canceled = true;
+    };
+  }, [t?.id]);
 
   const handleAutoSeedFirstPlayer = async () => {
     if (!t) return;
@@ -3367,6 +3389,11 @@ export const TournamentDetailPage: React.FC = () => {
 
       {/* Нижняя панель действий (в выгрузку не включаем) */}
       <div style={{ marginTop: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }} data-export-exclude="true">
+        {t && hasOnlineSchedule && (
+          <button className="btn" onClick={() => nav(`/tournaments/${t.id}/schedule?view=timeline&fact=1`)} disabled={saving}>
+            Расписание онлайн
+          </button>
+        )}
         {t && canManageTournament && t.status === 'created' && (
           <button
             className="btn"

@@ -63,6 +63,7 @@ export const KingPage: React.FC = () => {
   const [t, setT] = useState<TournamentDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showFullName, setShowFullName] = useState(false);
+  const [hasOnlineSchedule, setHasOnlineSchedule] = useState<boolean>(false);
   
   const [dragDropState, setDragDropState] = useState<DragDropState>({
     participants: [],
@@ -105,6 +106,27 @@ export const KingPage: React.FC = () => {
   const [showTextResultsModal, setShowTextResultsModal] = useState(false);
   const [textResults, setTextResults] = useState<string>('');
   const [loadingTextResults, setLoadingTextResults] = useState(false);
+
+  useEffect(() => {
+    if (!t?.id) {
+      setHasOnlineSchedule(false);
+      return;
+    }
+    let canceled = false;
+    (async () => {
+      try {
+        const res: any = await tournamentApi.getSchedule(Number(t.id));
+        if (canceled) return;
+        setHasOnlineSchedule(!!res?.schedule);
+      } catch {
+        if (canceled) return;
+        setHasOnlineSchedule(false);
+      }
+    })();
+    return () => {
+      canceled = true;
+    };
+  }, [t?.id]);
 
   const teamRatingMap = useMemo(() => {
     const m = new Map<number, { rating: number; label: string }>();
@@ -1937,6 +1959,11 @@ export const KingPage: React.FC = () => {
 
         {/* Кнопки в подвале */}
         <div style={{ marginTop: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }} data-export-exclude="true">
+          {t && hasOnlineSchedule && (
+            <button className="btn" onClick={() => nav(`/tournaments/${t.id}/schedule?view=timeline&fact=1`)} disabled={saving}>
+              Расписание онлайн
+            </button>
+          )}
           {canManageTournament && t.status === 'active' && (
             <button className="btn" onClick={() => nav(`/tournaments/${t.id}/schedule`)} disabled={saving}>
               Расписание

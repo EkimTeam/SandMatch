@@ -52,11 +52,33 @@ export const KnockoutPage: React.FC = () => {
   const exportRef = useRef<HTMLDivElement | null>(null);
   const bracketExportRef = useRef<HTMLDivElement | null>(null);
   const canDeleteTournament = !!(tMeta && (tMeta as any).can_delete);
+  const [hasOnlineSchedule, setHasOnlineSchedule] = useState<boolean>(false);
 
   const isProAmTournament = useMemo(() => {
     const name = String((tMeta as any)?.name || '').toLowerCase();
     return name.includes('proam') || name.includes('проам');
   }, [(tMeta as any)?.name]);
+
+  useEffect(() => {
+    if (!tMeta?.id) {
+      setHasOnlineSchedule(false);
+      return;
+    }
+    let canceled = false;
+    (async () => {
+      try {
+        const res: any = await tournamentApi.getSchedule(Number(tMeta.id));
+        if (canceled) return;
+        setHasOnlineSchedule(!!res?.schedule);
+      } catch {
+        if (canceled) return;
+        setHasOnlineSchedule(false);
+      }
+    })();
+    return () => {
+      canceled = true;
+    };
+  }, [tMeta?.id]);
 
   // Состояние для Drag & Drop
   const [dragDropState, setDragDropState] = useState<DragDropState>({
@@ -1882,6 +1904,11 @@ export const KnockoutPage: React.FC = () => {
 
       {/* Нижние общие кнопки */}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-start', padding: '16px', borderTop: '1px solid #eee' }} data-export-exclude="true">
+        {tMeta && hasOnlineSchedule && (
+          <button className="btn" disabled={saving} onClick={() => navigate(`/tournaments/${tMeta.id}/schedule?view=timeline&fact=1`)}>
+            Расписание онлайн
+          </button>
+        )}
         {canManageStructure && tMeta?.status === 'created' && (
           <button className="btn" disabled={saving} onClick={handleEditSettings}>Поменять настройки турнира</button>
         )}
