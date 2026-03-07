@@ -138,8 +138,24 @@ export const SchedulePage: React.FC = () => {
       }
   >(null);
 
-  const [viewMode, setViewMode] = useState<'grid' | 'timeline'>('grid');
-  const [showFact, setShowFact] = useState<boolean>(true);
+  const [viewMode, setViewMode] = useState<'grid' | 'timeline'>(() => {
+    try {
+      const sp = new URLSearchParams(location.search);
+      const raw = (sp.get('view') || '').toLowerCase();
+      return raw === 'timeline' ? 'timeline' : 'grid';
+    } catch {
+      return 'grid';
+    }
+  });
+  const [showFact, setShowFact] = useState<boolean>(() => {
+    try {
+      const sp = new URLSearchParams(location.search);
+      const raw = (sp.get('fact') || '').toLowerCase();
+      return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on' || raw === 'y';
+    } catch {
+      return true;
+    }
+  });
   const [liveState, setLiveState] = useState<
     Map<
       number,
@@ -157,6 +173,12 @@ export const SchedulePage: React.FC = () => {
       }
     >
   >(new Map());
+
+  useEffect(() => {
+    if (canManage) return;
+    setViewMode('timeline');
+    setShowFact(true);
+  }, [canManage]);
 
   const conflictsSlotIds = useMemo(() => {
     const ids = new Set<number>();
@@ -2020,64 +2042,66 @@ export const SchedulePage: React.FC = () => {
   }
 
   return (
-    <div className="container" style={{ maxWidth: 1400 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }} data-export-exclude="true">
-          <button className="btn" onClick={() => nav(`/tournaments/${tournamentId}`)}>
-            Вернуться в турнир
-          </button>
-          {schedule && canManage && (
-            <button
-              className="btn"
-              onClick={handleDeleteSchedule}
-              disabled={saving}
-              style={{ background: '#dc3545', borderColor: '#dc3545' }}
-            >
-              {isDraftMode ? 'Удалить черновик' : 'Удалить расписание'}
+    <div className="container" style={{ maxWidth: '100%', width: '100%' }}>
+      {canManage && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }} data-export-exclude="true">
+            <button className="btn" onClick={() => nav(`/tournaments/${tournamentId}`)}>
+              Вернуться в турнир
             </button>
-          )}
-        </div>
-        {schedule && (
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <button
-              className="btn"
-              onClick={() => setViewMode('grid')}
-              disabled={viewMode === 'grid'}
-            >
-              Сетка
-            </button>
-            <button
-              className="btn"
-              onClick={() => setViewMode('timeline')}
-              disabled={viewMode === 'timeline'}
-            >
-              Таймлайн
-            </button>
-            {viewMode === 'timeline' && (
-              <button className="btn" onClick={() => setShowFact(v => !v)}>
-                {showFact ? 'Факт: вкл' : 'Факт: выкл'}
+            {schedule && canManage && (
+              <button
+                className="btn"
+                onClick={handleDeleteSchedule}
+                disabled={saving}
+                style={{ background: '#dc3545', borderColor: '#dc3545' }}
+              >
+                {isDraftMode ? 'Удалить черновик' : 'Удалить расписание'}
               </button>
             )}
           </div>
-        )}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-          {schedule && viewMode === 'grid' && (
-            <>
-              <button className="btn" disabled={saving || !canManage} onClick={handleSave}>Сохранить</button>
-              <button className="btn" disabled={exporting} onClick={handleExport}>
-                {exporting ? (
-                  <span className="sm-btn-loading">
-                    <span className="sm-spinner" aria-hidden="true" />
-                    Экспорт...
-                  </span>
-                ) : (
-                  'Экспорт в файл'
-                )}
+          {schedule && (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <button
+                className="btn"
+                onClick={() => setViewMode('grid')}
+                disabled={viewMode === 'grid'}
+              >
+                Сетка
               </button>
-            </>
+              <button
+                className="btn"
+                onClick={() => setViewMode('timeline')}
+                disabled={viewMode === 'timeline'}
+              >
+                Таймлайн
+              </button>
+              {viewMode === 'timeline' && (
+                <button className="btn" onClick={() => setShowFact(v => !v)}>
+                  {showFact ? 'Факт: вкл' : 'Факт: выкл'}
+                </button>
+              )}
+            </div>
           )}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+            {schedule && viewMode === 'grid' && (
+              <>
+                <button className="btn" disabled={saving || !canManage} onClick={handleSave}>Сохранить</button>
+                <button className="btn" disabled={exporting} onClick={handleExport}>
+                  {exporting ? (
+                    <span className="sm-btn-loading">
+                      <span className="sm-spinner" aria-hidden="true" />
+                      Экспорт...
+                    </span>
+                  ) : (
+                    'Экспорт в файл'
+                  )}
+                </button>
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {!schedule && (
         <div className="card">
@@ -2809,8 +2833,8 @@ export const SchedulePage: React.FC = () => {
       )}
 
       {schedule && viewMode === 'timeline' && timelineData && (
-        <div className="card" style={{ overflowX: 'auto' }}>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+        <div className="card" style={{ overflowX: 'auto', width: '100%' }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', width: '100%' }}>
             <div style={{ minWidth: 90 }}>
               <div style={{ fontWeight: 700, marginBottom: 8 }}>Время</div>
               <div
@@ -2848,7 +2872,14 @@ export const SchedulePage: React.FC = () => {
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${timelineData.courts.length}, 220px)`, gap: 10 }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: `repeat(${timelineData.courts.length}, minmax(180px, 1fr))`,
+                gap: 10,
+                width: '100%',
+              }}
+            >
               {timelineData.perCourt.map(col => {
                 const height = Math.max(300, (timelineData.endMs - timelineData.startMs) / (15 * 60 * 1000) * 28);
                 return (
