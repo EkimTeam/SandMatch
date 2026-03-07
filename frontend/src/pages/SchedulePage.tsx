@@ -2008,6 +2008,17 @@ export const SchedulePage: React.FC = () => {
     setShowExportDialog(true);
   };
 
+  const handleCopyShareLink = async () => {
+    if (!Number.isFinite(tournamentId)) return;
+    const url = `${window.location.origin}/tournaments/${tournamentId}/schedule?view=timeline&fact=1`;
+    try {
+      await navigator.clipboard.writeText(url);
+      alert('Ссылка скопирована');
+    } catch {
+      window.prompt('Скопируйте ссылку:', url);
+    }
+  };
+
   const handleDeleteSchedule = async () => {
     if (!schedule || !canManage) return;
     const label = isDraftMode ? 'черновик расписания' : 'расписание';
@@ -2077,9 +2088,14 @@ export const SchedulePage: React.FC = () => {
                 Таймлайн
               </button>
               {viewMode === 'timeline' && (
-                <button className="btn" onClick={() => setShowFact(v => !v)}>
-                  {showFact ? 'Факт: вкл' : 'Факт: выкл'}
-                </button>
+                <>
+                  <button className="btn" onClick={() => setShowFact(v => !v)}>
+                    {showFact ? 'Факт: вкл' : 'Факт: выкл'}
+                  </button>
+                  <button className="btn" onClick={handleCopyShareLink} title="Скопировать ссылку">
+                    🔗
+                  </button>
+                </>
               )}
             </div>
           )}
