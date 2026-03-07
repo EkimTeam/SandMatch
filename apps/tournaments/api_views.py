@@ -331,7 +331,6 @@ class TournamentViewSet(viewsets.ModelViewSet):
             "create_stage",
             "update_stage_settings",
             "complete_master",
-            "schedule",
             "schedule_generate",
         }:
             return [IsTournamentCreatorOrAdmin()]
