@@ -54,6 +54,13 @@ export const KnockoutPage: React.FC = () => {
   const canDeleteTournament = !!(tMeta && (tMeta as any).can_delete);
   const [hasOnlineSchedule, setHasOnlineSchedule] = useState<boolean>(false);
 
+  const hasLiveMatches = useMemo(() => {
+    const rounds = (data as any)?.rounds;
+    if (!Array.isArray(rounds)) return false;
+    const matches = rounds.flatMap((r: any) => (Array.isArray(r?.matches) ? r.matches : []));
+    return matches.some((m: any) => String(m?.status || '').toLowerCase() === 'live');
+  }, [data]);
+
   const isProAmTournament = useMemo(() => {
     const name = String((tMeta as any)?.name || '').toLowerCase();
     return name.includes('proam') || name.includes('проам');
@@ -1904,7 +1911,7 @@ export const KnockoutPage: React.FC = () => {
 
       {/* Нижние общие кнопки */}
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-start', padding: '16px', borderTop: '1px solid #eee' }} data-export-exclude="true">
-        {tMeta && hasOnlineSchedule && (
+        {tMeta && hasOnlineSchedule && hasLiveMatches && (
           <button className="btn" disabled={saving} onClick={() => navigate(`/tournaments/${tMeta.id}/schedule?view=timeline&fact=1`)}>
             Расписание онлайн
           </button>

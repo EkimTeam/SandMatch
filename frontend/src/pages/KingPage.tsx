@@ -64,6 +64,12 @@ export const KingPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [showFullName, setShowFullName] = useState(false);
   const [hasOnlineSchedule, setHasOnlineSchedule] = useState<boolean>(false);
+
+  const hasLiveMatches = useMemo(() => {
+    const matches: any[] = (t as any)?.matches || [];
+    if (!Array.isArray(matches)) return false;
+    return matches.some((m: any) => String(m?.status || '').toLowerCase() === 'live');
+  }, [t]);
   
   const [dragDropState, setDragDropState] = useState<DragDropState>({
     participants: [],
@@ -1959,7 +1965,7 @@ export const KingPage: React.FC = () => {
 
         {/* Кнопки в подвале */}
         <div style={{ marginTop: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }} data-export-exclude="true">
-          {t && hasOnlineSchedule && (
+          {t && hasOnlineSchedule && hasLiveMatches && (
             <button className="btn" onClick={() => nav(`/tournaments/${t.id}/schedule?view=timeline&fact=1`)} disabled={saving}>
               Расписание онлайн
             </button>

@@ -90,6 +90,7 @@ class MultiStageService:
             set_format_id=set_format_id or master.set_format_id,
             planned_participants=participants_count if participants_count is not None else master.planned_participants,
             rating_coefficient=master.rating_coefficient,
+            rating_visible=master.rating_visible,
             venue=master.venue,
             created_by=created_by_user or master.created_by,
             status=Tournament.Status.CREATED,
