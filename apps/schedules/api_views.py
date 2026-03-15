@@ -14,8 +14,9 @@ from apps.tournaments.models import Tournament
 from apps.accounts.permissions import IsTournamentCreatorOrAdmin, Role, _get_user_role
 
 from django.db import transaction
+from django.db.models import Max
 
-from .models import Schedule
+from .models import Schedule, ScheduleCourt, ScheduleScope, ScheduleScopeCourt
 from .serializers import ScheduleSerializer
 
 
@@ -25,7 +26,43 @@ class ScheduleViewSet(viewsets.ModelViewSet):
     permission_classes = [AllowAny]
 
     def _scoped_tournaments(self, schedule: Schedule):
-        return [s.tournament for s in schedule.scopes.select_related("tournament").all() if s.tournament]
+        return [
+            s.tournament
+            for s in schedule.scopes.select_related("tournament").all().order_by("order", "id")
+            if s.tournament
+        ]
+
+    def _ensure_can_use_tournament_in_schedule(self, request, schedule: Schedule, tournament: Tournament) -> None:
+        user = getattr(request, "user", None)
+        if not user or not getattr(user, "is_authenticated", False):
+            raise PermissionDenied("Authentication required")
+
+        role = _get_user_role(user)
+        if role == Role.ADMIN or getattr(user, "is_staff", False) or getattr(user, "is_superuser", False):
+            return
+
+        if getattr(tournament, "created_by_id", None) != getattr(user, "id", None):
+            raise PermissionDenied("You do not have permission to use this tournament in schedule")
+
+    def _validate_schedule_scope_tournament(self, schedule: Schedule, tournament: Tournament) -> None:
+        # 1) Дата должна совпадать
+        if getattr(schedule, "date", None) and getattr(tournament, "date", None) and schedule.date != tournament.date:
+            raise PermissionDenied("Tournament date must match schedule date")
+
+        # 2) Статус должен совпадать правилам draft/official
+        if schedule.is_draft:
+            if tournament.status != Tournament.Status.CREATED:
+                raise PermissionDenied("Draft schedule can include only created tournaments")
+        else:
+            if tournament.status != Tournament.Status.ACTIVE:
+                raise PermissionDenied("Official schedule can include only active tournaments")
+
+        # 3) Все турниры в расписании должны быть одного статуса (created для draft, active для official)
+        for t in self._scoped_tournaments(schedule):
+            if schedule.is_draft and t.status != Tournament.Status.CREATED:
+                raise PermissionDenied("Draft schedule can include only created tournaments")
+            if (not schedule.is_draft) and t.status != Tournament.Status.ACTIVE:
+                raise PermissionDenied("Official schedule can include only active tournaments")
 
     def _ensure_can_view_schedule(self, request, schedule: Schedule) -> None:
         tournaments = self._scoped_tournaments(schedule)
@@ -52,9 +89,241 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                 raise PermissionDenied("You do not have permission to manage this schedule")
 
     def get_permissions(self):
-        if self.action in {"create", "update", "partial_update", "destroy", "save"}:
+        if self.action in {
+            "create",
+            "update",
+            "partial_update",
+            "destroy",
+            "save",
+            "scopes_add",
+            "scopes_remove",
+            "scopes_reorder",
+            "scopes_update",
+        }:
             return [IsAuthenticated()]
         return super().get_permissions()
+
+    def _validate_bound_courts(self, schedule: Schedule, scope: ScheduleScope, court_ids: list[int]) -> None:
+        # Все корты должны принадлежать расписанию
+        courts = list(ScheduleCourt.objects.filter(schedule=schedule, id__in=court_ids).values_list("id", flat=True))
+        if len(courts) != len(set(court_ids)):
+            raise PermissionDenied("Some courts do not belong to this schedule")
+
+        # Корты не должны быть привязаны к другому турниру в этом расписании
+        taken = set(
+            ScheduleScopeCourt.objects.filter(
+                scope__schedule=schedule,
+                court_id__in=court_ids,
+            )
+            .exclude(scope=scope)
+            .values_list("court_id", flat=True)
+        )
+        if taken:
+            raise PermissionDenied("Some courts are already bound to another tournament")
+
+    @action(detail=True, methods=["post"], url_path="scopes/add", permission_classes=[IsAuthenticated])
+    def scopes_add(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        payload = request.data or {}
+        tournament_id = payload.get("tournament_id")
+        if not tournament_id:
+            return Response({"ok": False, "error": "no_tournament_id"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            tournament_id_int = int(tournament_id)
+        except Exception:
+            return Response({"ok": False, "error": "bad_tournament_id"}, status=status.HTTP_400_BAD_REQUEST)
+
+        tournament = Tournament.objects.filter(id=tournament_id_int).first()
+        if not tournament:
+            return Response({"ok": False, "error": "not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        self._ensure_can_use_tournament_in_schedule(request, schedule, tournament)
+        self._validate_schedule_scope_tournament(schedule, tournament)
+
+        start_mode = str(payload.get("start_mode") or ScheduleScope.StartMode.AFTER_PREVIOUS)
+        if start_mode not in {ScheduleScope.StartMode.FIXED, ScheduleScope.StartMode.AFTER_PREVIOUS}:
+            start_mode = ScheduleScope.StartMode.AFTER_PREVIOUS
+
+        start_time_value = payload.get("start_time")
+        start_time_obj = None
+        if start_mode == ScheduleScope.StartMode.FIXED:
+            try:
+                if isinstance(start_time_value, str):
+                    hh, mm = start_time_value.split(":")
+                    start_time_obj = time(int(hh), int(mm))
+                elif start_time_value is not None:
+                    start_time_obj = start_time_value
+            except Exception:
+                start_time_obj = None
+
+        court_ids = payload.get("bound_courts") or []
+        try:
+            court_ids = [int(x) for x in court_ids]
+        except Exception:
+            court_ids = []
+
+        with transaction.atomic():
+            if ScheduleScope.objects.filter(schedule=schedule, tournament=tournament).exists():
+                return Response({"ok": False, "error": "already_added"}, status=status.HTTP_400_BAD_REQUEST)
+
+            max_order = ScheduleScope.objects.filter(schedule=schedule).aggregate(m=Max("order")).get("m") or 0
+            scope = ScheduleScope.objects.create(
+                schedule=schedule,
+                tournament=tournament,
+                order=int(max_order) + 1,
+                start_mode=start_mode,
+                start_time=start_time_obj,
+            )
+
+            if court_ids:
+                self._validate_bound_courts(schedule, scope, court_ids)
+                ScheduleScopeCourt.objects.bulk_create(
+                    [ScheduleScopeCourt(scope=scope, court_id=c_id) for c_id in sorted(set(court_ids))]
+                )
+
+            schedule.save(update_fields=["updated_at"])
+
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
+
+    @action(detail=True, methods=["post"], url_path="scopes/remove", permission_classes=[IsAuthenticated])
+    def scopes_remove(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        payload = request.data or {}
+        scope_id = payload.get("scope_id")
+        tournament_id = payload.get("tournament_id")
+        if not scope_id and not tournament_id:
+            return Response({"ok": False, "error": "no_scope"}, status=status.HTTP_400_BAD_REQUEST)
+
+        qs = ScheduleScope.objects.filter(schedule=schedule)
+        if scope_id:
+            qs = qs.filter(id=scope_id)
+        else:
+            qs = qs.filter(tournament_id=tournament_id)
+
+        scope = qs.select_related("tournament").first()
+        if not scope:
+            return Response({"ok": False, "error": "not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if ScheduleScope.objects.filter(schedule=schedule).count() <= 1:
+            return Response({"ok": False, "error": "cannot_remove_last"}, status=status.HTTP_400_BAD_REQUEST)
+
+        self._ensure_can_use_tournament_in_schedule(request, schedule, scope.tournament)
+
+        with transaction.atomic():
+            scope.delete()
+
+            # переиндексация order
+            scopes = list(ScheduleScope.objects.filter(schedule=schedule).order_by("order", "id"))
+            for idx, s in enumerate(scopes, start=1):
+                if int(s.order or 0) != idx:
+                    s.order = idx
+                    s.save(update_fields=["order"])
+
+            schedule.save(update_fields=["updated_at"])
+
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
+
+    @action(detail=True, methods=["post"], url_path="scopes/reorder", permission_classes=[IsAuthenticated])
+    def scopes_reorder(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        payload = request.data or {}
+        order_ids = payload.get("scope_ids")
+        if not isinstance(order_ids, list) or not order_ids:
+            return Response({"ok": False, "error": "bad_scope_ids"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            order_ids = [int(x) for x in order_ids]
+        except Exception:
+            return Response({"ok": False, "error": "bad_scope_ids"}, status=status.HTTP_400_BAD_REQUEST)
+
+        existing = list(ScheduleScope.objects.filter(schedule=schedule).order_by("order", "id"))
+        existing_ids = [int(s.id) for s in existing]
+        if sorted(existing_ids) != sorted(order_ids):
+            return Response({"ok": False, "error": "scope_ids_mismatch"}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            for idx, sid in enumerate(order_ids, start=1):
+                ScheduleScope.objects.filter(schedule=schedule, id=sid).update(order=idx)
+            schedule.save(update_fields=["updated_at"])
+
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
+
+    @action(detail=True, methods=["post"], url_path="scopes/update", permission_classes=[IsAuthenticated])
+    def scopes_update(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        payload = request.data or {}
+        scope_id = payload.get("scope_id")
+        if not scope_id:
+            return Response({"ok": False, "error": "no_scope_id"}, status=status.HTTP_400_BAD_REQUEST)
+
+        scope = ScheduleScope.objects.filter(schedule=schedule, id=scope_id).select_related("tournament").first()
+        if not scope:
+            return Response({"ok": False, "error": "not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        self._ensure_can_use_tournament_in_schedule(request, schedule, scope.tournament)
+        self._validate_schedule_scope_tournament(schedule, scope.tournament)
+
+        start_mode = payload.get("start_mode")
+        start_time_value = payload.get("start_time")
+
+        if start_mode is not None:
+            start_mode = str(start_mode)
+            if start_mode not in {ScheduleScope.StartMode.FIXED, ScheduleScope.StartMode.AFTER_PREVIOUS}:
+                return Response({"ok": False, "error": "bad_start_mode"}, status=status.HTTP_400_BAD_REQUEST)
+            scope.start_mode = start_mode
+
+        if scope.start_mode == ScheduleScope.StartMode.FIXED:
+            if start_time_value is not None:
+                try:
+                    if isinstance(start_time_value, str):
+                        hh, mm = start_time_value.split(":")
+                        scope.start_time = time(int(hh), int(mm))
+                    else:
+                        scope.start_time = start_time_value
+                except Exception:
+                    return Response({"ok": False, "error": "bad_start_time"}, status=status.HTTP_400_BAD_REQUEST)
+            if scope.start_time is None:
+                return Response({"ok": False, "error": "start_time_required"}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            scope.start_time = None
+
+        bound_courts = payload.get("bound_courts")
+        if bound_courts is not None:
+            try:
+                court_ids = [int(x) for x in (bound_courts or [])]
+            except Exception:
+                return Response({"ok": False, "error": "bad_bound_courts"}, status=status.HTTP_400_BAD_REQUEST)
+
+            self._validate_bound_courts(schedule, scope, court_ids)
+
+            with transaction.atomic():
+                scope.save(update_fields=["start_mode", "start_time"])
+                ScheduleScopeCourt.objects.filter(scope=scope).delete()
+                if court_ids:
+                    ScheduleScopeCourt.objects.bulk_create(
+                        [ScheduleScopeCourt(scope=scope, court_id=c_id) for c_id in sorted(set(court_ids))]
+                    )
+                schedule.save(update_fields=["updated_at"])
+
+            schedule.refresh_from_db()
+            return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
+
+        scope.save(update_fields=["start_mode", "start_time"])
+        schedule.save(update_fields=["updated_at"])
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
 
     def _compute_rr_row_by_team(self, slots_qs: Any) -> dict[tuple[int, int, int], int]:
         rr_row_by_team: dict[tuple[int, int, int], int] = {}

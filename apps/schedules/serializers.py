@@ -6,6 +6,7 @@ from .models import (
     ScheduleGlobalBreak,
     ScheduleRun,
     ScheduleScope,
+    ScheduleScopeCourt,
     ScheduleSlot,
 )
 
@@ -45,9 +46,20 @@ class ScheduleGlobalBreakSerializer(serializers.ModelSerializer):
 
 
 class ScheduleScopeSerializer(serializers.ModelSerializer):
+    bound_courts = serializers.SerializerMethodField()
+
     class Meta:
         model = ScheduleScope
-        fields = ["tournament"]
+        fields = ["id", "tournament", "order", "start_mode", "start_time", "bound_courts"]
+
+    def get_bound_courts(self, obj: ScheduleScope):
+        try:
+            rel = getattr(obj, "bound_courts", None)
+            if not rel:
+                return []
+            return [int(x.court_id) for x in rel.all()]
+        except Exception:
+            return []
 
 
 class ScheduleSerializer(serializers.ModelSerializer):

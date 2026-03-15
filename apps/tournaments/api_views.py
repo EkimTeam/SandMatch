@@ -529,7 +529,13 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 created_by=request.user,
                 is_draft=True,
             )
-            ScheduleScope.objects.create(schedule=schedule, tournament=tournament)
+            ScheduleScope.objects.create(
+                schedule=schedule,
+                tournament=tournament,
+                order=1,
+                start_mode=ScheduleScope.StartMode.FIXED,
+                start_time=start_time_obj,
+            )
 
             for ci in range(1, courts_count + 1):
                 ScheduleCourt.objects.create(
@@ -619,7 +625,13 @@ class TournamentViewSet(viewsets.ModelViewSet):
 
             # scopes: по факту будет один турнир, но копируем все на всякий случай
             for scope in draft.scopes.all():
-                ScheduleScope.objects.create(schedule=schedule, tournament=scope.tournament)
+                ScheduleScope.objects.create(
+                    schedule=schedule,
+                    tournament=scope.tournament,
+                    order=getattr(scope, "order", 1) or 1,
+                    start_mode=getattr(scope, "start_mode", ScheduleScope.StartMode.FIXED) or ScheduleScope.StartMode.FIXED,
+                    start_time=getattr(scope, "start_time", None),
+                )
 
             # courts
             court_by_index = {}
@@ -772,7 +784,13 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 match_duration_minutes=match_duration_minutes,
                 created_by=request.user,
             )
-            ScheduleScope.objects.create(schedule=schedule, tournament=tournament)
+            ScheduleScope.objects.create(
+                schedule=schedule,
+                tournament=tournament,
+                order=1,
+                start_mode=ScheduleScope.StartMode.FIXED,
+                start_time=start_time_obj,
+            )
 
             for ci in range(1, courts_count + 1):
                 ScheduleCourt.objects.create(
