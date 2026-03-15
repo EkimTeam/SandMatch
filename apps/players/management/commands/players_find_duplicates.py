@@ -111,6 +111,10 @@ class Command(BaseCommand):
         self.stdout.write(f"Найдено групп с дубликатами: {len(dup_groups)}")
         self.stdout.write("")
 
+        if not dup_groups:
+            self.stdout.write(self.style.SUCCESS("Готово"))
+            return
+
         # Preload usage counts in batch
         player_ids = [p.id for _k, ps in dup_groups for p in ps]
         player_ids_set = set(player_ids)
@@ -181,7 +185,11 @@ class Command(BaseCommand):
             .values_list("player_id", "c")
         )
 
-        btr_map = dict(BtrPlayer.objects.filter(linked_player__id__in=player_ids_set).values_list("linked_player_id", "id"))
+        # Player.btr_player имеет related_name='linked_player', поэтому на стороне BtrPlayer это обратная связь
+        # (btr_player.linked_player -> Player). На разных версиях Django/ORM может не быть *_id поля.
+        btr_map = dict(
+            BtrPlayer.objects.filter(linked_player__id__in=player_ids_set).values_list("linked_player", "id")
+        )
 
         shown = 0
         for key, ps in dup_groups:
