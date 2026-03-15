@@ -236,6 +236,12 @@ export const TournamentDetailPage: React.FC = () => {
   // Расписание по группам: { [groupIndex]: [ [a,b], [c,d] ][] } — туры, каждый тур: массив пар [a,b]
   const [schedule, setSchedule] = useState<Record<number, [number, number][][]>>({});
   const canDeleteTournament = !!t?.can_delete;
+
+  const hasLiveMatches = useMemo(() => {
+    const matches: any[] = (t as any)?.matches || [];
+    if (!Array.isArray(matches)) return false;
+    return matches.some((m: any) => String(m?.status || '').toLowerCase() === 'live');
+  }, [t]);
   const [showEditModal, setShowEditModal] = useState(false);
   const [setFormats, setSetFormats] = useState<SetFormatDict[]>([]);
   const [showInitialRatingModal, setShowInitialRatingModal] = useState(false);
@@ -3389,7 +3395,7 @@ export const TournamentDetailPage: React.FC = () => {
 
       {/* Нижняя панель действий (в выгрузку не включаем) */}
       <div style={{ marginTop: 16, display: 'flex', gap: 10, flexWrap: 'wrap' }} data-export-exclude="true">
-        {t && hasOnlineSchedule && (
+        {t && hasOnlineSchedule && hasLiveMatches && (
           <button className="btn" onClick={() => nav(`/tournaments/${t.id}/schedule?view=timeline&fact=1`)} disabled={saving}>
             Расписание онлайн
           </button>

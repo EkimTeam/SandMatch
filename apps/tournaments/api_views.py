@@ -2465,14 +2465,35 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if len(query) < 2:
             return Response({"players": []})
 
-        from django.db.models import Q
+        tokens = [t for t in query.split() if t]
+        players_qs = Player.objects.select_related("btr_player")
 
-        # Базовый запрос по ФИО
-        players_qs = Player.objects.filter(
-            Q(first_name__icontains=query)
-            | Q(last_name__icontains=query)
-            | Q(patronymic__icontains=query)
-        )
+        if len(tokens) == 1:
+            q0 = tokens[0]
+            players_qs = players_qs.filter(
+                Q(first_name__icontains=q0)
+                | Q(last_name__icontains=q0)
+                | Q(patronymic__icontains=q0)
+            )
+        else:
+            a = tokens[0]
+            b = tokens[1]
+            name_q = (
+                Q(last_name__istartswith=a, first_name__istartswith=b)
+                | Q(first_name__istartswith=a, last_name__istartswith=b)
+                | Q(last_name__istartswith=a, patronymic__istartswith=b)
+                | Q(first_name__istartswith=a, patronymic__istartswith=b)
+                | Q(patronymic__istartswith=a, first_name__istartswith=b)
+                | Q(patronymic__istartswith=a, last_name__istartswith=b)
+            )
+            rest = tokens[2:]
+            for tkn in rest:
+                name_q &= (
+                    Q(first_name__icontains=tkn)
+                    | Q(last_name__icontains=tkn)
+                    | Q(patronymic__icontains=tkn)
+                )
+            players_qs = players_qs.filter(name_q)
 
         # Исключаем текущего игрока из результатов (чтобы он не выбирал сам себя)
         current_player = self._get_current_player(request, tournament)
@@ -2509,14 +2530,18 @@ class TournamentViewSet(viewsets.ModelViewSet):
             return "РПТТ"
 
         players_payload = []
-        for p in players_qs:
+        for p in list(players_qs[:20]):
             rating = getattr(p, "current_rating", None)
             rating_bp = int(rating) if rating is not None else None
             vr = get_player_visible_rating(tournament, p)
+            full_name = " ".join([x for x in [p.last_name, p.first_name, (p.patronymic or "").strip()] if x]).strip()
             players_payload.append(
                 {
                     "id": p.id,
-                    "full_name": str(p),
+                    "full_name": full_name or str(p),
+                    "patronymic": p.patronymic,
+                    "city": p.city or "",
+                    "btr_rni": getattr(getattr(p, "btr_player", None), "rni", None),
                     "is_registered": p.id in registered_ids,
                     "rating_bp": rating_bp,
                     "visible_rating": int(vr.rating or 0),
@@ -5308,22 +5333,66 @@ class PlayerListView(APIView):
 class PlayerSearchView(APIView):
     permission_classes = [IsAuthenticated]
     def get(self, request):
-        query = request.GET.get("q", "")
-        if query:
-            players = (
-                Player.objects.filter(
-                    Q(first_name__icontains=query)
-                    | Q(last_name__icontains=query)
-                    | Q(display_name__icontains=query)
-                )
-                .order_by("last_name", "first_name")
-                .all()[:10]
+        query = (request.GET.get("q", "") or "").strip()
+        limit = 20
+        if not query:
+            return Response({"players": []})
+
+        tokens = [t for t in query.split() if t]
+
+        qs = Player.objects.all().select_related("btr_player")
+
+        if len(tokens) == 1:
+            q0 = tokens[0]
+            qs = qs.filter(
+                Q(first_name__icontains=q0)
+                | Q(last_name__icontains=q0)
+                | Q(patronymic__icontains=q0)
+                | Q(display_name__icontains=q0)
+                | Q(city__icontains=q0)
             )
         else:
-            players = Player.objects.none()
+            a = tokens[0]
+            b = tokens[1]
 
-        serializer = PlayerSerializer(players, many=True)
-        return Response({"players": serializer.data})
+            name_q = (
+                Q(last_name__istartswith=a, first_name__istartswith=b)
+                | Q(first_name__istartswith=a, last_name__istartswith=b)
+                | Q(last_name__istartswith=a, patronymic__istartswith=b)
+                | Q(first_name__istartswith=a, patronymic__istartswith=b)
+                | Q(patronymic__istartswith=a, first_name__istartswith=b)
+                | Q(patronymic__istartswith=a, last_name__istartswith=b)
+            )
+
+            # Если токенов больше 2, добавим AND-ограничения по оставшимся токенам
+            rest = tokens[2:]
+            for tkn in rest:
+                name_q &= (
+                    Q(first_name__icontains=tkn)
+                    | Q(last_name__icontains=tkn)
+                    | Q(patronymic__icontains=tkn)
+                    | Q(display_name__icontains=tkn)
+                    | Q(city__icontains=tkn)
+                )
+            qs = qs.filter(name_q)
+
+        players = list(qs.order_by("last_name", "first_name").all()[:limit])
+
+        payload = []
+        for p in players:
+            payload.append(
+                {
+                    "id": p.id,
+                    "first_name": p.first_name,
+                    "last_name": p.last_name,
+                    "patronymic": p.patronymic,
+                    "display_name": p.display_name,
+                    "city": p.city or "",
+                    "btr_rni": getattr(getattr(p, "btr_player", None), "rni", None),
+                }
+            )
+
+        return Response({"players": payload})
 
 
 @method_decorator(csrf_exempt, name='dispatch')

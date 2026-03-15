@@ -4,6 +4,9 @@ import { tournamentRegistrationApi } from '../services/api';
 interface Player {
   id: number;
   full_name: string;
+  patronymic?: string | null;
+  city?: string;
+  btr_rni?: number | null;
   is_registered: boolean;
   rating_bp?: number | null;
   visible_rating?: number | null;
@@ -163,6 +166,16 @@ const PartnerSearchModalWeb: React.FC<PartnerSearchModalWebProps> = ({ tournamen
                             return <span className="ml-2 text-xs text-gray-500">{txt}</span>;
                           })()}
                         </div>
+                        {(() => {
+                          const parts: string[] = [];
+                          const city = (player.city || '').trim();
+                          if (city) parts.push(city);
+                          const rni = player.btr_rni;
+                          if (typeof rni === 'number') parts.push(`РНИ ${rni}`);
+                          const extra = parts.join(' • ');
+                          if (!extra) return null;
+                          return <div className="text-xs text-gray-500 mt-0.5">{extra}</div>;
+                        })()}
                         {player.is_registered && (
                           <div className="text-xs text-gray-500 mt-1">Уже зарегистрирован на турнир</div>
                         )}
@@ -211,6 +224,16 @@ const PartnerSearchModalWeb: React.FC<PartnerSearchModalWebProps> = ({ tournamen
                               return <span className="ml-2 text-xs text-gray-500">{txt}</span>;
                             })()}
                           </div>
+                          {(() => {
+                            const parts: string[] = [];
+                            const city = (player.city || '').trim();
+                            if (city) parts.push(city);
+                            const rni = player.btr_rni;
+                            if (typeof rni === 'number') parts.push(`РНИ ${rni}`);
+                            const extra = parts.join(' • ');
+                            if (!extra) return null;
+                            return <div className="text-xs text-gray-500 mt-0.5">{extra}</div>;
+                          })()}
                           {player.is_registered && (
                             <div className="text-xs text-gray-500 mt-1">Уже зарегистрирован на турнир</div>
                           )}

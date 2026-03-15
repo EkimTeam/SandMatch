@@ -1681,13 +1681,13 @@ export const tournamentRegistrationApi = {
   searchPlayers: async (
     tournamentId: number,
     query: string,
-  ): Promise<{ players: Array<{ id: number; full_name: string; is_registered: boolean; rating_bp?: number | null; visible_rating?: number | null; visible_place?: number | null; rating_label?: string | null }> }> => {
+  ): Promise<{ players: Array<{ id: number; full_name: string; patronymic?: string | null; city?: string; btr_rni?: number | null; is_registered: boolean; rating_bp?: number | null; visible_rating?: number | null; visible_place?: number | null; rating_label?: string | null }> }> => {
     const { data } = await api.get(`/tournaments/${tournamentId}/search_players/`, { params: { q: query } });
     return data;
   },
   getRecentPartners: async (
     tournamentId: number,
-  ): Promise<{ players: Array<{ id: number; full_name: string; is_registered: boolean; rating_bp?: number | null; visible_rating?: number | null; visible_place?: number | null; rating_label?: string | null }> }> => {
+  ): Promise<{ players: Array<{ id: number; full_name: string; patronymic?: string | null; city?: string; btr_rni?: number | null; is_registered: boolean; rating_bp?: number | null; visible_rating?: number | null; visible_place?: number | null; rating_label?: string | null }> }> => {
     const { data } = await api.get(`/tournaments/${tournamentId}/recent_partners/`);
     return data;
   },
