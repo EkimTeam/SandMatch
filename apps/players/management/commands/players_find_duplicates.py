@@ -75,17 +75,20 @@ class Command(BaseCommand):
                 "id",
                 "last_name",
                 "first_name",
+                "patronymic",
                 "birth_date",
                 "current_rating",
                 "btr_player_id",
             )
         )
 
-        groups: dict[tuple[str, str, str | None], list[Player]] = defaultdict(list)
+        # Ключ группировки: Фамилия + Имя + Отчество (+ опционально дата рождения)
+        groups: dict[tuple[str, str, str, str | None], list[Player]] = defaultdict(list)
         for p in players:
             key = (
                 _norm(p.last_name),
                 _norm(p.first_name),
+                _norm(getattr(p, "patronymic", "")),
                 str(p.birth_date) if (by_birth_date and p.birth_date) else ("" if by_birth_date else None),
             )
             groups[key].append(p)
@@ -100,7 +103,7 @@ class Command(BaseCommand):
         if only_with_btr:
             dup_groups = [(k, ps) for k, ps in dup_groups if any(getattr(p, "btr_player_id", None) for p in ps)]
 
-        dup_groups.sort(key=lambda x: (-len(x[1]), x[0][0], x[0][1]))
+        dup_groups.sort(key=lambda x: (-len(x[1]), x[0][0], x[0][1], x[0][2]))
         if limit_groups:
             dup_groups = dup_groups[: int(limit_groups)]
 
@@ -193,8 +196,9 @@ class Command(BaseCommand):
 
         shown = 0
         for key, ps in dup_groups:
-            ln, fn, bd = key
-            title = f"{ln} {fn}".strip()
+            ln, fn, pt, bd = key
+            fio = " ".join([part for part in [ln, fn, pt] if part])
+            title = fio.strip() or "(без ФИО)"
             if by_birth_date:
                 title += f" ({bd or '-'})"
 
