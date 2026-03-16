@@ -14,18 +14,106 @@ from apps.tournaments.models import Tournament
 from apps.accounts.permissions import IsTournamentCreatorOrAdmin, Role, _get_user_role
 
 from django.db import transaction
+from django.db.models import Max, Q
 
-from .models import Schedule
+from .models import (
+    Schedule,
+    ScheduleCourt,
+    ScheduleGlobalBreak,
+    ScheduleRun,
+    ScheduleScope,
+    ScheduleScopeCourt,
+    ScheduleSlot,
+    ScheduleWave,
+)
 from .serializers import ScheduleSerializer
 
 
 class ScheduleViewSet(viewsets.ModelViewSet):
-    queryset = Schedule.objects.all()
+    queryset = Schedule.objects.prefetch_related("waves").all()
     serializer_class = ScheduleSerializer
     permission_classes = [AllowAny]
 
+    def get_queryset(self):
+        return (
+            super()
+            .get_queryset()
+            .prefetch_related(
+                "waves",
+                "scopes",
+                "scopes__wave",
+                "scopes__bound_courts",
+                "scopes__bound_courts__court",
+            )
+            .select_related("created_by")
+        )
+
     def _scoped_tournaments(self, schedule: Schedule):
-        return [s.tournament for s in schedule.scopes.select_related("tournament").all() if s.tournament]
+        return [
+            s.tournament
+            for s in (
+                schedule.scopes.select_related("tournament", "wave")
+                .all()
+                .order_by("wave__order", "wave_id", "order", "id")
+            )
+            if s.tournament
+        ]
+
+    def _ensure_default_wave_exists(self, schedule: Schedule) -> ScheduleWave:
+        w = schedule.waves.all().order_by("order", "id").first()
+        if w:
+            return w
+        return ScheduleWave.objects.create(
+            schedule=schedule,
+            order=1,
+            start_mode=ScheduleWave.StartMode.AFTER_PREVIOUS,
+            start_time=None,
+            earliest_time=None,
+        )
+
+    def _normalize_waves_order(self, schedule: Schedule) -> None:
+        waves = list(schedule.waves.all().order_by("order", "id"))
+        for idx, w in enumerate(waves, start=1):
+            if int(w.order or 0) != idx:
+                w.order = idx
+                w.save(update_fields=["order"])
+
+    def _ensure_can_use_tournament_in_schedule(self, request, schedule: Schedule, tournament: Tournament) -> None:
+        user = getattr(request, "user", None)
+        if not user or not getattr(user, "is_authenticated", False):
+            raise PermissionDenied("Authentication required")
+
+        role = _get_user_role(user)
+        if role == Role.ADMIN or getattr(user, "is_staff", False) or getattr(user, "is_superuser", False):
+            return
+
+        if getattr(tournament, "created_by_id", None) != getattr(user, "id", None):
+            raise PermissionDenied("You do not have permission to use this tournament in schedule")
+
+    def _validate_schedule_scope_tournament(self, schedule: Schedule, tournament: Tournament) -> None:
+        def _allowed_for_schedule(t: Tournament) -> bool:
+            if schedule.is_draft:
+                return t.status == Tournament.Status.CREATED
+            return (t.status == Tournament.Status.ACTIVE) or (
+                t.system == Tournament.System.KNOCKOUT and t.status == Tournament.Status.CREATED
+            )
+
+        # 1) Дата должна совпадать
+        if getattr(schedule, "date", None) and getattr(tournament, "date", None) and schedule.date != tournament.date:
+            raise PermissionDenied("Tournament date must match schedule date")
+
+        # 2) Статус должен совпадать правилам draft/official
+        if not _allowed_for_schedule(tournament):
+            if schedule.is_draft:
+                raise PermissionDenied("Draft schedule can include only created tournaments")
+            raise PermissionDenied("Official schedule can include only active tournaments or created knockout tournaments")
+
+        # 3) Все турниры в расписании должны быть допустимы для этого типа расписания
+        for t in self._scoped_tournaments(schedule):
+            if not _allowed_for_schedule(t):
+                if schedule.is_draft:
+                    raise PermissionDenied("Draft schedule can include only created tournaments")
+                raise PermissionDenied("Official schedule can include only active tournaments or created knockout tournaments")
 
     def _ensure_can_view_schedule(self, request, schedule: Schedule) -> None:
         tournaments = self._scoped_tournaments(schedule)
@@ -52,9 +140,488 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                 raise PermissionDenied("You do not have permission to manage this schedule")
 
     def get_permissions(self):
-        if self.action in {"create", "update", "partial_update", "destroy", "save"}:
+        if self.action in {
+            "create",
+            "update",
+            "partial_update",
+            "destroy",
+            "save",
+            "scopes_add",
+            "scopes_remove",
+            "scopes_reorder",
+            "scopes_update",
+            "scopes_move_to_wave",
+            "waves_add",
+            "waves_update",
+            "waves_reorder",
+            "waves_remove",
+        }:
             return [IsAuthenticated()]
         return super().get_permissions()
+
+    def _validate_bound_courts(self, schedule: Schedule, scope: ScheduleScope, court_ids: list[int]) -> None:
+        # Все корты должны принадлежать расписанию
+        courts = list(ScheduleCourt.objects.filter(schedule=schedule, id__in=court_ids).values_list("id", flat=True))
+        if len(courts) != len(set(court_ids)):
+            raise PermissionDenied("Some courts do not belong to this schedule")
+
+        # Корты не должны быть привязаны к другому турниру в этом расписании
+        taken = set(
+            ScheduleScopeCourt.objects.filter(
+                scope__schedule=schedule,
+                court_id__in=court_ids,
+            )
+            .exclude(scope=scope)
+            .values_list("court_id", flat=True)
+        )
+        if taken:
+            raise PermissionDenied("Some courts are already bound to another tournament")
+
+    @action(detail=True, methods=["get"], url_path="scopes/available_tournaments", permission_classes=[IsAuthenticated])
+    def scopes_available_tournaments(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        q = str(request.query_params.get("q") or "").strip()
+
+        qs = Tournament.objects.all()
+        if schedule.date:
+            qs = qs.filter(date=schedule.date)
+
+        if schedule.is_draft:
+            qs = qs.filter(status=Tournament.Status.CREATED)
+        else:
+            qs = qs.filter(
+                Q(status=Tournament.Status.ACTIVE)
+                | Q(status=Tournament.Status.CREATED, system=Tournament.System.KNOCKOUT)
+            )
+
+        # permission filtering
+        role = _get_user_role(request.user)
+        if role != Role.ADMIN and not getattr(request.user, "is_staff", False) and not getattr(request.user, "is_superuser", False):
+            qs = qs.filter(created_by=request.user)
+
+        # exclude already added
+        existing_ids = list(ScheduleScope.objects.filter(schedule=schedule).values_list("tournament_id", flat=True))
+        if existing_ids:
+            qs = qs.exclude(id__in=existing_ids)
+
+        if q:
+            qs = qs.filter(name__icontains=q)
+
+        qs = qs.order_by("name", "id")[:200]
+
+        items = [
+            {
+                "id": int(t.id),
+                "name": str(t.name),
+                "date": str(t.date) if getattr(t, "date", None) else None,
+                "start_time": t.start_time.strftime("%H:%M") if getattr(t, "start_time", None) else None,
+                "status": str(t.status),
+                "created_by": int(t.created_by_id) if getattr(t, "created_by_id", None) else None,
+            }
+            for t in qs
+        ]
+
+        return Response({"ok": True, "tournaments": items})
+
+    @action(detail=True, methods=["post"], url_path="scopes/add", permission_classes=[IsAuthenticated])
+    def scopes_add(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        payload = request.data or {}
+        tournament_id = payload.get("tournament_id")
+        if not tournament_id:
+            return Response({"ok": False, "error": "no_tournament_id"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            tournament_id_int = int(tournament_id)
+        except Exception:
+            return Response({"ok": False, "error": "bad_tournament_id"}, status=status.HTTP_400_BAD_REQUEST)
+
+        tournament = Tournament.objects.filter(id=tournament_id_int).first()
+        if not tournament:
+            return Response({"ok": False, "error": "not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        self._ensure_can_use_tournament_in_schedule(request, schedule, tournament)
+        self._validate_schedule_scope_tournament(schedule, tournament)
+
+        start_mode = str(payload.get("start_mode") or ScheduleScope.StartMode.AFTER_PREVIOUS)
+        if start_mode not in {ScheduleScope.StartMode.FIXED, ScheduleScope.StartMode.AFTER_PREVIOUS}:
+            start_mode = ScheduleScope.StartMode.AFTER_PREVIOUS
+
+        start_time_value = payload.get("start_time")
+        start_time_obj = None
+        if start_mode == ScheduleScope.StartMode.FIXED:
+            try:
+                if isinstance(start_time_value, str):
+                    parts = start_time_value.split(":")
+                    hh = parts[0]
+                    mm = parts[1] if len(parts) > 1 else "0"
+                    start_time_obj = time(int(hh), int(mm))
+                elif start_time_value is not None:
+                    start_time_obj = start_time_value
+            except Exception:
+                start_time_obj = None
+            if start_time_obj is None:
+                try:
+                    start_time_obj = getattr(tournament, "start_time", None)
+                except Exception:
+                    start_time_obj = None
+
+        court_ids = payload.get("bound_courts") or []
+        try:
+            court_ids = [int(x) for x in court_ids]
+        except Exception:
+            court_ids = []
+
+        with transaction.atomic():
+            if ScheduleScope.objects.filter(schedule=schedule, tournament=tournament).exists():
+                return Response({"ok": False, "error": "already_added"}, status=status.HTTP_400_BAD_REQUEST)
+
+            default_wave = self._ensure_default_wave_exists(schedule)
+
+            max_order = ScheduleScope.objects.filter(schedule=schedule).aggregate(m=Max("order")).get("m") or 0
+            scope = ScheduleScope.objects.create(
+                schedule=schedule,
+                wave=default_wave,
+                tournament=tournament,
+                order=int(max_order) + 1,
+                start_mode=start_mode,
+                start_time=start_time_obj,
+            )
+
+            if court_ids:
+                self._validate_bound_courts(schedule, scope, court_ids)
+                ScheduleScopeCourt.objects.bulk_create(
+                    [ScheduleScopeCourt(scope=scope, court_id=c_id) for c_id in sorted(set(court_ids))]
+                )
+
+            schedule.save(update_fields=["updated_at"])
+
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
+
+    @action(detail=True, methods=["post"], url_path="waves/add", permission_classes=[IsAuthenticated])
+    def waves_add(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        payload = request.data or {}
+        start_mode = str(payload.get("start_mode") or ScheduleWave.StartMode.AFTER_PREVIOUS)
+        if start_mode not in {ScheduleWave.StartMode.FIXED, ScheduleWave.StartMode.AFTER_PREVIOUS}:
+            start_mode = ScheduleWave.StartMode.AFTER_PREVIOUS
+
+        def parse_time_value(v):
+            if v is None:
+                return None
+            try:
+                if isinstance(v, str):
+                    parts = v.split(":")
+                    hh = parts[0]
+                    mm = parts[1] if len(parts) > 1 else "0"
+                    return time(int(hh), int(mm))
+                return v
+            except Exception:
+                return None
+
+        start_time_obj = parse_time_value(payload.get("start_time"))
+        earliest_obj = parse_time_value(payload.get("earliest_time"))
+        if start_mode == ScheduleWave.StartMode.FIXED and start_time_obj is None:
+            return Response({"ok": False, "error": "start_time_required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        max_order = schedule.waves.aggregate(m=Max("order")).get("m") or 0
+        ScheduleWave.objects.create(
+            schedule=schedule,
+            order=int(max_order) + 1,
+            start_mode=start_mode,
+            start_time=start_time_obj,
+            earliest_time=earliest_obj,
+        )
+
+        schedule.save(update_fields=["updated_at"])
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
+
+    @action(detail=True, methods=["post"], url_path="waves/update", permission_classes=[IsAuthenticated])
+    def waves_update(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        payload = request.data or {}
+        wave_id = payload.get("wave_id")
+        if not wave_id:
+            return Response({"ok": False, "error": "no_wave_id"}, status=status.HTTP_400_BAD_REQUEST)
+
+        wave = ScheduleWave.objects.filter(schedule=schedule, id=wave_id).first()
+        if not wave:
+            return Response({"ok": False, "error": "not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        def parse_time_value(v):
+            if v is None:
+                return None
+            try:
+                if isinstance(v, str):
+                    parts = v.split(":")
+                    hh = parts[0]
+                    mm = parts[1] if len(parts) > 1 else "0"
+                    return time(int(hh), int(mm))
+                return v
+            except Exception:
+                return None
+
+        start_mode = payload.get("start_mode")
+        if start_mode is not None:
+            start_mode = str(start_mode)
+            if start_mode not in {ScheduleWave.StartMode.FIXED, ScheduleWave.StartMode.AFTER_PREVIOUS}:
+                return Response({"ok": False, "error": "bad_start_mode"}, status=status.HTTP_400_BAD_REQUEST)
+            wave.start_mode = start_mode
+
+        if payload.get("start_time") is not None or wave.start_mode == ScheduleWave.StartMode.FIXED:
+            if payload.get("start_time") is not None:
+                st = parse_time_value(payload.get("start_time"))
+                if st is None:
+                    return Response({"ok": False, "error": "bad_start_time"}, status=status.HTTP_400_BAD_REQUEST)
+                wave.start_time = st
+            if wave.start_mode == ScheduleWave.StartMode.FIXED and wave.start_time is None:
+                return Response({"ok": False, "error": "start_time_required"}, status=status.HTTP_400_BAD_REQUEST)
+            if wave.start_mode != ScheduleWave.StartMode.FIXED:
+                wave.start_time = None
+
+        if payload.get("earliest_time") is not None:
+            et = parse_time_value(payload.get("earliest_time"))
+            if payload.get("earliest_time") is not None and et is None:
+                return Response({"ok": False, "error": "bad_earliest_time"}, status=status.HTTP_400_BAD_REQUEST)
+            wave.earliest_time = et
+
+        wave.save(update_fields=["start_mode", "start_time", "earliest_time"])
+        schedule.save(update_fields=["updated_at"])
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
+
+    @action(detail=True, methods=["post"], url_path="waves/reorder", permission_classes=[IsAuthenticated])
+    def waves_reorder(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        payload = request.data or {}
+        wave_ids = payload.get("wave_ids")
+        if not isinstance(wave_ids, list) or not wave_ids:
+            return Response({"ok": False, "error": "bad_wave_ids"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            wave_ids = [int(x) for x in wave_ids]
+        except Exception:
+            return Response({"ok": False, "error": "bad_wave_ids"}, status=status.HTTP_400_BAD_REQUEST)
+
+        existing = list(schedule.waves.all().order_by("order", "id"))
+        existing_ids = [int(w.id) for w in existing]
+        if sorted(existing_ids) != sorted(wave_ids):
+            return Response({"ok": False, "error": "wave_ids_mismatch"}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            for idx, wid in enumerate(wave_ids, start=1):
+                ScheduleWave.objects.filter(schedule=schedule, id=wid).update(order=idx)
+            schedule.save(update_fields=["updated_at"])
+
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
+
+    @action(detail=True, methods=["post"], url_path="waves/remove", permission_classes=[IsAuthenticated])
+    def waves_remove(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        payload = request.data or {}
+        wave_id = payload.get("wave_id")
+        if not wave_id:
+            return Response({"ok": False, "error": "no_wave_id"}, status=status.HTTP_400_BAD_REQUEST)
+
+        wave = ScheduleWave.objects.filter(schedule=schedule, id=wave_id).first()
+        if not wave:
+            return Response({"ok": False, "error": "not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if schedule.waves.count() <= 1:
+            return Response({"ok": False, "error": "cannot_remove_last"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # scopes from removed wave should move to first wave
+        target = schedule.waves.exclude(id=wave.id).order_by("order", "id").first()
+        if not target:
+            return Response({"ok": False, "error": "cannot_remove_last"}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            ScheduleScope.objects.filter(schedule=schedule, wave=wave).update(wave=target)
+            wave.delete()
+            self._normalize_waves_order(schedule)
+            schedule.save(update_fields=["updated_at"])
+
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
+
+    @action(detail=True, methods=["post"], url_path="scopes/move_to_wave", permission_classes=[IsAuthenticated])
+    def scopes_move_to_wave(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        payload = request.data or {}
+        scope_id = payload.get("scope_id")
+        wave_id = payload.get("wave_id")
+        if not scope_id or not wave_id:
+            return Response({"ok": False, "error": "bad_params"}, status=status.HTTP_400_BAD_REQUEST)
+
+        scope = ScheduleScope.objects.filter(schedule=schedule, id=scope_id).select_related("tournament").first()
+        if not scope:
+            return Response({"ok": False, "error": "not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        wave = ScheduleWave.objects.filter(schedule=schedule, id=wave_id).first()
+        if not wave:
+            return Response({"ok": False, "error": "wave_not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        self._ensure_can_use_tournament_in_schedule(request, schedule, scope.tournament)
+
+        scope.wave = wave
+        scope.save(update_fields=["wave"])
+        schedule.save(update_fields=["updated_at"])
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
+
+    @action(detail=True, methods=["post"], url_path="scopes/remove", permission_classes=[IsAuthenticated])
+    def scopes_remove(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        payload = request.data or {}
+        scope_id = payload.get("scope_id")
+        tournament_id = payload.get("tournament_id")
+        if not scope_id and not tournament_id:
+            return Response({"ok": False, "error": "no_scope"}, status=status.HTTP_400_BAD_REQUEST)
+
+        qs = ScheduleScope.objects.filter(schedule=schedule)
+        if scope_id:
+            qs = qs.filter(id=scope_id)
+        else:
+            qs = qs.filter(tournament_id=tournament_id)
+
+        scope = qs.select_related("tournament").first()
+        if not scope:
+            return Response({"ok": False, "error": "not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if ScheduleScope.objects.filter(schedule=schedule).count() <= 1:
+            return Response({"ok": False, "error": "cannot_remove_last"}, status=status.HTTP_400_BAD_REQUEST)
+
+        self._ensure_can_use_tournament_in_schedule(request, schedule, scope.tournament)
+
+        with transaction.atomic():
+            scope.delete()
+
+            # переиндексация order
+            scopes = list(ScheduleScope.objects.filter(schedule=schedule).order_by("order", "id"))
+            for idx, s in enumerate(scopes, start=1):
+                if int(s.order or 0) != idx:
+                    s.order = idx
+                    s.save(update_fields=["order"])
+
+            schedule.save(update_fields=["updated_at"])
+
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
+
+    @action(detail=True, methods=["post"], url_path="scopes/reorder", permission_classes=[IsAuthenticated])
+    def scopes_reorder(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        payload = request.data or {}
+        order_ids = payload.get("scope_ids")
+        if not isinstance(order_ids, list) or not order_ids:
+            return Response({"ok": False, "error": "bad_scope_ids"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            order_ids = [int(x) for x in order_ids]
+        except Exception:
+            return Response({"ok": False, "error": "bad_scope_ids"}, status=status.HTTP_400_BAD_REQUEST)
+
+        existing = list(ScheduleScope.objects.filter(schedule=schedule).order_by("order", "id"))
+        existing_ids = [int(s.id) for s in existing]
+        if sorted(existing_ids) != sorted(order_ids):
+            return Response({"ok": False, "error": "scope_ids_mismatch"}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            for idx, sid in enumerate(order_ids, start=1):
+                ScheduleScope.objects.filter(schedule=schedule, id=sid).update(order=idx)
+            schedule.save(update_fields=["updated_at"])
+
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
+
+    @action(detail=True, methods=["post"], url_path="scopes/update", permission_classes=[IsAuthenticated])
+    def scopes_update(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        payload = request.data or {}
+        scope_id = payload.get("scope_id")
+        if not scope_id:
+            return Response({"ok": False, "error": "no_scope_id"}, status=status.HTTP_400_BAD_REQUEST)
+
+        scope = ScheduleScope.objects.filter(schedule=schedule, id=scope_id).select_related("tournament").first()
+        if not scope:
+            return Response({"ok": False, "error": "not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        self._ensure_can_use_tournament_in_schedule(request, schedule, scope.tournament)
+        self._validate_schedule_scope_tournament(schedule, scope.tournament)
+
+        start_mode = payload.get("start_mode")
+        start_time_value = payload.get("start_time")
+
+        if start_mode is not None:
+            start_mode = str(start_mode)
+            if start_mode not in {ScheduleScope.StartMode.FIXED, ScheduleScope.StartMode.AFTER_PREVIOUS}:
+                return Response({"ok": False, "error": "bad_start_mode"}, status=status.HTTP_400_BAD_REQUEST)
+            scope.start_mode = start_mode
+
+        if scope.start_mode == ScheduleScope.StartMode.FIXED:
+            if start_time_value is not None:
+                try:
+                    if isinstance(start_time_value, str):
+                        parts = start_time_value.split(":")
+                        hh = parts[0]
+                        mm = parts[1] if len(parts) > 1 else "0"
+                        scope.start_time = time(int(hh), int(mm))
+                    else:
+                        scope.start_time = start_time_value
+                except Exception:
+                    return Response({"ok": False, "error": "bad_start_time"}, status=status.HTTP_400_BAD_REQUEST)
+            if scope.start_time is None:
+                return Response({"ok": False, "error": "start_time_required"}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            scope.start_time = None
+
+        bound_courts = payload.get("bound_courts")
+        if bound_courts is not None:
+            try:
+                court_ids = [int(x) for x in (bound_courts or [])]
+            except Exception:
+                return Response({"ok": False, "error": "bad_bound_courts"}, status=status.HTTP_400_BAD_REQUEST)
+
+            self._validate_bound_courts(schedule, scope, court_ids)
+
+            with transaction.atomic():
+                scope.save(update_fields=["start_mode", "start_time"])
+                ScheduleScopeCourt.objects.filter(scope=scope).delete()
+                if court_ids:
+                    ScheduleScopeCourt.objects.bulk_create(
+                        [ScheduleScopeCourt(scope=scope, court_id=c_id) for c_id in sorted(set(court_ids))]
+                    )
+                schedule.save(update_fields=["updated_at"])
+
+            schedule.refresh_from_db()
+            return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
+
+        scope.save(update_fields=["start_mode", "start_time"])
+        schedule.save(update_fields=["updated_at"])
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
 
     def _compute_rr_row_by_team(self, slots_qs: Any) -> dict[tuple[int, int, int], int]:
         rr_row_by_team: dict[tuple[int, int, int], int] = {}
@@ -108,6 +675,22 @@ class ScheduleViewSet(viewsets.ModelViewSet):
     def _match_meta_label(self, m: Any, rr_row_by_team: dict[tuple[int, int, int], int]) -> str:
         if not m:
             return ""
+
+        def _schedule_prefix(match_obj: Any) -> str:
+            try:
+                t = getattr(match_obj, "tournament", None)
+                if not t:
+                    return ""
+                val = str(getattr(t, "name_for_schedule", "") or "").strip()
+                if not val:
+                    tid = getattr(t, "id", None)
+                    if tid is not None:
+                        val = f"#{tid}"
+                if len(val) > 10:
+                    val = val[:10]
+                return val
+            except Exception:
+                return ""
 
         gi = getattr(m, "group_index", None)
 
@@ -175,17 +758,20 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         except Exception:
             system = ""
 
+        prefix = _schedule_prefix(m)
+
         if system == "knockout":
             rn = str(getattr(m, "round_name", "") or "").strip()
             if rn:
-                return rn
+                return " ".join([p for p in [prefix, rn] if p])
             ri = getattr(m, "round_index", None)
-            return f"Раунд {ri}".strip() if ri is not None else ""
+            base = f"Раунд {ri}".strip() if ri is not None else ""
+            return " ".join([p for p in [prefix, base] if p])
 
         if system == "round_robin":
             rn = str(getattr(m, "round_name", "") or "").strip()
             if rn and "гр." in rn and "•" in rn:
-                return rn
+                return " ".join([p for p in [prefix, rn] if p])
             try:
                 gi_int = int(gi) if gi is not None else 0
                 t_id = int(getattr(m, "tournament_id", 0) or 0)
@@ -194,9 +780,10 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                 r1 = rr_row_by_team.get((t_id, gi_int, a_id))
                 r2 = rr_row_by_team.get((t_id, gi_int, b_id))
                 pair = f"{r1}-{r2}" if (r1 is not None and r2 is not None) else ""
-                return " • ".join([p for p in [group, pair] if p])
+                base = " • ".join([p for p in [group, pair] if p])
+                return " ".join([p for p in [prefix, base] if p])
             except Exception:
-                return group
+                return " ".join([p for p in [prefix, group] if p])
 
         if system == "king":
             def _raw_team_label(team: Any) -> str:
@@ -219,9 +806,10 @@ class ScheduleViewSet(viewsets.ModelViewSet):
             mid = getattr(m, "id", None)
             fallback = f"Матч {mid}" if mid is not None else ""
             meta = vs or rn or fallback
-            return " • ".join([p for p in [group, meta] if p])
+            base = " • ".join([p for p in [group, meta] if p])
+            return " ".join([p for p in [prefix, base] if p])
 
-        return group
+        return " ".join([p for p in [prefix, group] if p])
 
     def destroy(self, request, *args, **kwargs):
         schedule: Schedule = self.get_object()
@@ -285,6 +873,16 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             schedule.save(update_fields=["match_duration_minutes", "updated_at"])
 
+            # Preserve scope->court bindings by court index.
+            # `save` recreates courts, so court IDs change and bindings would be lost otherwise.
+            from .models import ScheduleScopeCourt
+
+            preserved_bindings: list[tuple[int, int]] = list(
+                ScheduleScopeCourt.objects.filter(scope__schedule=schedule)
+                .select_related("court")
+                .values_list("scope_id", "court__index")
+            )
+
             # очищаем дочерние записи
             ScheduleSlot.objects.filter(schedule=schedule).delete()
             ScheduleGlobalBreak.objects.filter(schedule=schedule).delete()
@@ -304,6 +902,17 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                     first_start_time=fst,
                 )
                 court_by_index[idx] = court
+
+            # Restore preserved bindings on recreated courts.
+            if preserved_bindings and court_by_index:
+                restored: list[ScheduleScopeCourt] = []
+                for scope_id, court_index in preserved_bindings:
+                    court_obj = court_by_index.get(int(court_index))
+                    if not court_obj:
+                        continue
+                    restored.append(ScheduleScopeCourt(scope_id=int(scope_id), court_id=int(court_obj.id)))
+                if restored:
+                    ScheduleScopeCourt.objects.bulk_create(restored, ignore_conflicts=True)
 
             # создаём запуски
             run_by_index = {}
@@ -551,6 +1160,12 @@ class ScheduleViewSet(viewsets.ModelViewSet):
 
                 return html.escape("" if v is None else str(v))
 
+            def fmt_date(d: Any) -> str:
+                try:
+                    return d.strftime("%d.%m.%Y") if d else ""
+                except Exception:
+                    return str(d or "")
+
             def _raw_team_label(team: Any) -> str:
                 if not team:
                     return ""
@@ -755,7 +1370,7 @@ class ScheduleViewSet(viewsets.ModelViewSet):
       <div class="h1">Расписание</div>
       <div class="h2">{esc(title)}</div>
     </div>
-    <div class=\"date\">{esc(schedule.date)}</div>
+    <div class=\"date\">{esc(fmt_date(schedule.date))}</div>
   </div>
 
   <table>
@@ -896,7 +1511,11 @@ class ScheduleViewSet(viewsets.ModelViewSet):
             c.drawString(margin_x, page_h - margin_y - 18, "Расписание")
             c.setFont(font_name, 11)
             c.drawString(margin_x, page_h - margin_y - 36, f"{title}")
-            c.drawRightString(page_w - margin_x, page_h - margin_y - 18, str(schedule.date))
+            try:
+                date_text = schedule.date.strftime("%d.%m.%Y") if getattr(schedule, "date", None) else ""
+            except Exception:
+                date_text = str(getattr(schedule, "date", "") or "")
+            c.drawRightString(page_w - margin_x, page_h - margin_y - 18, date_text)
 
         def draw_table_header(courts_subset: list[Any], x0: float, y0: float, col_w: float):
             # фон
@@ -1268,7 +1887,11 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                 p2.runs[0].font.size = Pt(10)
             except Exception:
                 pass
-            p3 = doc.add_paragraph(str(schedule.date))
+            try:
+                date_text = schedule.date.strftime("%d.%m.%Y") if getattr(schedule, "date", None) else ""
+            except Exception:
+                date_text = str(getattr(schedule, "date", "") or "")
+            p3 = doc.add_paragraph(date_text)
             try:
                 p3.runs[0].font.size = Pt(10)
             except Exception:
@@ -1455,7 +2078,10 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         ws["A1"] = "Расписание"
         ws["A1"].font = Font(bold=True, size=14)
         ws["A2"] = title
-        ws["A3"] = str(schedule.date)
+        try:
+            ws["A3"] = schedule.date.strftime("%d.%m.%Y") if getattr(schedule, "date", None) else ""
+        except Exception:
+            ws["A3"] = str(getattr(schedule, "date", "") or "")
 
         row = 5
         ws.cell(row=row, column=1, value="Запуск").font = Font(bold=True)

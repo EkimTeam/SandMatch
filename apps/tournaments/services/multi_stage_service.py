@@ -96,6 +96,47 @@ class MultiStageService:
             status=Tournament.Status.CREATED,
         )
 
+        # Для олимпийки создаём дефолтную сетку сразу, чтобы стадия открывалась без ручного create_knockout_bracket.
+        if new_stage.system == Tournament.System.KNOCKOUT:
+            from apps.tournaments.models import DrawPosition, KnockoutBracket
+            from apps.tournaments.services.knockout import (
+                create_bye_positions,
+                generate_initial_matches,
+                validate_bracket_size,
+            )
+
+            def _compute_bracket_size(base_participants: int) -> int:
+                n = int(base_participants or 0)
+                if n < 4:
+                    n = 4
+                size = 1
+                while size < n:
+                    size *= 2
+                return size
+
+            if not new_stage.knockout_brackets.exists():
+                base = int(new_stage.planned_participants or 0)
+                size = _compute_bracket_size(base)
+                if not validate_bracket_size(size):
+                    # Фоллбек: минимально валидная сетка
+                    size = 4
+
+                bracket = KnockoutBracket.objects.create(
+                    tournament=new_stage,
+                    index=1,
+                    size=size,
+                    has_third_place=True,
+                )
+
+                for pos in range(1, size + 1):
+                    DrawPosition.objects.create(bracket=bracket, position=pos)
+
+                num_participants = int(new_stage.planned_participants or 0) or size
+                if num_participants < size:
+                    create_bye_positions(bracket, num_participants)
+
+                generate_initial_matches(bracket)
+
         # Копируем участников
         if copy_participants:
             entries = TournamentEntry.objects.filter(tournament=parent).select_related("team")

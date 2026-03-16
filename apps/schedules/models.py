@@ -23,9 +23,32 @@ class Schedule(models.Model):
         ordering = ["-created_at"]
 
 
+class ScheduleWave(models.Model):
+    class StartMode(models.TextChoices):
+        FIXED = "fixed", "fixed"
+        AFTER_PREVIOUS = "after_previous", "after_previous"
+
+    schedule = models.ForeignKey(Schedule, on_delete=models.CASCADE, related_name="waves")
+    order = models.PositiveSmallIntegerField(default=1)
+    start_mode = models.CharField(max_length=20, choices=StartMode.choices, default=StartMode.AFTER_PREVIOUS)
+    start_time = models.TimeField(null=True, blank=True)
+    earliest_time = models.TimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["order", "id"]
+
+
 class ScheduleScope(models.Model):
+    class StartMode(models.TextChoices):
+        FIXED = "fixed", "fixed"
+        AFTER_PREVIOUS = "after_previous", "after_previous"
+
     schedule = models.ForeignKey(Schedule, on_delete=models.CASCADE, related_name="scopes")
+    wave = models.ForeignKey(ScheduleWave, null=True, blank=True, on_delete=models.CASCADE, related_name="scopes")
     tournament = models.ForeignKey(Tournament, on_delete=models.CASCADE, related_name="schedule_scopes")
+    order = models.PositiveSmallIntegerField(default=1)
+    start_mode = models.CharField(max_length=20, choices=StartMode.choices, default=StartMode.FIXED)
+    start_time = models.TimeField(null=True, blank=True)
 
     class Meta:
         unique_together = ("schedule", "tournament")
@@ -89,3 +112,11 @@ class ScheduleGlobalBreak(models.Model):
 
     class Meta:
         ordering = ["position"]
+
+
+class ScheduleScopeCourt(models.Model):
+    scope = models.ForeignKey(ScheduleScope, on_delete=models.CASCADE, related_name="bound_courts")
+    court = models.ForeignKey(ScheduleCourt, on_delete=models.CASCADE, related_name="bound_to_scopes")
+
+    class Meta:
+        unique_together = ("scope", "court")

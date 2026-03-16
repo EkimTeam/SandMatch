@@ -21,6 +21,7 @@ class SetFormatAdmin(admin.ModelAdmin):
 class TournamentAdmin(admin.ModelAdmin):
     list_display = (
         "name",
+        "name_for_schedule",
         "date",
         "status",
         "system",
@@ -29,8 +30,9 @@ class TournamentAdmin(admin.ModelAdmin):
         "set_format",
         "ruleset",
     )
+    list_editable = ("name_for_schedule",)
     list_filter = ("status", "system", "participant_mode", "date")
-    search_fields = ("name",)
+    search_fields = ("name", "name_for_schedule")
     actions = ["action_generate_round_robin"]
 
     def action_generate_round_robin(self, request, queryset):

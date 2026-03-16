@@ -261,6 +261,7 @@ class Tournament(models.Model):
         BTR_UNDER = "btr_under", "РПТТ (юн.)"
 
     name = models.CharField(max_length=200)
+    name_for_schedule = models.CharField(max_length=10, blank=True, default="")
     date = models.DateField()
     start_time = models.TimeField(null=True, blank=True, verbose_name="Время начала")
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.CREATED)
@@ -357,6 +358,15 @@ class Tournament(models.Model):
 
     def __str__(self) -> str:
         return f"{self.name} ({self.date})"
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        if not self.name_for_schedule:
+            value = f"#{self.pk}"
+            if len(value) > 10:
+                value = value[:10]
+            Tournament.objects.filter(pk=self.pk, name_for_schedule="").update(name_for_schedule=value)
+            self.name_for_schedule = value
 
     # === Методы для работы с многостадийными турнирами ===
 

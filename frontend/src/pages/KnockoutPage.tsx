@@ -36,13 +36,15 @@ export const KnockoutPage: React.FC = () => {
   const role = user?.role;
   const canManageStructure = role === 'ADMIN' || role === 'ORGANIZER';
   const canManageMatches = canManageStructure || role === 'REFEREE';
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const tournamentId = useMemo(() => Number(id), [id]);
 
   const [bracketId, setBracketId] = useState<number | null>(() => {
+    // Legacy support: old links may contain ?bracket=...
     const p = Number(searchParams.get('bracket'));
     return Number.isFinite(p) && p > 0 ? p : null;
   });
+  const legacyBracketIdRef = useRef<number | null>(bracketId);
   const [data, setData] = useState<BracketData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +55,10 @@ export const KnockoutPage: React.FC = () => {
   const bracketExportRef = useRef<HTMLDivElement | null>(null);
   const canDeleteTournament = !!(tMeta && (tMeta as any).can_delete);
   const [hasOnlineSchedule, setHasOnlineSchedule] = useState<boolean>(false);
+
+  // Многостадийный турнир: модалки/данные для создания стадии (должны быть объявлены до useEffect)
+  const [showCreateStageModal, setShowCreateStageModal] = useState(false);
+  const [masterParticipantsForStageModal, setMasterParticipantsForStageModal] = useState<Array<{ id: number; name: string; place?: number | null }>>([]);
 
   const hasLiveMatches = useMemo(() => {
     const rounds = (data as any)?.rounds;
@@ -86,6 +92,15 @@ export const KnockoutPage: React.FC = () => {
       canceled = true;
     };
   }, [tMeta?.id]);
+
+  // При смене турнира сбрасываем bracketId (в новой схеме URL без ?bracket=),
+  // чтобы на странице пересчитался/создался default bracket.
+  useEffect(() => {
+    setBracketId(null);
+    // Сбрасываем кеш BYE-загрузки между турнирами
+    byeLoadedRef.current = {};
+    setByePositions(new Set());
+  }, [tournamentId]);
 
   // Состояние для Drag & Drop
   const [dragDropState, setDragDropState] = useState<DragDropState>({
@@ -164,7 +179,102 @@ export const KnockoutPage: React.FC = () => {
   const [masterSystem, setMasterSystem] = useState<'round_robin' | 'knockout' | 'king' | null>(null);
   const [canAddStage, setCanAddStage] = useState(false);
   const [showAddFromStageModal, setShowAddFromStageModal] = useState(false);
-  const [showCreateStageModal, setShowCreateStageModal] = useState(false);
+
+  // Загрузка участников мастер-турнира для модалки создания стадии
+  useEffect(() => {
+    if (!showCreateStageModal) return;
+    if (!tMeta?.id) return;
+    let canceled = false;
+    (async () => {
+      try {
+        const masterId = Number((tMeta as any)?.parent_tournament?.id || (tMeta as any)?.parent_tournament_id || (tMeta as any)?.id);
+        const raw = await tournamentApi.getTournamentParticipants(masterId);
+        if (canceled) return;
+
+        // Важно: для создания стадии нужен team_id (MultiStageService ожидает team_id).
+        const mapped = (Array.isArray(raw) ? raw : [])
+          .map((p: any) => ({
+            id: Number(p?.team_id || 0),
+            name: String(p?.name || '').trim(),
+            place: p?.place != null ? Number(p.place) : null,
+          }))
+          .filter((p: any) => Number.isFinite(p.id) && p.id > 0 && !!p.name);
+
+        // Убираем дубли по team_id
+        const seen = new Set<number>();
+        const unique: Array<{ id: number; name: string; place?: number | null }> = [];
+        for (const p of mapped) {
+          if (seen.has(p.id)) continue;
+          seen.add(p.id);
+          unique.push(p);
+        }
+
+        // Для KO сортировка "по местам" должна группировать по стадиям сетки:
+        // финалисты -> полуфиналисты (без финалистов) -> четвертьфиналисты ...
+        // Если стадия еще не имеет участников (team_1/team_2 = null), она не показывается.
+        try {
+          const rounds = Array.isArray((data as any)?.rounds) ? ((data as any).rounds as any[]) : [];
+          const byTeamId = new Map<number, any>();
+          for (const p of unique) byTeamId.set(Number(p.id), p);
+
+          const maxRoundIdx = Math.max(
+            ...rounds
+              .filter(r => r && !r?.is_third_place)
+              .map(r => Number(r?.round_index ?? -1))
+              .filter(n => Number.isFinite(n)),
+            -1,
+          );
+
+          if (maxRoundIdx >= 0) {
+            const seenTeams = new Set<number>();
+            const ranked: Array<{ id: number; name: string; place?: number | null }> = [];
+            let bucket = 1;
+
+            for (let ri = maxRoundIdx; ri >= 0; ri -= 1) {
+              const round = rounds.find(r => Number(r?.round_index ?? -1) === ri && !r?.is_third_place);
+              const matches = Array.isArray(round?.matches) ? round.matches : [];
+              const teamIds = new Set<number>();
+              for (const m of matches) {
+                const t1 = Number(m?.team_1?.id || 0);
+                const t2 = Number(m?.team_2?.id || 0);
+                if (t1 > 0) teamIds.add(t1);
+                if (t2 > 0) teamIds.add(t2);
+              }
+              if (teamIds.size === 0) continue;
+
+              let addedAny = false;
+              for (const tid of Array.from(teamIds.values())) {
+                if (seenTeams.has(tid)) continue;
+                const p = byTeamId.get(tid);
+                if (!p) continue;
+                seenTeams.add(tid);
+                ranked.push({ ...p, place: bucket });
+                addedAny = true;
+              }
+              if (addedAny) bucket += 1;
+            }
+
+            // Остальных добавим в конец (place=999)
+            const tail = unique
+              .filter(p => !seenTeams.has(Number(p.id)))
+              .map(p => ({ ...p, place: 999 }));
+            setMasterParticipantsForStageModal([...ranked, ...tail]);
+            return;
+          }
+        } catch {
+          // ignore
+        }
+
+        setMasterParticipantsForStageModal(unique);
+      } catch (e) {
+        if (canceled) return;
+        setMasterParticipantsForStageModal([]);
+      }
+    })();
+    return () => {
+      canceled = true;
+    };
+  }, [showCreateStageModal, tMeta?.id, data]);
 
   // Загрузка master-data для многостадийных турниров (список стадий)
   const loadMasterData = useCallback(async () => {
@@ -199,11 +309,25 @@ export const KnockoutPage: React.FC = () => {
 
     // Навигация в зависимости от системы стадии
     if (stage.system === 'knockout') {
-      navigate(`/tournaments/${stage.id}/knockout`);
+      navigate({ pathname: `/tournaments/${stage.id}/knockout`, search: '' });
     } else {
-      navigate(`/tournaments/${stage.id}`);
+      navigate({ pathname: `/tournaments/${stage.id}`, search: '' });
     }
   }, [navigate, stages]);
+
+  const handleDeleteStage = useCallback(async (stageId: number) => {
+    if (!stageId) return;
+    try {
+      const res = await tournamentApi.deleteStage(stageId);
+      if (!res?.ok) {
+        window.alert(res?.error || 'Не удалось удалить стадию');
+        return;
+      }
+      await loadMasterData();
+    } catch (e: any) {
+      window.alert(e?.response?.data?.error || 'Не удалось удалить стадию');
+    }
+  }, [loadMasterData]);
 
   // Обработчик сохранения участников из предыдущей стадии
   const handleSaveParticipantsFromStage = async (selectedTeamIds: number[]) => {
@@ -633,14 +757,14 @@ export const KnockoutPage: React.FC = () => {
     }
   };
 
-  const loadDraw = useCallback(async () => {
-    if (!tournamentId || !bracketId) return;
+  const loadDrawById = useCallback(async (resolvedBracketId: number) => {
+    if (!tournamentId || !resolvedBracketId) return;
     setLoading(true);
     setError(null);
     try {
       // Добавляем timestamp для предотвращения кэширования
       const timestamp = Date.now();
-      const resp = await tournamentApi.getBracketDraw(tournamentId, bracketId, timestamp);
+      const resp = await tournamentApi.getBracketDraw(tournamentId, resolvedBracketId, timestamp);
       // Создаём новый объект для гарантированного обновления React
       setData({ ...resp } as BracketData);
       
@@ -679,11 +803,11 @@ export const KnockoutPage: React.FC = () => {
       
       // Загрузить BYE позиции (один раз на bracketId)
       try {
-        if (bracketId && !byeLoadedRef.current[bracketId]) {
-          const byeResp = await api.get(`/tournaments/${tournamentId}/brackets/${bracketId}/bye_positions/`);
+        if (resolvedBracketId && !byeLoadedRef.current[resolvedBracketId]) {
+          const byeResp = await api.get(`/tournaments/${tournamentId}/brackets/${resolvedBracketId}/bye_positions/`);
           const byeData = byeResp.data;
           setByePositions(new Set(byeData.bye_positions || []));
-          byeLoadedRef.current[bracketId] = true;
+          byeLoadedRef.current[resolvedBracketId] = true;
         }
       } catch (e) {
         console.error('Failed to load BYE positions:', e);
@@ -693,7 +817,12 @@ export const KnockoutPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [tournamentId, bracketId]);
+  }, [tournamentId]);
+
+  const loadDraw = useCallback(async () => {
+    if (!bracketId) return;
+    await loadDrawById(bracketId);
+  }, [bracketId, loadDrawById]);
 
   // Загрузка участников турнира
   const loadParticipants = useCallback(async () => {
@@ -851,8 +980,11 @@ export const KnockoutPage: React.FC = () => {
       // 2. Загрузка участников (read-only для REGISTERED/гостей)
       await loadParticipants();
 
-      // 3. Определяем/создаём bracketId
-      if (!bracketId) {
+      // 3. Определяем/создаём bracketId (важно: не полагаемся на setState до loadDraw)
+      let resolvedBracketId: number | null = legacyBracketIdRef.current;
+      legacyBracketIdRef.current = null;
+
+      if (!resolvedBracketId) {
         try {
           if (canManageStructure) {
             // Организатор / админ: можем создать (или получить существующую) сетку
@@ -860,23 +992,15 @@ export const KnockoutPage: React.FC = () => {
             const resp = await tournamentApi.createKnockoutBracket(tournamentId, { size, has_third_place: true });
             const bid = resp?.bracket?.id;
             if (bid) {
+              resolvedBracketId = bid;
               setBracketId(bid);
-              setSearchParams(prev => {
-                const sp = new URLSearchParams(prev);
-                sp.set('bracket', String(bid));
-                return sp;
-              }, { replace: true });
             }
           } else {
             // REGISTERED / гость / REFEREE: только пытаемся получить уже существующую сетку
             const b = await tournamentApi.getDefaultBracket(tournamentId);
             if (b && b.id) {
+              resolvedBracketId = b.id;
               setBracketId(b.id);
-              setSearchParams(prev => {
-                const sp = new URLSearchParams(prev);
-                sp.set('bracket', String(b.id));
-                return sp;
-              }, { replace: true });
             } else {
               setError('Сетка плей-офф ещё не создана организатором.');
               return;
@@ -887,18 +1011,18 @@ export const KnockoutPage: React.FC = () => {
           return;
         }
       } else {
-        // bracketId уже есть в URL
-        setSearchParams(prev => {
-          const sp = new URLSearchParams(prev);
-          sp.set('bracket', String(bracketId));
-          return sp;
-        }, { replace: true });
+        // legacy bracketId from URL
+        setBracketId(resolvedBracketId);
       }
 
       // 4. Загружаем сетку
-      await loadDraw();
+      if (!resolvedBracketId) {
+        setError('Сетка плей-офф не найдена');
+        return;
+      }
+      await loadDrawById(resolvedBracketId);
     })();
-  }, [loadDraw, bracketId, tournamentId, loadParticipants, canManageStructure, setSearchParams, user, loadMasterData]);
+  }, [loadDrawById, tournamentId, loadParticipants, canManageStructure, user, loadMasterData]);
 
   // createBracket/demos удалены — управление сетками теперь через бэк/модалку создания турнира
   // demoCreateSeed8 удалена
@@ -1458,6 +1582,7 @@ export const KnockoutPage: React.FC = () => {
               currentStageId={currentStageId ?? tournamentId}
               canEdit={canManageStructure}
               onStageChange={handleStageChange}
+              onDeleteStage={handleDeleteStage}
             />
           </div>
         )}
@@ -1910,7 +2035,7 @@ export const KnockoutPage: React.FC = () => {
       )}
 
       {/* Нижние общие кнопки */}
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-start', padding: '16px', borderTop: '1px solid #eee' }} data-export-exclude="true">
+      <div style={{ display: 'flex', gap: 8, rowGap: 8, flexWrap: 'wrap', justifyContent: 'flex-start', padding: '16px', borderTop: '1px solid #eee' }} data-export-exclude="true">
         {tMeta && hasOnlineSchedule && hasLiveMatches && (
           <button className="btn" disabled={saving} onClick={() => navigate(`/tournaments/${tMeta.id}/schedule?view=timeline&fact=1`)}>
             Расписание онлайн
@@ -2243,19 +2368,19 @@ export const KnockoutPage: React.FC = () => {
           tournamentId={tMeta.id}
           masterSystem={masterSystem}
           masterParticipantMode={tMeta.participant_mode as 'singles' | 'doubles'}
-          parentStageName={tMeta.stage_name || null}
-          parentPlannedParticipants={tMeta.planned_participants || undefined}
-          parentGroupsCount={undefined}
-          parentDate={tMeta.date ? tMeta.date : undefined}
+          parentStageName={(tMeta as any).stage_name || null}
+          parentPlannedParticipants={(tMeta as any).planned_participants || 0}
+          parentGroupsCount={(tMeta as any).groups_count || 1}
+          parentDate={(tMeta as any).date || ''}
           parentStartTime={(tMeta as any).start_time || null}
           parentIsRatingCalc={tMeta.is_rating_calc ?? true}
           parentSetFormatId={(tMeta as any).set_format?.id || undefined}
-          currentParticipants={[]}
-          setFormats={[]}
+          currentParticipants={masterParticipantsForStageModal}
+          setFormats={setFormats}
           onStageCreated={async (stageId) => {
             setShowCreateStageModal(false);
             if (stageId) {
-              navigate(`/tournaments/${stageId}/knockout`);
+              navigate({ pathname: `/tournaments/${stageId}/knockout`, search: '' });
             }
           }}
         />
