@@ -65,6 +65,7 @@ from apps.schedules.models import (
     ScheduleRun,
     ScheduleScope,
     ScheduleSlot,
+    ScheduleWave,
 )
 from apps.schedules.serializers import ScheduleSerializer
 
@@ -111,6 +112,7 @@ def generate_announcement_text(tournament) -> str:
     start_time_val = getattr(tournament, "start_time", None)
     if start_time_val is None:
         from datetime import time
+        from apps.schedules.models import ScheduleWave
 
         start_time_val = time(14, 0)
 
@@ -508,7 +510,7 @@ class TournamentViewSet(viewsets.ModelViewSet):
             runs_count = max(1, int(math.ceil(pool_count / courts_count))) if pool_count > 0 else 2
 
         from datetime import time
-        from apps.schedules.models import ScheduleCourt, ScheduleRun, ScheduleScope, ScheduleSlot
+        from apps.schedules.models import ScheduleCourt, ScheduleRun, ScheduleScope, ScheduleSlot, ScheduleWave
 
         try:
             if isinstance(start_time_value, str):
@@ -529,8 +531,17 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 created_by=request.user,
                 is_draft=True,
             )
+
+            wave = ScheduleWave.objects.create(
+                schedule=schedule,
+                order=1,
+                start_mode=ScheduleWave.StartMode.FIXED,
+                start_time=start_time_obj,
+                earliest_time=None,
+            )
             ScheduleScope.objects.create(
                 schedule=schedule,
+                wave=wave,
                 tournament=tournament,
                 order=1,
                 start_mode=ScheduleScope.StartMode.FIXED,
@@ -623,10 +634,37 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 is_draft=False,
             )
 
+            wave_by_old_id = {}
+            first_wave = None
+            for w in draft.waves.all().order_by("order", "id"):
+                nw = ScheduleWave.objects.create(
+                    schedule=schedule,
+                    order=getattr(w, "order", 1) or 1,
+                    start_mode=getattr(w, "start_mode", ScheduleWave.StartMode.AFTER_PREVIOUS) or ScheduleWave.StartMode.AFTER_PREVIOUS,
+                    start_time=getattr(w, "start_time", None),
+                    earliest_time=getattr(w, "earliest_time", None),
+                )
+                wave_by_old_id[int(w.id)] = nw
+                if first_wave is None:
+                    first_wave = nw
+            if first_wave is None:
+                first_wave = ScheduleWave.objects.create(
+                    schedule=schedule,
+                    order=1,
+                    start_mode=ScheduleWave.StartMode.AFTER_PREVIOUS,
+                    start_time=None,
+                    earliest_time=None,
+                )
+
             # scopes: по факту будет один турнир, но копируем все на всякий случай
             for scope in draft.scopes.all():
+                old_wave_id = getattr(scope, "wave_id", None)
+                new_wave = wave_by_old_id.get(int(old_wave_id)) if old_wave_id else None
+                if new_wave is None:
+                    new_wave = first_wave
                 ScheduleScope.objects.create(
                     schedule=schedule,
+                    wave=new_wave,
                     tournament=scope.tournament,
                     order=getattr(scope, "order", 1) or 1,
                     start_mode=getattr(scope, "start_mode", ScheduleScope.StartMode.FIXED) or ScheduleScope.StartMode.FIXED,
@@ -784,8 +822,17 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 match_duration_minutes=match_duration_minutes,
                 created_by=request.user,
             )
+
+            wave = ScheduleWave.objects.create(
+                schedule=schedule,
+                order=1,
+                start_mode=ScheduleWave.StartMode.FIXED,
+                start_time=start_time_obj,
+                earliest_time=None,
+            )
             ScheduleScope.objects.create(
                 schedule=schedule,
+                wave=wave,
                 tournament=tournament,
                 order=1,
                 start_mode=ScheduleScope.StartMode.FIXED,

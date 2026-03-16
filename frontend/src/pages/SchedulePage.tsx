@@ -40,6 +40,19 @@ export const SchedulePage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [schedule, setSchedule] = useState<ScheduleDTO | null>(null);
 
+  const [showScopesModal, setShowScopesModal] = useState(false);
+  const [scopeTournamentTitleById, setScopeTournamentTitleById] = useState<Map<number, string>>(new Map());
+  const [availableTournamentQuery, setAvailableTournamentQuery] = useState<string>('');
+  const [availableTournaments, setAvailableTournaments] = useState<
+    Array<{ id: number; name: string; date: string | null; start_time: string | null; status: string; created_by: number | null }>
+  >([]);
+  const [availableTournamentsLoading, setAvailableTournamentsLoading] = useState<boolean>(false);
+  const [selectedTournamentToAddId, setSelectedTournamentToAddId] = useState<number | null>(null);
+  const [tournamentStartTimeById, setTournamentStartTimeById] = useState<Map<number, string | null>>(new Map());
+  const [scopeStartTimeTextById, setScopeStartTimeTextById] = useState<Map<number, string>>(new Map());
+  const [waveStartTimeTextById, setWaveStartTimeTextById] = useState<Map<number, string>>(new Map());
+  const [waveEarliestTimeTextById, setWaveEarliestTimeTextById] = useState<Map<number, string>>(new Map());
+
   const [courtsCount, setCourtsCount] = useState<number>(6);
   const [matchDuration, setMatchDuration] = useState<number>(40);
   const [courtsCountText, setCourtsCountText] = useState<string>('6');
@@ -52,6 +65,14 @@ export const SchedulePage: React.FC = () => {
   const [rrPairByMatchId, setRrPairByMatchId] = useState<Map<number, [number, number]>>(new Map());
   const [kingLetterByGroupPlayerId, setKingLetterByGroupPlayerId] = useState<Map<string, string>>(new Map());
   const [surnameCounts, setSurnameCounts] = useState<Map<string, number>>(new Map());
+
+  const hhmm = (raw: string | null | undefined): string => {
+    const s = String(raw || '').trim();
+    if (!s) return '';
+    const parts = s.split(':');
+    if (parts.length >= 2) return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}`;
+    return s;
+  };
 
   const isProAmRoundRobin = useMemo(() => {
     if (tournamentSystem !== 'round_robin') return false;
@@ -173,6 +194,312 @@ export const SchedulePage: React.FC = () => {
       }
     >
   >(new Map());
+
+  const sortedScopes = useMemo(() => {
+    const scopes = (schedule?.scopes || []).slice();
+    scopes.sort((a: any, b: any) => {
+      const waves: any[] = Array.isArray((schedule as any)?.waves) ? ((schedule as any).waves as any[]) : [];
+      const wOrder = (wid: any): number => {
+        const id = wid == null ? null : Number(wid);
+        if (!id) return 1;
+        const w = waves.find(x => Number((x as any)?.id) === id);
+        const o = Number((w as any)?.order ?? 0);
+        return Number.isFinite(o) && o > 0 ? o : 1;
+      };
+      const awo = wOrder((a as any)?.wave);
+      const bwo = wOrder((b as any)?.wave);
+      if (awo !== bwo) return awo - bwo;
+      const ao = Number((a as any)?.order ?? 0);
+      const bo = Number((b as any)?.order ?? 0);
+      if (ao !== bo) return ao - bo;
+      return Number((a as any)?.id ?? 0) - Number((b as any)?.id ?? 0);
+    });
+    return scopes;
+  }, [schedule?.scopes, (schedule as any)?.waves]);
+
+  const sortedWaves = useMemo(() => {
+    const waves: any[] = Array.isArray((schedule as any)?.waves) ? (((schedule as any).waves || []) as any[]) : [];
+    const res = waves.slice();
+    res.sort((a: any, b: any) => (Number(a?.order ?? 0) - Number(b?.order ?? 0)) || (Number(a?.id ?? 0) - Number(b?.id ?? 0)));
+    return res;
+  }, [(schedule as any)?.waves]);
+
+  const waveIdByScopeId = useMemo(() => {
+    const m = new Map<number, number | null>();
+    for (const s of sortedScopes) {
+      const sid = Number((s as any)?.id);
+      if (!sid) continue;
+      const wid = (s as any)?.wave;
+      m.set(sid, wid == null ? null : Number(wid));
+    }
+    return m;
+  }, [sortedScopes]);
+
+  useEffect(() => {
+    const next = new Map<number, string>();
+    for (const s of sortedScopes || []) {
+      const id = Number((s as any)?.id);
+      if (!Number.isFinite(id) || id <= 0) continue;
+      const raw = (s as any)?.start_time ? String((s as any)?.start_time) : '';
+      next.set(id, raw);
+    }
+    setScopeStartTimeTextById(next);
+  }, [sortedScopes]);
+
+  useEffect(() => {
+    let canceled = false;
+
+    const run = async () => {
+      const scopes = sortedScopes || [];
+      const ids = Array.from(new Set(scopes.map(s => Number(s?.tournament)).filter(Boolean)));
+      if (!ids.length) {
+        setScopeTournamentTitleById(new Map());
+        setTournamentStartTimeById(new Map());
+        return;
+      }
+
+      try {
+        const items = await Promise.all(
+          ids.map(async tid => {
+            try {
+              const t = await tournamentApi.getById(tid);
+              return [
+                tid,
+                String((t as any)?.name || `#${tid}`),
+                hhmm((t as any)?.start_time),
+              ] as const;
+            } catch {
+              return [tid, `#${tid}`, ''] as const;
+            }
+          }),
+        );
+        if (canceled) return;
+        const map = new Map<number, string>();
+        const stMap = new Map<number, string>();
+        for (const [tid, title, st] of items) {
+          map.set(tid, title);
+          if (st) stMap.set(tid, st);
+        }
+        setScopeTournamentTitleById(map);
+        setTournamentStartTimeById(stMap);
+      } catch {
+        if (canceled) return;
+        setScopeTournamentTitleById(new Map());
+        setTournamentStartTimeById(new Map());
+      }
+    };
+
+    run();
+    return () => {
+      canceled = true;
+    };
+  }, [sortedScopes]);
+
+  const handleScopesReorder = async (scopeIds: number[]) => {
+    if (!schedule) return;
+    setSaving(true);
+    try {
+      const res: any = await scheduleApi.scopesReorder(schedule.id, scopeIds);
+      if (!res?.ok) {
+        alert(res?.detail || res?.error || 'Не удалось изменить порядок турниров');
+        return;
+      }
+      setSchedule(res.schedule);
+      setLastSavedSchedule(res.schedule);
+      await refreshSideData(res.schedule.id);
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || e?.message || 'Не удалось изменить порядок турниров');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleWaveAdd = async () => {
+    if (!schedule) return;
+    setSaving(true);
+    try {
+      const res: any = await scheduleApi.wavesAdd(schedule.id, {});
+      if (!res?.ok) {
+        alert(res?.detail || res?.error || 'Не удалось добавить волну');
+        return;
+      }
+      setSchedule(res.schedule);
+      await refreshSideData(res.schedule.id);
+    } catch (e: any) {
+      alert(e?.message || 'Не удалось добавить волну');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleWaveUpdate = async (waveId: number, patch: any) => {
+    if (!schedule) return;
+    setSaving(true);
+    try {
+      const res: any = await scheduleApi.wavesUpdate(schedule.id, { wave_id: waveId, ...patch });
+      if (!res?.ok) {
+        alert(res?.detail || res?.error || 'Не удалось обновить волну');
+        return;
+      }
+      setSchedule(res.schedule);
+      await refreshSideData(res.schedule.id);
+    } catch (e: any) {
+      alert(e?.message || 'Не удалось обновить волну');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleWaveRemove = async (waveId: number) => {
+    if (!schedule) return;
+    if (!window.confirm('Удалить волну? Турниры из неё будут перемещены в первую волну.')) return;
+    setSaving(true);
+    try {
+      const res: any = await scheduleApi.wavesRemove(schedule.id, { wave_id: waveId });
+      if (!res?.ok) {
+        alert(res?.detail || res?.error || 'Не удалось удалить волну');
+        return;
+      }
+      setSchedule(res.schedule);
+      await refreshSideData(res.schedule.id);
+    } catch (e: any) {
+      alert(e?.message || 'Не удалось удалить волну');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleWavesReorder = async (waveIds: number[]) => {
+    if (!schedule) return;
+    setSaving(true);
+    try {
+      const res: any = await scheduleApi.wavesReorder(schedule.id, waveIds);
+      if (!res?.ok) {
+        alert(res?.detail || res?.error || 'Не удалось изменить порядок волн');
+        return;
+      }
+      setSchedule(res.schedule);
+      await refreshSideData(res.schedule.id);
+    } catch (e: any) {
+      alert(e?.message || 'Не удалось изменить порядок волн');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleScopeMoveToWave = async (scopeId: number, waveId: number) => {
+    if (!schedule) return;
+    setSaving(true);
+    try {
+      const res: any = await scheduleApi.scopesMoveToWave(schedule.id, { scope_id: scopeId, wave_id: waveId });
+      if (!res?.ok) {
+        alert(res?.detail || res?.error || 'Не удалось переместить турнир в волну');
+        return;
+      }
+      setSchedule(res.schedule);
+      await refreshSideData(res.schedule.id);
+    } catch (e: any) {
+      alert(e?.message || 'Не удалось переместить турнир в волну');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleScopeUpdate = async (scopeId: number, patch: any) => {
+    if (!schedule) return;
+    setSaving(true);
+    try {
+      const res: any = await scheduleApi.scopesUpdate(schedule.id, { scope_id: scopeId, ...patch });
+      if (!res?.ok) {
+        alert(res?.detail || res?.error || 'Не удалось обновить настройки турнира');
+        return;
+      }
+      setSchedule(res.schedule);
+      setLastSavedSchedule(res.schedule);
+      await refreshSideData(res.schedule.id);
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || e?.message || 'Не удалось обновить настройки турнира');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleScopeRemove = async (scopeId: number) => {
+    if (!schedule) return;
+    if (!window.confirm('Удалить турнир из мульти-расписания?')) return;
+    setSaving(true);
+    try {
+      const res: any = await scheduleApi.scopesRemove(schedule.id, { scope_id: scopeId });
+      if (!res?.ok) {
+        alert(res?.detail || res?.error || 'Не удалось удалить турнир');
+        return;
+      }
+      setSchedule(res.schedule);
+      setLastSavedSchedule(res.schedule);
+      await refreshSideData(res.schedule.id);
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || e?.message || 'Не удалось удалить турнир');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleScopeAdd = async () => {
+    if (!schedule) return;
+    const tid = selectedTournamentToAddId;
+    if (!tid) {
+      alert('Выберите турнир');
+      return;
+    }
+    setSaving(true);
+    try {
+      const res: any = await scheduleApi.scopesAdd(schedule.id, { tournament_id: tid });
+      if (!res?.ok) {
+        alert(res?.detail || res?.error || 'Не удалось добавить турнир');
+        return;
+      }
+      setSchedule(res.schedule);
+      setLastSavedSchedule(res.schedule);
+      setSelectedTournamentToAddId(null);
+      await refreshSideData(res.schedule.id);
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || e?.message || 'Не удалось добавить турнир');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!showScopesModal || !schedule?.id) return;
+    let canceled = false;
+    const run = async () => {
+      setAvailableTournamentsLoading(true);
+      try {
+        const res = await scheduleApi.scopesAvailableTournaments(schedule.id, availableTournamentQuery || undefined);
+        if (canceled) return;
+        const items = res?.tournaments || [];
+        setAvailableTournaments(items);
+        const map = new Map<number, string>();
+        for (const t of items) {
+          const st = hhmm((t as any)?.start_time);
+          if (st) map.set(Number(t.id), st);
+        }
+        setTournamentStartTimeById(map);
+      } catch {
+        if (canceled) return;
+        setAvailableTournaments([]);
+        setTournamentStartTimeById(new Map());
+      } finally {
+        if (!canceled) setAvailableTournamentsLoading(false);
+      }
+    };
+
+    const timer = window.setTimeout(run, 250);
+    return () => {
+      canceled = true;
+      window.clearTimeout(timer);
+    };
+  }, [showScopesModal, schedule?.id, availableTournamentQuery]);
 
   useEffect(() => {
     if (canManage) return;
@@ -1331,10 +1658,125 @@ export const SchedulePage: React.FC = () => {
   };
 
   const autoAssignAndSave = async (sch: ScheduleDTO) => {
-    const mp = await scheduleApi.matchesPool(sch.id);
+    const [mp, pt] = await Promise.all([scheduleApi.matchesPool(sch.id), scheduleApi.plannedTimes(sch.id)]);
     const matches = mp.matches || [];
     const sortedRuns = (sch.runs || []).slice().sort((a, b) => a.index - b.index);
     const sortedCourts = (sch.courts || []).slice().sort((a, b) => a.index - b.index);
+
+    const plannedStartMinutesByRun = new Map<number, number>();
+    const parseMinutes = (raw: any): number | null => {
+      const s = hhmm(raw);
+      if (!s) return null;
+      const parts = s.split(':');
+      if (parts.length < 2) return null;
+      const h = Number(parts[0]);
+      const m = Number(parts[1]);
+      if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+      return h * 60 + m;
+    };
+    try {
+      for (const r of (pt as any)?.runs || []) {
+        const idx = Number((r as any)?.index);
+        const mins = parseMinutes((r as any)?.planned_start_time);
+        if (Number.isFinite(idx) && idx > 0 && mins != null) plannedStartMinutesByRun.set(idx, mins);
+      }
+    } catch {
+      // ignore
+    }
+
+    const waves: any[] = Array.isArray((sch as any)?.waves) ? (((sch as any).waves || []) as any[]) : [];
+    const sortedWavesLocal = waves
+      .slice()
+      .sort((a: any, b: any) => (Number(a?.order ?? 0) - Number(b?.order ?? 0)) || (Number(a?.id ?? 0) - Number(b?.id ?? 0)));
+    const waveOrderById = new Map<number, number>();
+    for (const w of sortedWavesLocal) {
+      const wid = Number((w as any)?.id);
+      if (!wid) continue;
+      const ord = Number((w as any)?.order ?? 0);
+      waveOrderById.set(wid, Number.isFinite(ord) && ord > 0 ? ord : 1);
+    }
+    const waveMinStartMinutesById = new Map<number, number | null>();
+    for (const w of sortedWavesLocal) {
+      const wid = Number((w as any)?.id);
+      if (!wid) continue;
+      const mode = String((w as any)?.start_mode || 'after_previous');
+      const st = parseMinutes((w as any)?.start_time);
+      const et = parseMinutes((w as any)?.earliest_time);
+      const min = Math.max(st ?? 0, et ?? 0);
+      if (mode === 'fixed') {
+        waveMinStartMinutesById.set(wid, st != null ? st : null);
+      } else {
+        waveMinStartMinutesById.set(wid, min > 0 ? min : null);
+      }
+    }
+
+    const scopeByTournamentId = new Map<number, any>();
+    for (const sc of (sch.scopes || []) as any[]) {
+      const tid = Number((sc as any)?.tournament);
+      if (!tid) continue;
+      scopeByTournamentId.set(tid, sc);
+    }
+
+    const courtIndexById = new Map<number, number>();
+    for (const c of sortedCourts) courtIndexById.set(Number(c.id), Number(c.index));
+
+    const reservedCourtIndices = new Set<number>();
+    const boundCourtIndicesByTournamentId = new Map<number, number[]>();
+    for (const [tid, sc] of scopeByTournamentId.entries()) {
+      const raw = (sc as any)?.bound_courts;
+      if (!Array.isArray(raw) || raw.length === 0) continue;
+      const idxs = raw
+        .map((cid: any) => courtIndexById.get(Number(cid)) || 0)
+        .filter((x: number) => Number.isFinite(x) && x > 0)
+        .sort((a: number, b: number) => a - b);
+      if (!idxs.length) continue;
+      boundCourtIndicesByTournamentId.set(tid, idxs);
+      for (const i of idxs) reservedCourtIndices.add(i);
+    }
+
+    const unreservedCourtIndices = sortedCourts
+      .map(c => Number(c.index))
+      .filter(i => Number.isFinite(i) && i > 0 && !reservedCourtIndices.has(i));
+
+    const matchTournamentId = (m: any): number => {
+      const t = m?.tournament;
+      if (typeof t === 'number') return Number(t);
+      if (typeof t === 'string') return Number(t);
+      const id = (t as any)?.id;
+      return id != null ? Number(id) : Number(m?.tournament_id || 0);
+    };
+
+    const allowedCourtsForMatch = (m: any): number[] => {
+      const tid = matchTournamentId(m);
+      const bound = boundCourtIndicesByTournamentId.get(tid);
+      if (bound && bound.length) return bound;
+      if (reservedCourtIndices.size) return unreservedCourtIndices;
+      return sortedCourts.map(c => Number(c.index)).filter(i => Number.isFinite(i) && i > 0);
+    };
+
+    const matchWaveId = (m: any): number | null => {
+      const tid = matchTournamentId(m);
+      const sc = scopeByTournamentId.get(tid);
+      const wid = (sc as any)?.wave;
+      const n = wid == null ? NaN : Number(wid);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    };
+
+    const waveOrderForMatch = (m: any): number => {
+      const wid = matchWaveId(m);
+      if (!wid) return 1;
+      return waveOrderById.get(wid) ?? 1;
+    };
+
+    const isRunAllowedForMatch = (m: any, runIndex: number): boolean => {
+      const mins = plannedStartMinutesByRun.get(runIndex);
+      if (mins == null) return true;
+      const wid = matchWaveId(m);
+      if (!wid) return true;
+      const minStart = waveMinStartMinutesById.get(wid);
+      if (minStart == null) return true;
+      return mins >= minStart;
+    };
 
     const matchByIdFromPool = new Map<number, any>();
     for (const m of matches) {
@@ -1347,8 +1789,7 @@ export const SchedulePage: React.FC = () => {
     // 1) Сначала берем уже назначенные матчи в порядке (run -> court), чтобы "поздние" уезжали вниз.
     const runIndexById = new Map<number, number>();
     for (const r of sortedRuns) runIndexById.set(r.id, r.index);
-    const courtIndexById = new Map<number, number>();
-    for (const c of sortedCourts) courtIndexById.set(c.id, c.index);
+    // courtIndexById already built above
 
     const scheduledSlots = (sch.slots || [])
       .filter(s => s?.slot_type === 'match' && s?.match)
@@ -1369,7 +1810,69 @@ export const SchedulePage: React.FC = () => {
     }
 
     // 2) Затем добиваем остальными матчами (не назначенными или отсутствующими в слотах)
-    for (const mm of matches) {
+    const remaining = matches.slice();
+    remaining.sort((a: any, b: any) => {
+      const wa = waveOrderForMatch(a);
+      const wb = waveOrderForMatch(b);
+      if (wa !== wb) return wa - wb;
+      const sa = String(a?.stage ?? '');
+      const sb = String(b?.stage ?? '');
+      if (sa !== sb) return sa.localeCompare(sb);
+      const ra = Number(a?.round_index ?? 0);
+      const rb = Number(b?.round_index ?? 0);
+      if (ra !== rb) return ra - rb;
+      const ia = Number(a?.order_in_round ?? 0);
+      const ib = Number(b?.order_in_round ?? 0);
+      if (ia !== ib) return ia - ib;
+      return Number(a?.id ?? 0) - Number(b?.id ?? 0);
+    });
+
+    const interleavedRemaining: any[] = [];
+    let i = 0;
+    while (i < remaining.length) {
+      const base = remaining[i];
+      const w = waveOrderForMatch(base);
+      const s = String(base?.stage ?? '');
+      const r = Number(base?.round_index ?? 0);
+      const group: any[] = [];
+      while (i < remaining.length) {
+        const cur = remaining[i];
+        if (waveOrderForMatch(cur) !== w) break;
+        if (String(cur?.stage ?? '') !== s) break;
+        if (Number(cur?.round_index ?? 0) !== r) break;
+        group.push(cur);
+        i += 1;
+      }
+
+      const byTid = new Map<number, any[]>();
+      for (const mm of group) {
+        const tid = matchTournamentId(mm);
+        if (!tid) continue;
+        if (!byTid.has(tid)) byTid.set(tid, []);
+        byTid.get(tid)!.push(mm);
+      }
+      const tids = Array.from(byTid.keys()).sort((a, b) => a - b);
+      let added = 0;
+      while (true) {
+        let progress = false;
+        for (const tid of tids) {
+          const q = byTid.get(tid);
+          if (!q || !q.length) continue;
+          interleavedRemaining.push(q.shift());
+          progress = true;
+          added += 1;
+        }
+        if (!progress) break;
+      }
+
+      if (added < group.length) {
+        for (const mm of group) {
+          if (!interleavedRemaining.includes(mm)) interleavedRemaining.push(mm);
+        }
+      }
+    }
+
+    for (const mm of interleavedRemaining) {
       const mid = Number(mm?.id);
       if (!mid || already.has(mid)) continue;
       already.add(mid);
@@ -1449,6 +1952,14 @@ export const SchedulePage: React.FC = () => {
       return [`${b}:${r - 1}:${2 * o - 1}`, `${b}:${r - 1}:${2 * o}`];
     };
 
+    const koMatchIdByKey = new Map<string, number>();
+    for (const m of matches) {
+      const k = koMatchKey(m);
+      if (k && m?.id != null) koMatchIdByKey.set(k, Number(m.id));
+    }
+
+    const placedRunByKoKey = new Map<string, number>();
+
     const runStateByIndex = new Map<number, { players: Set<number>; koKeys: Set<string> }>();
     for (const r of sortedRuns) {
       runStateByIndex.set(r.index, { players: new Set<number>(), koKeys: new Set<string>() });
@@ -1473,6 +1984,7 @@ export const SchedulePage: React.FC = () => {
     };
 
     const canPlaceInRun = (m: any, runIndex: number) => {
+      if (!isRunAllowedForMatch(m, runIndex)) return false;
       const st = runStateByIndex.get(runIndex) || { players: new Set<number>(), koKeys: new Set<string>() };
       const pids = matchPlayerIds(m);
       if (pids.some(pid => st.players.has(pid))) return false;
@@ -1483,6 +1995,14 @@ export const SchedulePage: React.FC = () => {
         if (key && st.koKeys.has(key)) return false;
         for (const pk of prereqs) {
           if (st.koKeys.has(pk)) return false;
+        }
+
+        // Global KO constraint: prereq matches must be placed in earlier runs
+        for (const pk of prereqs) {
+          if (!koMatchIdByKey.has(pk)) continue;
+          const placedRun = placedRunByKoKey.get(pk);
+          if (placedRun == null) return false;
+          if (placedRun >= runIndex) return false;
         }
         for (const placedKey of st.koKeys) {
           const parts = placedKey.split(':');
@@ -1506,7 +2026,10 @@ export const SchedulePage: React.FC = () => {
         for (const pid of matchPlayerIds(m)) st.players.add(pid);
         if (tournamentSystem === 'knockout') {
           const k = koMatchKey(m);
-          if (k) st.koKeys.add(k);
+          if (k) {
+            st.koKeys.add(k);
+            placedRunByKoKey.set(k, runIndex);
+          }
         }
       }
     };
@@ -1524,7 +2047,13 @@ export const SchedulePage: React.FC = () => {
 
     for (const item of matchQueue) {
       const m = item.m;
-      const preferredCourt = Number(item.preferredCourt) || sortedCourts[cursorCourtPos]?.index || 1;
+      const allowedCourts = allowedCourtsForMatch(m);
+      if (!allowedCourts.length) {
+        nextCell();
+        continue;
+      }
+      const preferredCourtCandidate = Number(item.preferredCourt) || sortedCourts[cursorCourtPos]?.index || 1;
+      const preferredCourt = allowedCourts.includes(preferredCourtCandidate) ? preferredCourtCandidate : allowedCourts[0];
       const currentRun = cursorRun;
       const currentKey = `${currentRun}:${preferredCourt}`;
 
@@ -1533,13 +2062,17 @@ export const SchedulePage: React.FC = () => {
 
       const tryRun = (runIndex: number): boolean => {
         ensureRun(runIndex);
-        const startIdx = sortedCourts.findIndex(c => c.index === preferredCourt);
-        const order = startIdx >= 0 ? [...sortedCourts.slice(startIdx), ...sortedCourts.slice(0, startIdx)] : sortedCourts;
+        const allowedCourtObjs = sortedCourts.filter(c => allowedCourts.includes(Number(c.index)));
+        const startIdx = allowedCourtObjs.findIndex(c => c.index === preferredCourt);
+        const order =
+          startIdx >= 0
+            ? [...allowedCourtObjs.slice(startIdx), ...allowedCourtObjs.slice(0, startIdx)]
+            : allowedCourtObjs;
         for (const c of order) {
-          const k = `${runIndex}:${c.index}`;
+          const k = `${runIndex}:${Number(c.index)}`;
           if (existing.get(k)) continue;
           if (!canPlaceInRun(m, runIndex)) continue;
-          placeInto(m, runIndex, c.index);
+          placeInto(m, runIndex, Number(c.index));
           return true;
         }
         return false;
@@ -1801,6 +2334,47 @@ export const SchedulePage: React.FC = () => {
     if (!canManage) return;
     setSaving(true);
     try {
+      // In multi-tournament mode, schedule is owned by Schedule entity.
+      // tournamentApi.generateSchedule creates a brand-new schedule for a single tournament,
+      // which would drop other scopes/waves. If schedule already exists, we update it in-place.
+      if (!isDraftMode && schedule) {
+        const prevCourts = (schedule.courts || []).slice().sort((a, b) => a.index - b.index);
+        const courts = Array.from({ length: Math.max(1, courtsCount) }).map((_, i) => {
+          const idx = i + 1;
+          const existing = prevCourts.find(c => Number(c.index) === idx);
+          return {
+            ...(existing || { id: -idx, index: idx, name: `Корт ${idx}` }),
+            index: idx,
+            name: (existing?.name || `Корт ${idx}`) as any,
+            first_start_time: startTime,
+          };
+        });
+
+        const prevRuns = (schedule.runs || []).slice().sort((a, b) => a.index - b.index);
+        const runs = prevRuns.length
+          ? prevRuns.map(r => {
+              if (r.index === 1) return { ...r, start_mode: 'fixed', start_time: startTime, not_earlier_time: null };
+              return { ...r, start_mode: 'then', start_time: null, not_earlier_time: null };
+            })
+          : [{ id: -1 as any, index: 1, start_mode: 'fixed', start_time: startTime, not_earlier_time: null } as any];
+
+        const next: ScheduleDTO = {
+          ...schedule,
+          match_duration_minutes: matchDuration,
+          courts: courts as any,
+          runs: runs as any,
+          slots: (schedule.slots || []).map((s: any) => ({ ...s, match: null, slot_type: 'match' })),
+        };
+        const payload = buildSavePayloadFromSchedule(next);
+        const saved = await scheduleApi.save(schedule.id, payload as any);
+        setSchedule(saved.schedule);
+        setLastSavedSchedule(saved.schedule);
+        setIsDirty(false);
+        await refreshSideData(saved.schedule.id);
+        await autoAssignAndSave(saved.schedule);
+        return;
+      }
+
       const res: any = isDraftMode
         ? await tournamentApi.generateDraftSchedule(tournamentId, {
             courts_count: courtsCount,
@@ -2115,6 +2689,397 @@ export const SchedulePage: React.FC = () => {
                 </button>
               </>
             )}
+
+            {schedule && (
+              <button className="btn" disabled={saving} onClick={() => setShowScopesModal(true)}>
+                Турниры
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {schedule && (
+        <div style={{ marginBottom: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {sortedScopes.map(s => {
+            const tid = Number((s as any)?.tournament);
+            const title = scopeTournamentTitleById.get(tid) || `#${tid}`;
+            const wid = (s as any)?.wave;
+            const wObj = sortedWaves.find(w => Number((w as any)?.id) === Number(wid));
+            const waveBadge = wObj ? `Волна ${Number((wObj as any)?.order ?? 0) || 1}` : 'Волна 1';
+            const mode = String((s as any)?.start_mode || '');
+            const st = (s as any)?.start_time ? String((s as any)?.start_time) : '';
+            const badge = mode === 'fixed' ? (st ? `fixed ${st}` : 'fixed') : 'after';
+            return (
+              <div key={(s as any)?.id || `${tid}`} style={{ padding: '6px 10px', border: '1px solid #eee', borderRadius: 10, background: '#fafafa' }}>
+                <div style={{ fontWeight: 700, fontSize: 13 }}>{title}</div>
+                <div style={{ fontSize: 12, opacity: 0.8 }}>{waveBadge} • {badge}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {showScopesModal && schedule && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.4)',
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+          onMouseDown={e => {
+            if (e.target === e.currentTarget) setShowScopesModal(false);
+          }}
+        >
+          <div className="card" style={{ width: 'min(980px, 100%)', maxHeight: '90vh', overflow: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+              <div style={{ fontWeight: 800, fontSize: 16 }}>Турниры в расписании</div>
+              <div style={{ marginLeft: 'auto' }}>
+                <button className="btn" onClick={() => setShowScopesModal(false)} disabled={saving}>Закрыть</button>
+              </div>
+            </div>
+
+            <div style={{ border: '1px solid #eee', borderRadius: 12, padding: 12, marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ fontWeight: 800 }}>Волны</div>
+                <button className="btn" disabled={saving} onClick={handleWaveAdd}>Добавить волну</button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
+                {sortedWaves.map((w: any, idx: number) => {
+                  const waveId = Number(w?.id);
+                  const waveIds = sortedWaves.map(x => Number((x as any)?.id)).filter(Boolean);
+                  const startMode = String(w?.start_mode || 'after_previous');
+                  const startTime = waveStartTimeTextById.get(waveId) ?? (w?.start_time ? String(w.start_time) : '');
+                  const earliestTime = waveEarliestTimeTextById.get(waveId) ?? (w?.earliest_time ? String(w.earliest_time) : '');
+
+                  return (
+                    <div key={waveId} style={{ border: '1px solid #f0f0f0', borderRadius: 12, padding: 12, background: '#fcfcfc' }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <div style={{ fontWeight: 800 }}>Волна {Number(w?.order ?? (idx + 1)) || (idx + 1)}</div>
+                        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <button
+                            className="btn"
+                            disabled={saving || idx === 0}
+                            onClick={() => {
+                              const ids = waveIds.slice();
+                              const i = ids.indexOf(waveId);
+                              if (i <= 0) return;
+                              const tmp = ids[i - 1];
+                              ids[i - 1] = ids[i];
+                              ids[i] = tmp;
+                              handleWavesReorder(ids);
+                            }}
+                          >
+                            ↑
+                          </button>
+                          <button
+                            className="btn"
+                            disabled={saving || idx === sortedWaves.length - 1}
+                            onClick={() => {
+                              const ids = waveIds.slice();
+                              const i = ids.indexOf(waveId);
+                              if (i < 0 || i >= ids.length - 1) return;
+                              const tmp = ids[i + 1];
+                              ids[i + 1] = ids[i];
+                              ids[i] = tmp;
+                              handleWavesReorder(ids);
+                            }}
+                          >
+                            ↓
+                          </button>
+                          <button
+                            className="btn"
+                            disabled={saving || sortedWaves.length <= 1}
+                            style={{ background: '#dc3545', borderColor: '#dc3545' }}
+                            onClick={() => handleWaveRemove(waveId)}
+                          >
+                            Удалить
+                          </button>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 10, alignItems: 'flex-end' }}>
+                        <div>
+                          <div className="text-sm" style={{ marginBottom: 4 }}>Старт волны</div>
+                          <select
+                            className="input"
+                            value={startMode}
+                            onChange={e => {
+                              const v = e.target.value;
+                              if (v === 'fixed') {
+                                const next = hhmm(startTime) || '10:00';
+                                setWaveStartTimeTextById(prev => {
+                                  const m = new Map(prev);
+                                  m.set(waveId, next);
+                                  return m;
+                                });
+                                handleWaveUpdate(waveId, { start_mode: 'fixed', start_time: next });
+                                return;
+                              }
+                              handleWaveUpdate(waveId, { start_mode: 'after_previous', start_time: null });
+                            }}
+                          >
+                            <option value="after_previous">После предыдущих</option>
+                            <option value="fixed">Фиксированное время</option>
+                          </select>
+                        </div>
+
+                        {startMode === 'fixed' && (
+                          <div>
+                            <div className="text-sm" style={{ marginBottom: 4 }}>Время старта</div>
+                            <input
+                              className="input"
+                              value={startTime}
+                              placeholder="10:00"
+                              onChange={e => {
+                                const v = e.target.value;
+                                setWaveStartTimeTextById(prev => {
+                                  const m = new Map(prev);
+                                  m.set(waveId, v);
+                                  return m;
+                                });
+                              }}
+                              onBlur={e => {
+                                const v = (e.target.value || '').trim();
+                                handleWaveUpdate(waveId, { start_mode: 'fixed', start_time: v || null });
+                              }}
+                            />
+                          </div>
+                        )}
+
+                        <div>
+                          <div className="text-sm" style={{ marginBottom: 4 }}>Не раньше</div>
+                          <input
+                            className="input"
+                            value={earliestTime}
+                            placeholder=""
+                            onChange={e => {
+                              const v = e.target.value;
+                              setWaveEarliestTimeTextById(prev => {
+                                const m = new Map(prev);
+                                m.set(waveId, v);
+                                return m;
+                              });
+                            }}
+                            onBlur={e => {
+                              const v = (e.target.value || '').trim();
+                              handleWaveUpdate(waveId, { earliest_time: v || null });
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 16 }}>
+              <div style={{ minWidth: 240 }}>
+                <div className="text-sm" style={{ marginBottom: 4 }}>Поиск</div>
+                <input
+                  className="input"
+                  value={availableTournamentQuery}
+                  onChange={e => setAvailableTournamentQuery(e.target.value)}
+                  placeholder="Название турнира"
+                />
+              </div>
+              <div style={{ flex: 1, minWidth: 280 }}>
+                <div className="text-sm" style={{ marginBottom: 4 }}>Добавить турнир</div>
+                <select
+                  className="input"
+                  value={selectedTournamentToAddId ?? ''}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setSelectedTournamentToAddId(v ? Number(v) : null);
+                  }}
+                >
+                  <option value="">{availableTournamentsLoading ? 'Загрузка…' : 'Выберите турнир'}</option>
+                  {availableTournaments.map(t => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} (#{t.id})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button className="btn" onClick={handleScopeAdd} disabled={saving || !selectedTournamentToAddId || availableTournamentsLoading}>Добавить</button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {sortedScopes.map((s, idx) => {
+                const scopeId = Number((s as any)?.id);
+                const tid = Number((s as any)?.tournament);
+                const title = scopeTournamentTitleById.get(tid) || `#${tid}`;
+                const startMode = String((s as any)?.start_mode || 'after_previous');
+                const startTime = scopeStartTimeTextById.get(scopeId) ?? ((s as any)?.start_time ? String((s as any)?.start_time) : '');
+                const boundCourts: number[] = Array.isArray((s as any)?.bound_courts) ? (s as any).bound_courts : [];
+
+                const currentWaveId = waveIdByScopeId.get(scopeId) ?? ((s as any)?.wave != null ? Number((s as any)?.wave) : null);
+
+                const scopeIds = sortedScopes.map(x => Number((x as any)?.id)).filter(Boolean);
+
+                return (
+                  <div key={scopeId} style={{ border: '1px solid #eee', borderRadius: 12, padding: 12 }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <div style={{ fontWeight: 800 }}>{title}</div>
+                      <div style={{ opacity: 0.7 }}>#{tid}</div>
+                      <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <button
+                          className="btn"
+                          disabled={saving || idx === 0}
+                          onClick={() => {
+                            const ids = scopeIds.slice();
+                            const i = ids.indexOf(scopeId);
+                            if (i <= 0) return;
+                            const tmp = ids[i - 1];
+                            ids[i - 1] = ids[i];
+                            ids[i] = tmp;
+                            handleScopesReorder(ids);
+                          }}
+                        >
+                          ↑
+                        </button>
+                        <button
+                          className="btn"
+                          disabled={saving || idx === sortedScopes.length - 1}
+                          onClick={() => {
+                            const ids = scopeIds.slice();
+                            const i = ids.indexOf(scopeId);
+                            if (i < 0 || i >= ids.length - 1) return;
+                            const tmp = ids[i + 1];
+                            ids[i + 1] = ids[i];
+                            ids[i] = tmp;
+                            handleScopesReorder(ids);
+                          }}
+                        >
+                          ↓
+                        </button>
+                        <button className="btn" disabled={saving} style={{ background: '#dc3545', borderColor: '#dc3545' }} onClick={() => handleScopeRemove(scopeId)}>
+                          Удалить
+                        </button>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 10, alignItems: 'flex-end' }}>
+                      <div>
+                        <div className="text-sm" style={{ marginBottom: 4 }}>Волна</div>
+                        <select
+                          className="input"
+                          value={currentWaveId ?? ''}
+                          onChange={e => {
+                            const v = e.target.value;
+                            if (!v) return;
+                            handleScopeMoveToWave(scopeId, Number(v));
+                          }}
+                        >
+                          {sortedWaves.map((w: any) => (
+                            <option key={Number(w?.id)} value={Number(w?.id)}>
+                              Волна {Number(w?.order ?? 0) || 1}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <details style={{ marginTop: 10 }}>
+                      <summary style={{ cursor: 'pointer', fontWeight: 700 }}>Дополнительно</summary>
+                      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 10, alignItems: 'flex-end' }}>
+                        <div>
+                          <div className="text-sm" style={{ marginBottom: 4 }}>Старт (override)</div>
+                          <select
+                            className="input"
+                            value={startMode}
+                            onChange={e => {
+                              const v = e.target.value;
+                              if (v === 'fixed') {
+                                const courts = (schedule.courts || []).slice().sort((a, b) => a.index - b.index);
+                                const courtDefault = courts.find(c => !!c?.first_start_time)?.first_start_time;
+                                const tournamentDefault = tournamentStartTimeById.get(tid);
+                                const existingScopeTime = hhmm(scopeStartTimeTextById.get(scopeId) || (s as any)?.start_time);
+                                const nextTime =
+                                  existingScopeTime ||
+                                  hhmm(tournamentDefault) ||
+                                  hhmm(courtDefault ? String(courtDefault) : '') ||
+                                  hhmm(startTime) ||
+                                  '10:00';
+
+                                setScopeStartTimeTextById(prev => {
+                                  const m = new Map(prev);
+                                  m.set(scopeId, nextTime);
+                                  return m;
+                                });
+                                handleScopeUpdate(scopeId, { start_mode: 'fixed', start_time: hhmm(nextTime) });
+                                return;
+                              }
+
+                              handleScopeUpdate(scopeId, { start_mode: 'after_previous', start_time: null });
+                            }}
+                          >
+                            <option value="after_previous">После предыдущих</option>
+                            <option value="fixed">Фиксированное время</option>
+                          </select>
+                        </div>
+
+                        {startMode === 'fixed' && (
+                          <div>
+                            <div className="text-sm" style={{ marginBottom: 4 }}>Время</div>
+                            <input
+                              className="input"
+                              value={startTime}
+                              placeholder="10:00"
+                              onBlur={e => {
+                                const v = (e.target.value || '').trim();
+                                handleScopeUpdate(scopeId, { start_mode: 'fixed', start_time: v || null });
+                              }}
+                              onChange={e => {
+                                const v = e.target.value;
+                                setScopeStartTimeTextById(prev => {
+                                  const m = new Map(prev);
+                                  m.set(scopeId, v);
+                                  return m;
+                                });
+                              }}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </details>
+
+                    <div style={{ marginTop: 12 }}>
+                      <div className="text-sm" style={{ marginBottom: 6, fontWeight: 700 }}>Привязанные корты</div>
+                      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                        {(schedule.courts || []).slice().sort((a, b) => a.index - b.index).map(c => {
+                          const checked = boundCourts.includes(c.id);
+                          return (
+                            <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                // TODO: Re-enable editing when fixed-court scheduling is fully correct for multi-tournament waves.
+                                disabled
+                                onChange={e => {
+                                  const next = new Set<number>(boundCourts);
+                                  if (e.target.checked) next.add(c.id);
+                                  else next.delete(c.id);
+                                  handleScopeUpdate(scopeId, { bound_courts: Array.from(next) });
+                                }}
+                              />
+                              <span>{c.name || `Корт ${c.index}`}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}

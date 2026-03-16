@@ -16,21 +16,67 @@ from apps.accounts.permissions import IsTournamentCreatorOrAdmin, Role, _get_use
 from django.db import transaction
 from django.db.models import Max
 
-from .models import Schedule, ScheduleCourt, ScheduleScope, ScheduleScopeCourt
+from .models import (
+    Schedule,
+    ScheduleCourt,
+    ScheduleGlobalBreak,
+    ScheduleRun,
+    ScheduleScope,
+    ScheduleScopeCourt,
+    ScheduleSlot,
+    ScheduleWave,
+)
 from .serializers import ScheduleSerializer
 
 
 class ScheduleViewSet(viewsets.ModelViewSet):
-    queryset = Schedule.objects.all()
+    queryset = Schedule.objects.prefetch_related("waves").all()
     serializer_class = ScheduleSerializer
     permission_classes = [AllowAny]
+
+    def get_queryset(self):
+        return (
+            super()
+            .get_queryset()
+            .prefetch_related(
+                "waves",
+                "scopes",
+                "scopes__wave",
+                "scopes__bound_courts",
+                "scopes__bound_courts__court",
+            )
+            .select_related("created_by")
+        )
 
     def _scoped_tournaments(self, schedule: Schedule):
         return [
             s.tournament
-            for s in schedule.scopes.select_related("tournament").all().order_by("order", "id")
+            for s in (
+                schedule.scopes.select_related("tournament", "wave")
+                .all()
+                .order_by("wave__order", "wave_id", "order", "id")
+            )
             if s.tournament
         ]
+
+    def _ensure_default_wave_exists(self, schedule: Schedule) -> ScheduleWave:
+        w = schedule.waves.all().order_by("order", "id").first()
+        if w:
+            return w
+        return ScheduleWave.objects.create(
+            schedule=schedule,
+            order=1,
+            start_mode=ScheduleWave.StartMode.AFTER_PREVIOUS,
+            start_time=None,
+            earliest_time=None,
+        )
+
+    def _normalize_waves_order(self, schedule: Schedule) -> None:
+        waves = list(schedule.waves.all().order_by("order", "id"))
+        for idx, w in enumerate(waves, start=1):
+            if int(w.order or 0) != idx:
+                w.order = idx
+                w.save(update_fields=["order"])
 
     def _ensure_can_use_tournament_in_schedule(self, request, schedule: Schedule, tournament: Tournament) -> None:
         user = getattr(request, "user", None)
@@ -99,6 +145,11 @@ class ScheduleViewSet(viewsets.ModelViewSet):
             "scopes_remove",
             "scopes_reorder",
             "scopes_update",
+            "scopes_move_to_wave",
+            "waves_add",
+            "waves_update",
+            "waves_reorder",
+            "waves_remove",
         }:
             return [IsAuthenticated()]
         return super().get_permissions()
@@ -120,6 +171,51 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         )
         if taken:
             raise PermissionDenied("Some courts are already bound to another tournament")
+
+    @action(detail=True, methods=["get"], url_path="scopes/available_tournaments", permission_classes=[IsAuthenticated])
+    def scopes_available_tournaments(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        q = str(request.query_params.get("q") or "").strip()
+
+        qs = Tournament.objects.all()
+        if schedule.date:
+            qs = qs.filter(date=schedule.date)
+
+        if schedule.is_draft:
+            qs = qs.filter(status=Tournament.Status.CREATED)
+        else:
+            qs = qs.filter(status=Tournament.Status.ACTIVE)
+
+        # permission filtering
+        role = _get_user_role(request.user)
+        if role != Role.ADMIN and not getattr(request.user, "is_staff", False) and not getattr(request.user, "is_superuser", False):
+            qs = qs.filter(created_by=request.user)
+
+        # exclude already added
+        existing_ids = list(ScheduleScope.objects.filter(schedule=schedule).values_list("tournament_id", flat=True))
+        if existing_ids:
+            qs = qs.exclude(id__in=existing_ids)
+
+        if q:
+            qs = qs.filter(name__icontains=q)
+
+        qs = qs.order_by("name", "id")[:200]
+
+        items = [
+            {
+                "id": int(t.id),
+                "name": str(t.name),
+                "date": str(t.date) if getattr(t, "date", None) else None,
+                "start_time": t.start_time.strftime("%H:%M") if getattr(t, "start_time", None) else None,
+                "status": str(t.status),
+                "created_by": int(t.created_by_id) if getattr(t, "created_by_id", None) else None,
+            }
+            for t in qs
+        ]
+
+        return Response({"ok": True, "tournaments": items})
 
     @action(detail=True, methods=["post"], url_path="scopes/add", permission_classes=[IsAuthenticated])
     def scopes_add(self, request, pk=None):
@@ -152,12 +248,19 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         if start_mode == ScheduleScope.StartMode.FIXED:
             try:
                 if isinstance(start_time_value, str):
-                    hh, mm = start_time_value.split(":")
+                    parts = start_time_value.split(":")
+                    hh = parts[0]
+                    mm = parts[1] if len(parts) > 1 else "0"
                     start_time_obj = time(int(hh), int(mm))
                 elif start_time_value is not None:
                     start_time_obj = start_time_value
             except Exception:
                 start_time_obj = None
+            if start_time_obj is None:
+                try:
+                    start_time_obj = getattr(tournament, "start_time", None)
+                except Exception:
+                    start_time_obj = None
 
         court_ids = payload.get("bound_courts") or []
         try:
@@ -169,9 +272,12 @@ class ScheduleViewSet(viewsets.ModelViewSet):
             if ScheduleScope.objects.filter(schedule=schedule, tournament=tournament).exists():
                 return Response({"ok": False, "error": "already_added"}, status=status.HTTP_400_BAD_REQUEST)
 
+            default_wave = self._ensure_default_wave_exists(schedule)
+
             max_order = ScheduleScope.objects.filter(schedule=schedule).aggregate(m=Max("order")).get("m") or 0
             scope = ScheduleScope.objects.create(
                 schedule=schedule,
+                wave=default_wave,
                 tournament=tournament,
                 order=int(max_order) + 1,
                 start_mode=start_mode,
@@ -186,6 +292,188 @@ class ScheduleViewSet(viewsets.ModelViewSet):
 
             schedule.save(update_fields=["updated_at"])
 
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
+
+    @action(detail=True, methods=["post"], url_path="waves/add", permission_classes=[IsAuthenticated])
+    def waves_add(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        payload = request.data or {}
+        start_mode = str(payload.get("start_mode") or ScheduleWave.StartMode.AFTER_PREVIOUS)
+        if start_mode not in {ScheduleWave.StartMode.FIXED, ScheduleWave.StartMode.AFTER_PREVIOUS}:
+            start_mode = ScheduleWave.StartMode.AFTER_PREVIOUS
+
+        def parse_time_value(v):
+            if v is None:
+                return None
+            try:
+                if isinstance(v, str):
+                    parts = v.split(":")
+                    hh = parts[0]
+                    mm = parts[1] if len(parts) > 1 else "0"
+                    return time(int(hh), int(mm))
+                return v
+            except Exception:
+                return None
+
+        start_time_obj = parse_time_value(payload.get("start_time"))
+        earliest_obj = parse_time_value(payload.get("earliest_time"))
+        if start_mode == ScheduleWave.StartMode.FIXED and start_time_obj is None:
+            return Response({"ok": False, "error": "start_time_required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        max_order = schedule.waves.aggregate(m=Max("order")).get("m") or 0
+        ScheduleWave.objects.create(
+            schedule=schedule,
+            order=int(max_order) + 1,
+            start_mode=start_mode,
+            start_time=start_time_obj,
+            earliest_time=earliest_obj,
+        )
+
+        schedule.save(update_fields=["updated_at"])
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
+
+    @action(detail=True, methods=["post"], url_path="waves/update", permission_classes=[IsAuthenticated])
+    def waves_update(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        payload = request.data or {}
+        wave_id = payload.get("wave_id")
+        if not wave_id:
+            return Response({"ok": False, "error": "no_wave_id"}, status=status.HTTP_400_BAD_REQUEST)
+
+        wave = ScheduleWave.objects.filter(schedule=schedule, id=wave_id).first()
+        if not wave:
+            return Response({"ok": False, "error": "not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        def parse_time_value(v):
+            if v is None:
+                return None
+            try:
+                if isinstance(v, str):
+                    parts = v.split(":")
+                    hh = parts[0]
+                    mm = parts[1] if len(parts) > 1 else "0"
+                    return time(int(hh), int(mm))
+                return v
+            except Exception:
+                return None
+
+        start_mode = payload.get("start_mode")
+        if start_mode is not None:
+            start_mode = str(start_mode)
+            if start_mode not in {ScheduleWave.StartMode.FIXED, ScheduleWave.StartMode.AFTER_PREVIOUS}:
+                return Response({"ok": False, "error": "bad_start_mode"}, status=status.HTTP_400_BAD_REQUEST)
+            wave.start_mode = start_mode
+
+        if payload.get("start_time") is not None or wave.start_mode == ScheduleWave.StartMode.FIXED:
+            if payload.get("start_time") is not None:
+                st = parse_time_value(payload.get("start_time"))
+                if st is None:
+                    return Response({"ok": False, "error": "bad_start_time"}, status=status.HTTP_400_BAD_REQUEST)
+                wave.start_time = st
+            if wave.start_mode == ScheduleWave.StartMode.FIXED and wave.start_time is None:
+                return Response({"ok": False, "error": "start_time_required"}, status=status.HTTP_400_BAD_REQUEST)
+            if wave.start_mode != ScheduleWave.StartMode.FIXED:
+                wave.start_time = None
+
+        if payload.get("earliest_time") is not None:
+            et = parse_time_value(payload.get("earliest_time"))
+            if payload.get("earliest_time") is not None and et is None:
+                return Response({"ok": False, "error": "bad_earliest_time"}, status=status.HTTP_400_BAD_REQUEST)
+            wave.earliest_time = et
+
+        wave.save(update_fields=["start_mode", "start_time", "earliest_time"])
+        schedule.save(update_fields=["updated_at"])
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
+
+    @action(detail=True, methods=["post"], url_path="waves/reorder", permission_classes=[IsAuthenticated])
+    def waves_reorder(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        payload = request.data or {}
+        wave_ids = payload.get("wave_ids")
+        if not isinstance(wave_ids, list) or not wave_ids:
+            return Response({"ok": False, "error": "bad_wave_ids"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            wave_ids = [int(x) for x in wave_ids]
+        except Exception:
+            return Response({"ok": False, "error": "bad_wave_ids"}, status=status.HTTP_400_BAD_REQUEST)
+
+        existing = list(schedule.waves.all().order_by("order", "id"))
+        existing_ids = [int(w.id) for w in existing]
+        if sorted(existing_ids) != sorted(wave_ids):
+            return Response({"ok": False, "error": "wave_ids_mismatch"}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            for idx, wid in enumerate(wave_ids, start=1):
+                ScheduleWave.objects.filter(schedule=schedule, id=wid).update(order=idx)
+            schedule.save(update_fields=["updated_at"])
+
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
+
+    @action(detail=True, methods=["post"], url_path="waves/remove", permission_classes=[IsAuthenticated])
+    def waves_remove(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        payload = request.data or {}
+        wave_id = payload.get("wave_id")
+        if not wave_id:
+            return Response({"ok": False, "error": "no_wave_id"}, status=status.HTTP_400_BAD_REQUEST)
+
+        wave = ScheduleWave.objects.filter(schedule=schedule, id=wave_id).first()
+        if not wave:
+            return Response({"ok": False, "error": "not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if schedule.waves.count() <= 1:
+            return Response({"ok": False, "error": "cannot_remove_last"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # scopes from removed wave should move to first wave
+        target = schedule.waves.exclude(id=wave.id).order_by("order", "id").first()
+        if not target:
+            return Response({"ok": False, "error": "cannot_remove_last"}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            ScheduleScope.objects.filter(schedule=schedule, wave=wave).update(wave=target)
+            wave.delete()
+            self._normalize_waves_order(schedule)
+            schedule.save(update_fields=["updated_at"])
+
+        schedule.refresh_from_db()
+        return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
+
+    @action(detail=True, methods=["post"], url_path="scopes/move_to_wave", permission_classes=[IsAuthenticated])
+    def scopes_move_to_wave(self, request, pk=None):
+        schedule: Schedule = self.get_object()
+        self._ensure_can_manage_schedule(request, schedule)
+
+        payload = request.data or {}
+        scope_id = payload.get("scope_id")
+        wave_id = payload.get("wave_id")
+        if not scope_id or not wave_id:
+            return Response({"ok": False, "error": "bad_params"}, status=status.HTTP_400_BAD_REQUEST)
+
+        scope = ScheduleScope.objects.filter(schedule=schedule, id=scope_id).select_related("tournament").first()
+        if not scope:
+            return Response({"ok": False, "error": "not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        wave = ScheduleWave.objects.filter(schedule=schedule, id=wave_id).first()
+        if not wave:
+            return Response({"ok": False, "error": "wave_not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        self._ensure_can_use_tournament_in_schedule(request, schedule, scope.tournament)
+
+        scope.wave = wave
+        scope.save(update_fields=["wave"])
+        schedule.save(update_fields=["updated_at"])
         schedule.refresh_from_db()
         return Response({"ok": True, "schedule": ScheduleSerializer(schedule).data})
 
@@ -288,7 +576,9 @@ class ScheduleViewSet(viewsets.ModelViewSet):
             if start_time_value is not None:
                 try:
                     if isinstance(start_time_value, str):
-                        hh, mm = start_time_value.split(":")
+                        parts = start_time_value.split(":")
+                        hh = parts[0]
+                        mm = parts[1] if len(parts) > 1 else "0"
                         scope.start_time = time(int(hh), int(mm))
                     else:
                         scope.start_time = start_time_value
@@ -554,6 +844,16 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             schedule.save(update_fields=["match_duration_minutes", "updated_at"])
 
+            # Preserve scope->court bindings by court index.
+            # `save` recreates courts, so court IDs change and bindings would be lost otherwise.
+            from .models import ScheduleScopeCourt
+
+            preserved_bindings: list[tuple[int, int]] = list(
+                ScheduleScopeCourt.objects.filter(scope__schedule=schedule)
+                .select_related("court")
+                .values_list("scope_id", "court__index")
+            )
+
             # очищаем дочерние записи
             ScheduleSlot.objects.filter(schedule=schedule).delete()
             ScheduleGlobalBreak.objects.filter(schedule=schedule).delete()
@@ -573,6 +873,17 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                     first_start_time=fst,
                 )
                 court_by_index[idx] = court
+
+            # Restore preserved bindings on recreated courts.
+            if preserved_bindings and court_by_index:
+                restored: list[ScheduleScopeCourt] = []
+                for scope_id, court_index in preserved_bindings:
+                    court_obj = court_by_index.get(int(court_index))
+                    if not court_obj:
+                        continue
+                    restored.append(ScheduleScopeCourt(scope_id=int(scope_id), court_id=int(court_obj.id)))
+                if restored:
+                    ScheduleScopeCourt.objects.bulk_create(restored, ignore_conflicts=True)
 
             # создаём запуски
             run_by_index = {}

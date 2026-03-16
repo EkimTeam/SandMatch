@@ -130,7 +130,21 @@ export interface ScheduleGlobalBreakDTO {
 }
 
 export interface ScheduleScopeDTO {
+  id: number;
   tournament: number;
+  wave?: number | null;
+  order: number;
+  start_mode: 'fixed' | 'after_previous';
+  start_time: string | null;
+  bound_courts: number[];
+}
+
+export interface ScheduleWaveDTO {
+  id: number;
+  order: number;
+  start_mode: 'fixed' | 'after_previous';
+  start_time: string | null;
+  earliest_time: string | null;
 }
 
 export interface ScheduleDTO {
@@ -144,6 +158,7 @@ export interface ScheduleDTO {
   runs: ScheduleRunDTO[];
   slots: ScheduleSlotDTO[];
   global_breaks: ScheduleGlobalBreakDTO[];
+  waves?: ScheduleWaveDTO[];
   scopes: ScheduleScopeDTO[];
 }
 
@@ -928,6 +943,86 @@ export const scheduleApi = {
     },
   ): Promise<{ ok: boolean; schedule: ScheduleDTO }> => {
     const { data } = await api.post(`/schedules/${scheduleId}/save/`, payload);
+    return data;
+  },
+
+  scopesAdd: async (
+    scheduleId: number,
+    payload: { tournament_id: number; start_mode?: 'fixed' | 'after_previous'; start_time?: string | null; bound_courts?: number[] },
+  ): Promise<{ ok: boolean; schedule: ScheduleDTO; error?: string; detail?: string }> => {
+    const { data } = await api.post(`/schedules/${scheduleId}/scopes/add/`, payload);
+    return data;
+  },
+
+  scopesAvailableTournaments: async (
+    scheduleId: number,
+    q?: string,
+  ): Promise<{ ok: boolean; tournaments: Array<{ id: number; name: string; date: string | null; start_time: string | null; status: string; created_by: number | null }> }> => {
+    const { data } = await api.get(`/schedules/${scheduleId}/scopes/available_tournaments/`, { params: { q } });
+    return data;
+  },
+
+  scopesRemove: async (
+    scheduleId: number,
+    payload: { scope_id?: number; tournament_id?: number },
+  ): Promise<{ ok: boolean; schedule: ScheduleDTO; error?: string; detail?: string }> => {
+    const { data } = await api.post(`/schedules/${scheduleId}/scopes/remove/`, payload);
+    return data;
+  },
+
+  scopesReorder: async (
+    scheduleId: number,
+    scopeIds: number[],
+  ): Promise<{ ok: boolean; schedule: ScheduleDTO; error?: string; detail?: string }> => {
+    const { data } = await api.post(`/schedules/${scheduleId}/scopes/reorder/`, { scope_ids: scopeIds });
+    return data;
+  },
+
+  scopesUpdate: async (
+    scheduleId: number,
+    payload: { scope_id: number; start_mode?: 'fixed' | 'after_previous'; start_time?: string | null; bound_courts?: number[] },
+  ): Promise<{ ok: boolean; schedule: ScheduleDTO; error?: string; detail?: string }> => {
+    const { data } = await api.post(`/schedules/${scheduleId}/scopes/update/`, payload);
+    return data;
+  },
+
+  scopesMoveToWave: async (
+    scheduleId: number,
+    payload: { scope_id: number; wave_id: number },
+  ): Promise<{ ok: boolean; schedule: ScheduleDTO; error?: string; detail?: string }> => {
+    const { data } = await api.post(`/schedules/${scheduleId}/scopes/move_to_wave/`, payload);
+    return data;
+  },
+
+  wavesAdd: async (
+    scheduleId: number,
+    payload?: { start_mode?: 'fixed' | 'after_previous'; start_time?: string | null; earliest_time?: string | null },
+  ): Promise<{ ok: boolean; schedule: ScheduleDTO; error?: string; detail?: string }> => {
+    const { data } = await api.post(`/schedules/${scheduleId}/waves/add/`, payload || {});
+    return data;
+  },
+
+  wavesUpdate: async (
+    scheduleId: number,
+    payload: { wave_id: number; start_mode?: 'fixed' | 'after_previous'; start_time?: string | null; earliest_time?: string | null },
+  ): Promise<{ ok: boolean; schedule: ScheduleDTO; error?: string; detail?: string }> => {
+    const { data } = await api.post(`/schedules/${scheduleId}/waves/update/`, payload);
+    return data;
+  },
+
+  wavesReorder: async (
+    scheduleId: number,
+    waveIds: number[],
+  ): Promise<{ ok: boolean; schedule: ScheduleDTO; error?: string; detail?: string }> => {
+    const { data } = await api.post(`/schedules/${scheduleId}/waves/reorder/`, { wave_ids: waveIds });
+    return data;
+  },
+
+  wavesRemove: async (
+    scheduleId: number,
+    payload: { wave_id: number },
+  ): Promise<{ ok: boolean; schedule: ScheduleDTO; error?: string; detail?: string }> => {
+    const { data } = await api.post(`/schedules/${scheduleId}/waves/remove/`, payload);
     return data;
   },
   exportPdf: async (scheduleId: number): Promise<Blob> => {

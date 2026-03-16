@@ -5,6 +5,7 @@ from .models import (
     ScheduleCourt,
     ScheduleGlobalBreak,
     ScheduleRun,
+    ScheduleWave,
     ScheduleScope,
     ScheduleScopeCourt,
     ScheduleSlot,
@@ -50,7 +51,7 @@ class ScheduleScopeSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ScheduleScope
-        fields = ["id", "tournament", "order", "start_mode", "start_time", "bound_courts"]
+        fields = ["id", "tournament", "wave", "order", "start_mode", "start_time", "bound_courts"]
 
     def get_bound_courts(self, obj: ScheduleScope):
         try:
@@ -67,7 +68,28 @@ class ScheduleSerializer(serializers.ModelSerializer):
     runs = ScheduleRunSerializer(many=True, read_only=True)
     slots = ScheduleSlotSerializer(many=True, read_only=True)
     global_breaks = ScheduleGlobalBreakSerializer(many=True, read_only=True)
+    waves = serializers.SerializerMethodField()
     scopes = ScheduleScopeSerializer(many=True, read_only=True)
+
+    def get_waves(self, obj: Schedule):
+        try:
+            waves = getattr(obj, "waves", None)
+            if not waves:
+                return []
+            items = []
+            for w in waves.all().order_by("order", "id"):
+                items.append(
+                    {
+                        "id": int(w.id),
+                        "order": int(w.order or 0),
+                        "start_mode": str(w.start_mode),
+                        "start_time": w.start_time.strftime("%H:%M") if getattr(w, "start_time", None) else None,
+                        "earliest_time": w.earliest_time.strftime("%H:%M") if getattr(w, "earliest_time", None) else None,
+                    }
+                )
+            return items
+        except Exception:
+            return []
 
     class Meta:
         model = Schedule
@@ -83,5 +105,6 @@ class ScheduleSerializer(serializers.ModelSerializer):
             "runs",
             "slots",
             "global_breaks",
+            "waves",
             "scopes",
         ]
