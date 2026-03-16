@@ -33,6 +33,32 @@ export const RoundComponent: React.FC<{
   byePositions?: Set<number>;
   ratingVisible?: string | null;
 }> = ({ round, matchWidth, tournamentId, onMatchClick, highlightIds, tops, totalHeight, preSpacer = 0, placeholderPrevCode, placeholderMode, dropSlots, onDrop, onRemoveFromSlot, isLocked, showFullNames, byePositions, ratingVisible }) => {
+  // Touch events для мобильных устройств: слушаем кастомный event один раз на раунд,
+  // чтобы не вызывать хуки внутри map (иначе ломается порядок хуков при смене данных).
+  React.useEffect(() => {
+    const canDrop = round.round_index === 0 && !!dropSlots && !!onDrop && !isLocked;
+    if (!canDrop) return;
+
+    const handler = (e: Event) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const matchId = Number(target.getAttribute('data-match-id') || 0);
+      const slot = target.getAttribute('data-slot');
+      if (!matchId || (slot !== 'team_1' && slot !== 'team_2')) return;
+
+      const customEvent = e as CustomEvent;
+      const participant = (customEvent as any)?.detail?.participant;
+      if (!participant) return;
+
+      onDrop(matchId, slot, participant);
+    };
+
+    document.addEventListener('participant-drop', handler);
+    return () => {
+      document.removeEventListener('participant-drop', handler);
+    };
+  }, [round.round_index, dropSlots, onDrop, isLocked]);
+
   const seedLabel = (pos: number): string => {
     if (tournamentId === 252) {
       const map: Record<number, string> = {
@@ -145,35 +171,6 @@ export const RoundComponent: React.FC<{
                 console.error('Error parsing dropped data:', error);
               }
             };
-
-            // Touch events для мобильных устройств
-            const handleTouchDrop = (e: Event, slot: 'team_1' | 'team_2') => {
-              if (!canDrop || !m) return;
-              const customEvent = e as CustomEvent;
-              const { participant } = customEvent.detail;
-              if (participant && onDrop) {
-                onDrop(m.id, slot, participant);
-              }
-            };
-
-            // Подписка на custom events для touch
-            React.useEffect(() => {
-              if (!canDrop || !m) return;
-              
-              const slot1Element = document.querySelector(`[data-drop-slot][data-match-id="${m.id}"][data-slot="team_1"]`);
-              const slot2Element = document.querySelector(`[data-drop-slot][data-match-id="${m.id}"][data-slot="team_2"]`);
-              
-              const handler1 = (e: Event) => handleTouchDrop(e, 'team_1');
-              const handler2 = (e: Event) => handleTouchDrop(e, 'team_2');
-              
-              slot1Element?.addEventListener('participant-drop', handler1);
-              slot2Element?.addEventListener('participant-drop', handler2);
-              
-              return () => {
-                slot1Element?.removeEventListener('participant-drop', handler1);
-                slot2Element?.removeEventListener('participant-drop', handler2);
-              };
-            }, [canDrop, m?.id]);
             // Определить фон в зависимости от статуса
             const getBackgroundColor = () => {
               if (!m) return '#fff';

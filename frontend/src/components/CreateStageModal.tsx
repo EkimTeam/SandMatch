@@ -86,6 +86,16 @@ export const CreateStageModal: React.FC<Props> = ({
     }
   }, [isOpen, parentPlannedParticipants, parentGroupsCount, currentParticipants.length, parentDate, parentStartTime, parentIsRatingCalc, parentSetFormatId, setFormats, showGroupPlacesMode]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    // If formats were loaded after modal opened, make sure we select a valid default.
+    setSetFormatId(prev => {
+      if (prev && setFormats.some(f => Number(f?.id) === Number(prev))) return prev;
+      if (parentSetFormatId && setFormats.some(f => Number(f?.id) === Number(parentSetFormatId))) return parentSetFormatId;
+      return Number(setFormats[0]?.id || 0);
+    });
+  }, [isOpen, setFormats, parentSetFormatId]);
+
   if (!isOpen) return null;
 
   const availableSystems = masterSystem === 'king'
@@ -104,11 +114,6 @@ export const CreateStageModal: React.FC<Props> = ({
 
     if (!participantsCount || participantsCount <= 0) {
       window.alert('Укажите количество участников больше нуля');
-      return;
-    }
-
-    if (selectedParticipants.length === 0) {
-      window.alert('Выберите хотя бы одного участника для новой стадии');
       return;
     }
 
@@ -137,7 +142,7 @@ export const CreateStageModal: React.FC<Props> = ({
         participant_mode: masterParticipantMode,
         groups_count: system === 'knockout' ? 1 : groupsCount,
         copy_participants: false,
-        selected_participant_ids: selectedParticipants,
+        selected_participant_ids: selectedParticipants.length ? selectedParticipants : null,
         participants_count: participantsCount,
         date,
         start_time: normalizedStartTime,
