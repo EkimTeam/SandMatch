@@ -1196,6 +1196,13 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if isinstance(name, str) and name.strip():
             tournament.name = name.strip()
 
+        name_for_schedule = data.get("name_for_schedule")
+        if name_for_schedule is not None:
+            try:
+                tournament.name_for_schedule = str(name_for_schedule or "").strip()[:10]
+            except Exception:
+                tournament.name_for_schedule = ""
+
         from datetime import date as _date, time as _time
         date_raw = data.get("date")
         if isinstance(date_raw, str) and date_raw:

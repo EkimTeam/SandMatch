@@ -332,6 +332,7 @@ class TournamentSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "name",
+            "name_for_schedule",
             "date",
             "start_time",
             "system",

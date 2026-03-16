@@ -52,6 +52,7 @@ export const EditTournamentModal: React.FC<EditTournamentModalProps> = ({
 
   const [formData, setFormData] = useState({
     name: tournament.name || '',
+    name_for_schedule: (tournament as any)?.name_for_schedule || '',
     date: tournament.date || '',
     start_time: tournament.start_time || '14:00',
     participant_mode: tournament.participant_mode || 'doubles',
@@ -237,6 +238,30 @@ export const EditTournamentModal: React.FC<EditTournamentModalProps> = ({
                 onChange={handleChange}
               />
               {errors.name && <div className="error">{errors.name}</div>}
+            </div>
+
+            <div className="form-row">
+              <label htmlFor="name_for_schedule">Сокращение</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <input
+                  type="text"
+                  id="name_for_schedule"
+                  name="name_for_schedule"
+                  value={(formData as any).name_for_schedule}
+                  onChange={(e) => {
+                    const v = String(e.target.value || '').slice(0, 10);
+                    setFormData(prev => ({ ...prev, name_for_schedule: v }));
+                    if (errors.name_for_schedule) {
+                      setErrors(prev => ({ ...prev, name_for_schedule: '' }));
+                    }
+                  }}
+                  maxLength={10}
+                  placeholder="#123"
+                  style={{ width: 140 }}
+                />
+                <div className="muted">Будет использовано при отображении в расписании</div>
+              </div>
+              {errors.name_for_schedule && <div className="error">{errors.name_for_schedule}</div>}
             </div>
 
             <div className="form-row">

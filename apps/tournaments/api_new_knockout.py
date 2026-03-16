@@ -37,6 +37,7 @@ def new_knockout(request):
     try:
         planned_participants = int(data.get("ko_participants") or data.get("planned_participants") or 0)
         brackets_count = int(data.get("brackets_count") or 1)
+        name_for_schedule = str(data.get("name_for_schedule") or "").strip()[:10]
         if planned_participants < 1:
             return Response({"ok": False, "error": "ko_participants (planned_participants) должен быть >= 1"}, status=400)
         if planned_participants > 512:
@@ -59,6 +60,7 @@ def new_knockout(request):
 
             tournament = Tournament.objects.create(
                 name=data["name"],
+                name_for_schedule=name_for_schedule,
                 date=data["date"],
                 start_time=data.get("start_time") or None,
                 participant_mode=data["participant_mode"],

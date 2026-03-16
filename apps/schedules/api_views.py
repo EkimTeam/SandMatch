@@ -14,7 +14,7 @@ from apps.tournaments.models import Tournament
 from apps.accounts.permissions import IsTournamentCreatorOrAdmin, Role, _get_user_role
 
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import Max, Q
 
 from .models import (
     Schedule,
@@ -91,24 +91,29 @@ class ScheduleViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("You do not have permission to use this tournament in schedule")
 
     def _validate_schedule_scope_tournament(self, schedule: Schedule, tournament: Tournament) -> None:
+        def _allowed_for_schedule(t: Tournament) -> bool:
+            if schedule.is_draft:
+                return t.status == Tournament.Status.CREATED
+            return (t.status == Tournament.Status.ACTIVE) or (
+                t.system == Tournament.System.KNOCKOUT and t.status == Tournament.Status.CREATED
+            )
+
         # 1) Дата должна совпадать
         if getattr(schedule, "date", None) and getattr(tournament, "date", None) and schedule.date != tournament.date:
             raise PermissionDenied("Tournament date must match schedule date")
 
         # 2) Статус должен совпадать правилам draft/official
-        if schedule.is_draft:
-            if tournament.status != Tournament.Status.CREATED:
+        if not _allowed_for_schedule(tournament):
+            if schedule.is_draft:
                 raise PermissionDenied("Draft schedule can include only created tournaments")
-        else:
-            if tournament.status != Tournament.Status.ACTIVE:
-                raise PermissionDenied("Official schedule can include only active tournaments")
+            raise PermissionDenied("Official schedule can include only active tournaments or created knockout tournaments")
 
-        # 3) Все турниры в расписании должны быть одного статуса (created для draft, active для official)
+        # 3) Все турниры в расписании должны быть допустимы для этого типа расписания
         for t in self._scoped_tournaments(schedule):
-            if schedule.is_draft and t.status != Tournament.Status.CREATED:
-                raise PermissionDenied("Draft schedule can include only created tournaments")
-            if (not schedule.is_draft) and t.status != Tournament.Status.ACTIVE:
-                raise PermissionDenied("Official schedule can include only active tournaments")
+            if not _allowed_for_schedule(t):
+                if schedule.is_draft:
+                    raise PermissionDenied("Draft schedule can include only created tournaments")
+                raise PermissionDenied("Official schedule can include only active tournaments or created knockout tournaments")
 
     def _ensure_can_view_schedule(self, request, schedule: Schedule) -> None:
         tournaments = self._scoped_tournaments(schedule)
@@ -186,7 +191,10 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         if schedule.is_draft:
             qs = qs.filter(status=Tournament.Status.CREATED)
         else:
-            qs = qs.filter(status=Tournament.Status.ACTIVE)
+            qs = qs.filter(
+                Q(status=Tournament.Status.ACTIVE)
+                | Q(status=Tournament.Status.CREATED, system=Tournament.System.KNOCKOUT)
+            )
 
         # permission filtering
         role = _get_user_role(request.user)
@@ -668,6 +676,22 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         if not m:
             return ""
 
+        def _schedule_prefix(match_obj: Any) -> str:
+            try:
+                t = getattr(match_obj, "tournament", None)
+                if not t:
+                    return ""
+                val = str(getattr(t, "name_for_schedule", "") or "").strip()
+                if not val:
+                    tid = getattr(t, "id", None)
+                    if tid is not None:
+                        val = f"#{tid}"
+                if len(val) > 10:
+                    val = val[:10]
+                return val
+            except Exception:
+                return ""
+
         gi = getattr(m, "group_index", None)
 
         def _is_proam_rr(match_obj: Any) -> bool:
@@ -734,17 +758,20 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         except Exception:
             system = ""
 
+        prefix = _schedule_prefix(m)
+
         if system == "knockout":
             rn = str(getattr(m, "round_name", "") or "").strip()
             if rn:
-                return rn
+                return " ".join([p for p in [prefix, rn] if p])
             ri = getattr(m, "round_index", None)
-            return f"Раунд {ri}".strip() if ri is not None else ""
+            base = f"Раунд {ri}".strip() if ri is not None else ""
+            return " ".join([p for p in [prefix, base] if p])
 
         if system == "round_robin":
             rn = str(getattr(m, "round_name", "") or "").strip()
             if rn and "гр." in rn and "•" in rn:
-                return rn
+                return " ".join([p for p in [prefix, rn] if p])
             try:
                 gi_int = int(gi) if gi is not None else 0
                 t_id = int(getattr(m, "tournament_id", 0) or 0)
@@ -753,9 +780,10 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                 r1 = rr_row_by_team.get((t_id, gi_int, a_id))
                 r2 = rr_row_by_team.get((t_id, gi_int, b_id))
                 pair = f"{r1}-{r2}" if (r1 is not None and r2 is not None) else ""
-                return " • ".join([p for p in [group, pair] if p])
+                base = " • ".join([p for p in [group, pair] if p])
+                return " ".join([p for p in [prefix, base] if p])
             except Exception:
-                return group
+                return " ".join([p for p in [prefix, group] if p])
 
         if system == "king":
             def _raw_team_label(team: Any) -> str:
@@ -778,9 +806,10 @@ class ScheduleViewSet(viewsets.ModelViewSet):
             mid = getattr(m, "id", None)
             fallback = f"Матч {mid}" if mid is not None else ""
             meta = vs or rn or fallback
-            return " • ".join([p for p in [group, meta] if p])
+            base = " • ".join([p for p in [group, meta] if p])
+            return " ".join([p for p in [prefix, base] if p])
 
-        return group
+        return " ".join([p for p in [prefix, group] if p])
 
     def destroy(self, request, *args, **kwargs):
         schedule: Schedule = self.get_object()
@@ -1131,6 +1160,12 @@ class ScheduleViewSet(viewsets.ModelViewSet):
 
                 return html.escape("" if v is None else str(v))
 
+            def fmt_date(d: Any) -> str:
+                try:
+                    return d.strftime("%d.%m.%Y") if d else ""
+                except Exception:
+                    return str(d or "")
+
             def _raw_team_label(team: Any) -> str:
                 if not team:
                     return ""
@@ -1335,7 +1370,7 @@ class ScheduleViewSet(viewsets.ModelViewSet):
       <div class="h1">Расписание</div>
       <div class="h2">{esc(title)}</div>
     </div>
-    <div class=\"date\">{esc(schedule.date)}</div>
+    <div class=\"date\">{esc(fmt_date(schedule.date))}</div>
   </div>
 
   <table>
@@ -1476,7 +1511,11 @@ class ScheduleViewSet(viewsets.ModelViewSet):
             c.drawString(margin_x, page_h - margin_y - 18, "Расписание")
             c.setFont(font_name, 11)
             c.drawString(margin_x, page_h - margin_y - 36, f"{title}")
-            c.drawRightString(page_w - margin_x, page_h - margin_y - 18, str(schedule.date))
+            try:
+                date_text = schedule.date.strftime("%d.%m.%Y") if getattr(schedule, "date", None) else ""
+            except Exception:
+                date_text = str(getattr(schedule, "date", "") or "")
+            c.drawRightString(page_w - margin_x, page_h - margin_y - 18, date_text)
 
         def draw_table_header(courts_subset: list[Any], x0: float, y0: float, col_w: float):
             # фон
@@ -1848,7 +1887,11 @@ class ScheduleViewSet(viewsets.ModelViewSet):
                 p2.runs[0].font.size = Pt(10)
             except Exception:
                 pass
-            p3 = doc.add_paragraph(str(schedule.date))
+            try:
+                date_text = schedule.date.strftime("%d.%m.%Y") if getattr(schedule, "date", None) else ""
+            except Exception:
+                date_text = str(getattr(schedule, "date", "") or "")
+            p3 = doc.add_paragraph(date_text)
             try:
                 p3.runs[0].font.size = Pt(10)
             except Exception:
@@ -2035,7 +2078,10 @@ class ScheduleViewSet(viewsets.ModelViewSet):
         ws["A1"] = "Расписание"
         ws["A1"].font = Font(bold=True, size=14)
         ws["A2"] = title
-        ws["A3"] = str(schedule.date)
+        try:
+            ws["A3"] = schedule.date.strftime("%d.%m.%Y") if getattr(schedule, "date", None) else ""
+        except Exception:
+            ws["A3"] = str(getattr(schedule, "date", "") or "")
 
         row = 5
         ws.cell(row=row, column=1, value="Запуск").font = Font(bold=True)

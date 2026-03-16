@@ -2035,7 +2035,7 @@ export const KnockoutPage: React.FC = () => {
       )}
 
       {/* Нижние общие кнопки */}
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-start', padding: '16px', borderTop: '1px solid #eee' }} data-export-exclude="true">
+      <div style={{ display: 'flex', gap: 8, rowGap: 8, flexWrap: 'wrap', justifyContent: 'flex-start', padding: '16px', borderTop: '1px solid #eee' }} data-export-exclude="true">
         {tMeta && hasOnlineSchedule && hasLiveMatches && (
           <button className="btn" disabled={saving} onClick={() => navigate(`/tournaments/${tMeta.id}/schedule?view=timeline&fact=1`)}>
             Расписание онлайн

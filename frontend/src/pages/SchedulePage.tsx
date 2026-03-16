@@ -42,6 +42,7 @@ export const SchedulePage: React.FC = () => {
 
   const [showScopesModal, setShowScopesModal] = useState(false);
   const [scopeTournamentTitleById, setScopeTournamentTitleById] = useState<Map<number, string>>(new Map());
+  const [tournamentScheduleNameById, setTournamentScheduleNameById] = useState<Map<number, string>>(new Map());
   const [availableTournamentQuery, setAvailableTournamentQuery] = useState<string>('');
   const [availableTournaments, setAvailableTournaments] = useState<
     Array<{ id: number; name: string; date: string | null; start_time: string | null; status: string; created_by: number | null }>
@@ -71,6 +72,13 @@ export const SchedulePage: React.FC = () => {
     if (!s) return '';
     const parts = s.split(':');
     if (parts.length >= 2) return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}`;
+    return s;
+  };
+
+  const formatIsoDateToRu = (iso: any): string => {
+    const s = String(iso || '').trim();
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) return `${m[3]}.${m[2]}.${m[1]}`;
     return s;
   };
 
@@ -255,6 +263,7 @@ export const SchedulePage: React.FC = () => {
       if (!ids.length) {
         setScopeTournamentTitleById(new Map());
         setTournamentStartTimeById(new Map());
+        setTournamentScheduleNameById(new Map());
         return;
       }
 
@@ -266,26 +275,31 @@ export const SchedulePage: React.FC = () => {
               return [
                 tid,
                 String((t as any)?.name || `#${tid}`),
+                String((t as any)?.name_for_schedule || '').trim(),
                 hhmm((t as any)?.start_time),
               ] as const;
             } catch {
-              return [tid, `#${tid}`, ''] as const;
+              return [tid, `#${tid}`, '', ''] as const;
             }
           }),
         );
         if (canceled) return;
         const map = new Map<number, string>();
+        const schNameMap = new Map<number, string>();
         const stMap = new Map<number, string>();
-        for (const [tid, title, st] of items) {
+        for (const [tid, title, schName, st] of items) {
           map.set(tid, title);
+          if (schName) schNameMap.set(tid, schName);
           if (st) stMap.set(tid, st);
         }
         setScopeTournamentTitleById(map);
+        setTournamentScheduleNameById(schNameMap);
         setTournamentStartTimeById(stMap);
       } catch {
         if (canceled) return;
         setScopeTournamentTitleById(new Map());
         setTournamentStartTimeById(new Map());
+        setTournamentScheduleNameById(new Map());
       }
     };
 
@@ -805,6 +819,8 @@ export const SchedulePage: React.FC = () => {
 
   const matchMetaLabel = (m: any): string => {
     if (!m) return '';
+    const tid = Number((m as any)?.tournament ?? NaN);
+    const prefix = Number.isFinite(tid) ? String(tournamentScheduleNameById.get(tid) || '').trim() : '';
     const gi = m?.group_index;
 
     const group =
@@ -818,7 +834,7 @@ export const SchedulePage: React.FC = () => {
       const r1 = t1id ? rrTeamRowById.get(Number(t1id)) : undefined;
       const r2 = t2id ? rrTeamRowById.get(Number(t2id)) : undefined;
       const pair = r1 && r2 ? `${r1}-${r2}` : '';
-      if (pair) return [group, pair].filter(Boolean).join(' • ');
+      if (pair) return [prefix, [group, pair].filter(Boolean).join(' • ')].filter(Boolean).join(' ');
 
       // Draft RR matches may have no team ids. In this case backend encodes virtual pairing
       // into round_name like "гр.1 • 2-3".
@@ -826,18 +842,18 @@ export const SchedulePage: React.FC = () => {
       if (isDraftMode && rn) {
         if (isProAmRoundRobin) {
           const replaced = rn.replace(/\bгр\.(\d+)\b/g, (_m, d) => `гр.${proAmGroupLetter(d)}`);
-          return replaced;
+          return [prefix, replaced].filter(Boolean).join(' ');
         }
-        return rn;
+        return [prefix, rn].filter(Boolean).join(' ');
       }
-      return group;
+      return [prefix, group].filter(Boolean).join(' ');
     }
     if (tournamentSystem === 'king') {
       if (isDraftMode) {
         const aLetters = kingTeamLetters(m?.team_1, m?.group_index);
         const bLetters = kingTeamLetters(m?.team_2, m?.group_index);
         if (aLetters && bLetters) {
-          return [group, `${aLetters} vs ${bLetters}`].filter(Boolean).join(' • ');
+          return [prefix, [group, `${aLetters} vs ${bLetters}`].filter(Boolean).join(' • ')].filter(Boolean).join(' ');
         }
 
         const normalizePair = (s: string): string => {
@@ -856,17 +872,18 @@ export const SchedulePage: React.FC = () => {
         // Fallback: sometimes backend may encode meta into round_name.
         const rn = String(m?.round_name || '').trim();
         const meta = vs || rn || (m?.id != null ? `Матч ${m.id}` : '');
-        return [group, meta].filter(Boolean).join(' • ');
+        return [prefix, [group, meta].filter(Boolean).join(' • ')].filter(Boolean).join(' ');
       }
       const a = kingTeamLetters(m?.team_1, m?.group_index);
       const b = kingTeamLetters(m?.team_2, m?.group_index);
       const vs = a && b ? `${a} vs ${b}` : '';
-      return [group, vs].filter(Boolean).join(' • ');
+      return [prefix, [group, vs].filter(Boolean).join(' • ')].filter(Boolean).join(' ');
     }
     if (tournamentSystem === 'knockout') {
-      return String(m?.round_name || '').trim() || `Раунд ${m?.round_index ?? ''}`.trim();
+      const meta = String(m?.round_name || '').trim() || `Раунд ${m?.round_index ?? ''}`.trim();
+      return [prefix, meta].filter(Boolean).join(' ');
     }
-    return group;
+    return [prefix, group].filter(Boolean).join(' ');
   };
 
   const matchScoreLabel = (m: any): string => {
@@ -3396,7 +3413,7 @@ export const SchedulePage: React.FC = () => {
               </>
             </div>
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 12, alignItems: 'center' }}>
-              <div className="text-sm">Дата: <strong>{schedule.date}</strong></div>
+              <div className="text-sm">Дата: <strong>{formatIsoDateToRu(schedule.date)}</strong></div>
             </div>
           </div>
 

@@ -27,6 +27,7 @@ def new_king(request):
         groups_count = int(data.get("groups_count") or 1)
         planned_participants = int(data.get("participants") or 0) or None
         schedule_pattern_id = data.get("schedule_pattern_id")
+        name_for_schedule = str(data.get("name_for_schedule") or "").strip()[:10]
         
         # Валидация: для Кинг должно быть от 4 до 16 участников в группе
         if planned_participants and groups_count:
@@ -74,6 +75,7 @@ def new_king(request):
         
         tournament = Tournament.objects.create(
             name=data["name"],
+            name_for_schedule=name_for_schedule,
             date=data["date"],
             start_time=data.get("start_time") or None,
             participant_mode=data["participant_mode"],
