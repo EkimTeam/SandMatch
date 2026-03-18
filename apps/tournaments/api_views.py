@@ -5453,15 +5453,18 @@ class PlayerSearchView(APIView):
 
         payload = []
         for p in players:
+            btr_player = getattr(p, "btr_player", None)
+            patronymic = (p.patronymic or "").strip() or (getattr(btr_player, "middle_name", "") or "").strip()
+            city = (p.city or "").strip() or (getattr(btr_player, "city", "") or "").strip()
             payload.append(
                 {
                     "id": p.id,
                     "first_name": p.first_name,
                     "last_name": p.last_name,
-                    "patronymic": p.patronymic,
+                    "patronymic": patronymic,
                     "display_name": p.display_name,
-                    "city": p.city or "",
-                    "btr_rni": getattr(getattr(p, "btr_player", None), "rni", None),
+                    "city": city,
+                    "btr_rni": getattr(btr_player, "rni", None),
                 }
             )
 

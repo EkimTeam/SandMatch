@@ -5,7 +5,10 @@ type Player = {
   id: number;
   first_name: string;
   last_name: string;
+  patronymic?: string | null;
   display_name: string;
+  city?: string;
+  btr_rni?: number | null;
 };
 
 interface Props {
@@ -72,6 +75,18 @@ export const KnockoutParticipantPicker: React.FC<Props> = ({
   }, [open, isDoubles, tournamentId, usedPlayerIds]);
 
   const disabledIds = useMemo(() => blockedIds, [blockedIds]);
+
+  const formatPlayerSearchMeta = (p: Player) => {
+    const patronymic = (p.patronymic || '').trim();
+    const patronymicInitial = patronymic ? `${patronymic.charAt(0).toUpperCase()}.` : '';
+    const base = [p.last_name, p.first_name, patronymicInitial].filter(Boolean).join(' ');
+    const suffix: string[] = [];
+    const city = (p.city || '').trim();
+    if (city) suffix.push(city);
+    const rni = p.btr_rni;
+    if (typeof rni === 'number') suffix.push(`РНИ ${rni}`);
+    return suffix.length ? `${base} • ${suffix.join(' • ')}` : base;
+  };
 
   const search = async (field: 'A' | 'B', q: string) => {
     field === 'A' ? setLoadingA(true) : setLoadingB(true);
@@ -219,7 +234,7 @@ export const KnockoutParticipantPicker: React.FC<Props> = ({
                   >
                     <div>
                       <div className="font-medium">{p.display_name}</div>
-                      <div className="text-xs text-gray-500">{p.last_name} {p.first_name}</div>
+                      <div className="text-xs text-gray-500">{formatPlayerSearchMeta(p)}</div>
                     </div>
                     {selectedA?.id === p.id && <span className="text-green-600 text-sm">✓</span>}
                   </div>
@@ -254,7 +269,7 @@ export const KnockoutParticipantPicker: React.FC<Props> = ({
                     >
                       <div>
                         <div className="font-medium">{p.display_name}</div>
-                        <div className="text-xs text-gray-500">{p.last_name} {p.first_name}</div>
+                        <div className="text-xs text-gray-500">{formatPlayerSearchMeta(p)}</div>
                       </div>
                       {selectedA?.id === p.id && <span className="text-green-600 text-sm">✓</span>}
                     </div>
@@ -287,7 +302,7 @@ export const KnockoutParticipantPicker: React.FC<Props> = ({
                     >
                       <div>
                         <div className="font-medium">{p.display_name}</div>
-                        <div className="text-xs text-gray-500">{p.last_name} {p.first_name}</div>
+                        <div className="text-xs text-gray-500">{formatPlayerSearchMeta(p)}</div>
                       </div>
                       {selectedB?.id === p.id && <span className="text-green-600 text-sm">✓</span>}
                     </div>
