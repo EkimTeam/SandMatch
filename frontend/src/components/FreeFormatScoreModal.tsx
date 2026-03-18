@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 
 interface SetScore {
   index: number;
-  games_1: number;
-  games_2: number;
+  games_1: number | null;
+  games_2: number | null;
   tb_loser_points: number | null;
   is_tiebreak_only: boolean;
   custom_enabled: boolean;
@@ -78,21 +78,29 @@ const FreeFormatScoreModal: React.FC<FreeFormatScoreModalProps> = ({
     [7, 5], [7, 6]
   ];
 
+  const winnerFillColor = '#d1fae5';
+  const initialScoreFillColor = '#dbeafe';
+  const initialScoreTextColor = '#1e3a8a';
+
   // Форматирование отображения счета сета
   const formatSetScore = (set: SetScore): string => {
     // Чемпионский тайбрейк
     if (set.champion_tb_enabled) {
-      if (set.games_1 !== 0 || set.games_2 !== 0) {
-        return `TB ${set.games_1}:${set.games_2}`;
+      const g1 = set.games_1 ?? 0;
+      const g2 = set.games_2 ?? 0;
+      if (g1 !== 0 || g2 !== 0) {
+        return `TB ${g1}:${g2}`;
       }
-      return '';
+      return 'TB 0:0';
     }
 
-    if (!set.custom_enabled || (set.games_1 === 0 && set.games_2 === 0)) {
-      return '';
+    const cg1 = set.games_1 ?? 0;
+    const cg2 = set.games_2 ?? 0;
+    if (!set.custom_enabled || (cg1 === 0 && cg2 === 0)) {
+      return '0:0';
     }
 
-    let score = `${set.games_1}:${set.games_2}`;
+    let score = `${cg1}:${cg2}`;
 
     // Обычный тайбрейк - показываем только очки проигравшего
     if (set.tb_enabled && set.tb_loser_points !== null) {
@@ -100,6 +108,18 @@ const FreeFormatScoreModal: React.FC<FreeFormatScoreModalProps> = ({
     }
 
     return score;
+  };
+
+  const hasSelectedScore = (set: SetScore): boolean => {
+    if (set.champion_tb_enabled) {
+      const g1 = set.games_1 ?? 0;
+      const g2 = set.games_2 ?? 0;
+      return g1 !== 0 || g2 !== 0;
+    }
+
+    const g1 = set.games_1 ?? 0;
+    const g2 = set.games_2 ?? 0;
+    return set.custom_enabled && (g1 !== 0 || g2 !== 0);
   };
 
   // Обработка выбора пресета
@@ -168,24 +188,27 @@ const FreeFormatScoreModal: React.FC<FreeFormatScoreModalProps> = ({
   };
 
   // Изменение геймов
-  const handleGamesChange = (setIndex: number, team: 1 | 2, value: number) => {
+  const handleGamesChange = (setIndex: number, team: 1 | 2, value: string) => {
+    const v = value === '' ? null : Math.max(0, parseInt(value, 10));
     setSets(prev => prev.map((s, i) =>
       i === setIndex
         ? {
             ...s,
-            [`games_${team}`]: Math.max(0, value)
+            games_1: team === 1 ? v : s.games_1,
+            games_2: team === 2 ? v : s.games_2
           }
         : s
     ));
   };
 
   // Изменение очков TB
-  const handleTBPointsChange = (setIndex: number, value: number) => {
+  const handleTBPointsChange = (setIndex: number, value: string) => {
+    const v = value === '' ? null : Math.max(0, parseInt(value, 10));
     setSets(prev => prev.map((s, i) =>
       i === setIndex
         ? {
             ...s,
-            tb_loser_points: Math.max(0, value)
+            tb_loser_points: v
           }
         : s
     ));
@@ -223,14 +246,16 @@ const FreeFormatScoreModal: React.FC<FreeFormatScoreModalProps> = ({
     for (const set of sets) {
       if (set.champion_tb_enabled) {
         // Чемпионский TB = 1:0 или 0:1
-        if (set.games_1 > set.games_2) {
+        const g1 = set.games_1 ?? 0;
+        const g2 = set.games_2 ?? 0;
+        if (g1 > g2) {
           totalGames1 += 1;
-        } else if (set.games_2 > set.games_1) {
+        } else if (g2 > g1) {
           totalGames2 += 1;
         }
       } else if (set.custom_enabled) {
-        totalGames1 += set.games_1;
-        totalGames2 += set.games_2;
+        totalGames1 += (set.games_1 ?? 0);
+        totalGames2 += (set.games_2 ?? 0);
       }
     }
 
@@ -250,7 +275,7 @@ const FreeFormatScoreModal: React.FC<FreeFormatScoreModalProps> = ({
 
     // Проверка что хотя бы один сет заполнен
     const hasValidSet = sets.some(s => 
-      (s.custom_enabled && (s.games_1 > 0 || s.games_2 > 0)) ||
+      (s.custom_enabled && ((s.games_1 ?? 0) > 0 || (s.games_2 ?? 0) > 0)) ||
       (s.champion_tb_enabled && s.tb_loser_points !== null)
     );
 
@@ -325,9 +350,6 @@ const FreeFormatScoreModal: React.FC<FreeFormatScoreModalProps> = ({
               >
                 <div style={{ textAlign: 'center', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8 }}>
                   <div style={{ fontWeight: 600 }}>Сет {set.index}</div>
-                  {formatSetScore(set) && (
-                    <span style={{ color: '#2563eb', fontWeight: 600 }}>{formatSetScore(set)}</span>
-                  )}
                 </div>
                 {sets.length > 1 && (
                   <div style={{ marginTop: 4, display: 'flex', justifyContent: 'flex-end' }}>
@@ -346,8 +368,22 @@ const FreeFormatScoreModal: React.FC<FreeFormatScoreModalProps> = ({
 
               {/* Пресеты: имена по центру и общая область плиток */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-                <div style={{ gridColumn: '1 / span 2', display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                <div style={{ gridColumn: '1 / span 2', display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 12, alignItems: 'center' }}>
                   <div style={{ flex: 1, fontWeight: 600, textAlign: 'center' }}>{team1Name}</div>
+                  <div
+                    style={{
+                      minWidth: 72,
+                      padding: '6px 12px',
+                      borderRadius: 999,
+                      backgroundColor: hasSelectedScore(set) ? winnerFillColor : initialScoreFillColor,
+                      color: hasSelectedScore(set) ? '#065f46' : initialScoreTextColor,
+                      fontWeight: 700,
+                      textAlign: 'center',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {formatSetScore(set)}
+                  </div>
                   <div style={{ flex: 1, fontWeight: 600, textAlign: 'center' }}>{team2Name}</div>
                 </div>
 
@@ -410,24 +446,26 @@ const FreeFormatScoreModal: React.FC<FreeFormatScoreModalProps> = ({
                         <span style={{ fontSize: 14, width: 96 }}>{team1Name}:</span>
                         <input
                           type="number"
+                          inputMode="numeric"
                           min="0"
                           max="20"
-                          value={set.games_1}
-                          onChange={(e) => handleGamesChange(setIndex, 1, parseInt(e.target.value) || 0)}
+                          value={set.games_1 ?? ''}
+                          onChange={(e) => handleGamesChange(setIndex, 1, e.target.value)}
                           className="input"
-                          style={{ width: 64 }}
+                          style={{ width: 64, border: '1px solid #cbd5e1', boxShadow: 'inset 0 0 0 1px #cbd5e1' }}
                         />
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ fontSize: 14, width: 96 }}>{team2Name}:</span>
                         <input
                           type="number"
+                          inputMode="numeric"
                           min="0"
                           max="20"
-                          value={set.games_2}
-                          onChange={(e) => handleGamesChange(setIndex, 2, parseInt(e.target.value) || 0)}
+                          value={set.games_2 ?? ''}
+                          onChange={(e) => handleGamesChange(setIndex, 2, e.target.value)}
                           className="input"
-                          style={{ width: 64 }}
+                          style={{ width: 64, border: '1px solid #cbd5e1', boxShadow: 'inset 0 0 0 1px #cbd5e1' }}
                         />
                       </div>
                     </div>
@@ -442,14 +480,15 @@ const FreeFormatScoreModal: React.FC<FreeFormatScoreModalProps> = ({
                       <span style={{ fontSize: 14 }}>TB</span>
                       <input
                         type="number"
+                        inputMode="numeric"
                         min="0"
                         max="20"
                         disabled={!set.tb_enabled}
-                        value={set.tb_loser_points || ''}
-                        onChange={(e) => handleTBPointsChange(setIndex, parseInt(e.target.value) || 0)}
+                        value={set.tb_loser_points ?? ''}
+                        onChange={(e) => handleTBPointsChange(setIndex, e.target.value)}
                         placeholder="Очки проигравшего"
                         className="input"
-                        style={{ width: 128 }}
+                        style={{ width: 128, border: '1px solid #cbd5e1', boxShadow: 'inset 0 0 0 1px #cbd5e1' }}
                       />
                     </div>
                   </div>
@@ -471,24 +510,26 @@ const FreeFormatScoreModal: React.FC<FreeFormatScoreModalProps> = ({
                       <div style={{ fontSize: 13, color: '#6b7280' }}>{team1Name}</div>
                       <input
                         type="number"
+                        inputMode="numeric"
                         min="0"
                         max="20"
-                        value={set.games_1}
-                        onChange={(e) => handleGamesChange(setIndex, 1, parseInt(e.target.value) || 0)}
+                        value={set.games_1 ?? ''}
+                        onChange={(e) => handleGamesChange(setIndex, 1, e.target.value)}
                         className="input"
-                        style={{ width: 120 }}
+                        style={{ width: 120, border: '1px solid #cbd5e1', boxShadow: 'inset 0 0 0 1px #cbd5e1' }}
                       />
                     </div>
                     <div>
                       <div style={{ fontSize: 13, color: '#6b7280' }}>{team2Name}</div>
                       <input
                         type="number"
+                        inputMode="numeric"
                         min="0"
                         max="20"
-                        value={set.games_2}
-                        onChange={(e) => handleGamesChange(setIndex, 2, parseInt(e.target.value) || 0)}
+                        value={set.games_2 ?? ''}
+                        onChange={(e) => handleGamesChange(setIndex, 2, e.target.value)}
                         className="input"
-                        style={{ width: 120 }}
+                        style={{ width: 120, border: '1px solid #cbd5e1', boxShadow: 'inset 0 0 0 1px #cbd5e1' }}
                       />
                     </div>
                     <div style={{ alignSelf: 'center', color: '#6b7280' }}>Разница не менее 2</div>
