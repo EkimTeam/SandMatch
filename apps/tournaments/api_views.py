@@ -39,6 +39,8 @@ from .serializers import (
     MatchSerializer,
     PlayerSerializer,
     SchedulePatternSerializer,
+    WebTournamentParticipantsSerializer,
+    WebTournamentRegistrationSerializer,
 )
 from apps.telegram_bot.models import TelegramUser
 from apps.tournaments.registration_models import TournamentRegistration
@@ -2256,7 +2258,8 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 "main_list": main_list,
                 "reserve_list": reserve_list,
                 "looking_for_partner": looking_for_partner,
-            }
+            },
+            context={"tournament": tournament}
         ).data
 
         player = self._get_current_player(request, tournament)
@@ -2264,7 +2267,10 @@ class TournamentViewSet(viewsets.ModelViewSet):
         if player:
             my_reg = registrations_qs.filter(player=player).first()
             if my_reg:
-                my_registration_data = WebTournamentRegistrationSerializer(my_reg).data
+                my_registration_data = WebTournamentRegistrationSerializer(
+                    my_reg,
+                    context={"tournament": tournament},
+                ).data
 
         # Количество участников считаем по TournamentEntry (реальные команды),
         # а не по числу регистраций (чтобы "ищу пару" не засчитывались как занятое место)
@@ -2319,7 +2325,8 @@ class TournamentViewSet(viewsets.ModelViewSet):
                 "main_list": main_list,
                 "reserve_list": reserve_list,
                 "looking_for_partner": looking_for_partner,
-            }
+            },
+            context={"tournament": tournament}
         ).data
 
         # Количество участников считаем по TournamentEntry (реальные команды),

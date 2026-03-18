@@ -11,6 +11,82 @@ from apps.tournaments.services.team_ordering import (
 )
 
 
+class WebTournamentRegistrationSerializer(serializers.ModelSerializer):
+    player_id = serializers.IntegerField(source="player.id", read_only=True)
+    player_name = serializers.SerializerMethodField()
+    partner_id = serializers.IntegerField(source="partner.id", read_only=True)
+    partner_name = serializers.SerializerMethodField()
+    team_id = serializers.IntegerField(source="team.id", read_only=True)
+    visible_rating = serializers.SerializerMethodField()
+    rating_label = serializers.SerializerMethodField()
+
+    class Meta:
+        from apps.tournaments.registration_models import TournamentRegistration
+
+        model = TournamentRegistration
+        fields = [
+            "id",
+            "player_id",
+            "player_name",
+            "partner_id",
+            "partner_name",
+            "team_id",
+            "status",
+            "registered_at",
+            "visible_rating",
+            "rating_label",
+        ]
+
+    def _tournament(self):
+        return self.context.get("tournament")
+
+    def get_player_name(self, obj):
+        try:
+            return str(obj.player)
+        except Exception:
+            return ""
+
+    def get_partner_name(self, obj):
+        partner = getattr(obj, "partner", None)
+        if not partner:
+            return None
+        try:
+            return str(partner)
+        except Exception:
+            return None
+
+    def get_visible_rating(self, obj):
+        from apps.tournaments.services.rating_visible import get_player_visible_rating
+
+        tournament = self._tournament()
+        player = getattr(obj, "player", None)
+        if not tournament or not player:
+            return None
+
+        try:
+            res = get_player_visible_rating(tournament, player)
+            return int(res.rating or 0) if res else None
+        except Exception:
+            return None
+
+    def get_rating_label(self, obj) -> str | None:
+        tournament = self._tournament()
+        if not tournament:
+            return None
+        try:
+            if tournament.rating_visible == Tournament.RatingVisible.BEACHPLAY:
+                return "BP"
+            return "РПТТ"
+        except Exception:
+            return None
+
+
+class WebTournamentParticipantsSerializer(serializers.Serializer):
+    main_list = WebTournamentRegistrationSerializer(many=True)
+    reserve_list = WebTournamentRegistrationSerializer(many=True)
+    looking_for_partner = WebTournamentRegistrationSerializer(many=True)
+
+
 class PlayerSerializer(serializers.ModelSerializer):
     display_name = serializers.CharField(read_only=True)
 
