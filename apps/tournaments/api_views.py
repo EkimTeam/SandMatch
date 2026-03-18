@@ -1423,15 +1423,9 @@ class TournamentViewSet(viewsets.ModelViewSet):
                                 group_index=None,
                                 row_index=None
                             )
-                            
-                            # Очищаем все матчи турнира от участников
-                            Match.objects.filter(tournament=tournament).update(
-                                team_1=None,
-                                team_2=None
-                            )
-                            
-                            # Удаляем старую сетку и все связанные данные
-                            bracket.delete()
+                            Match.objects.filter(tournament=tournament).delete()
+                            DrawPosition.objects.filter(bracket__tournament=tournament).delete()
+                            KnockoutBracket.objects.filter(tournament=tournament).delete()
                             
                             # Создаем новую сетку с новым размером
                             bracket = KnockoutBracket.objects.create(

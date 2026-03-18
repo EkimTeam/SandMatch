@@ -55,6 +55,11 @@ export const KnockoutPage: React.FC = () => {
   const bracketExportRef = useRef<HTMLDivElement | null>(null);
   const canDeleteTournament = !!(tMeta && (tMeta as any).can_delete);
   const [hasOnlineSchedule, setHasOnlineSchedule] = useState<boolean>(false);
+  const [checkingScheduleForStart, setCheckingScheduleForStart] = useState(false);
+  const [pendingStart, setPendingStart] = useState(false);
+  const [hasDraftSchedule, setHasDraftSchedule] = useState<boolean>(false);
+  const [creatingOfficialFromDraft, setCreatingOfficialFromDraft] = useState<boolean>(false);
+  const [showStartTournamentModal, setShowStartTournamentModal] = useState(false);
 
   // Многостадийный турнир: модалки/данные для создания стадии (должны быть объявлены до useEffect)
   const [showCreateStageModal, setShowCreateStageModal] = useState(false);
@@ -92,6 +97,58 @@ export const KnockoutPage: React.FC = () => {
       canceled = true;
     };
   }, [tMeta?.id]);
+
+  const pendingStartKey = useMemo(() => (tMeta?.id ? `tournament:pendingStart:${tMeta.id}` : ''), [tMeta?.id]);
+
+  const readPendingStart = useCallback(() => {
+    if (!pendingStartKey) return false;
+    try {
+      return window.localStorage.getItem(pendingStartKey) === '1';
+    } catch {
+      return false;
+    }
+  }, [pendingStartKey]);
+
+  const writePendingStart = useCallback((v: boolean) => {
+    if (!pendingStartKey) return;
+    try {
+      if (v) window.localStorage.setItem(pendingStartKey, '1');
+      else window.localStorage.removeItem(pendingStartKey);
+    } catch {
+      // noop
+    }
+    setPendingStart(v);
+  }, [pendingStartKey]);
+
+  useEffect(() => {
+    if (!tMeta?.id) {
+      setPendingStart(false);
+      return;
+    }
+    setPendingStart(readPendingStart());
+  }, [tMeta?.id, readPendingStart]);
+
+  useEffect(() => {
+    if (!tMeta?.id || !canManageStructure || tMeta.status !== 'created') {
+      setHasDraftSchedule(false);
+      return;
+    }
+    let canceled = false;
+    const run = async () => {
+      try {
+        const res = await tournamentApi.getDraftSchedule(Number(tMeta.id));
+        if (canceled) return;
+        setHasDraftSchedule(!!(res as any)?.schedule);
+      } catch {
+        if (canceled) return;
+        setHasDraftSchedule(false);
+      }
+    };
+    run();
+    return () => {
+      canceled = true;
+    };
+  }, [tMeta?.id, tMeta?.status, canManageStructure]);
 
   // При смене турнира сбрасываем bracketId (в новой схеме URL без ?bracket=),
   // чтобы на странице пересчитался/создался default bracket.
@@ -1432,6 +1489,86 @@ export const KnockoutPage: React.FC = () => {
     }
   }, [tournamentId, bracketId, dragDropState.dropSlots, loadDraw, canManageStructure]);
 
+  const startTournamentNow = useCallback(async () => {
+    if (!canManageStructure) return;
+    if (tMeta?.status === 'completed') return;
+    try {
+      setSaving(true);
+      await handleLockParticipants(true);
+      writePendingStart(false);
+    } catch (error) {
+      console.error('Failed to start tournament:', error);
+      alert('Не удалось начать турнир');
+    } finally {
+      setSaving(false);
+    }
+  }, [canManageStructure, tMeta?.status, handleLockParticipants, writePendingStart]);
+
+  const handleStartTournamentClick = useCallback(async () => {
+    if (!tMeta?.id || !canManageStructure) return;
+    setCheckingScheduleForStart(true);
+    try {
+      const sch = await tournamentApi.getSchedule(Number(tMeta.id));
+      const hasSchedule = !!(sch as any)?.schedule;
+      if (!hasSchedule) {
+        setShowStartTournamentModal(true);
+        return;
+      }
+      await startTournamentNow();
+    } catch (e: any) {
+      setShowStartTournamentModal(true);
+    } finally {
+      setCheckingScheduleForStart(false);
+    }
+  }, [tMeta?.id, canManageStructure, startTournamentNow]);
+
+  const goCreateScheduleForStart = useCallback(() => {
+    if (!tMeta?.id) return;
+    writePendingStart(true);
+    setShowStartTournamentModal(false);
+    navigate(`/tournaments/${tMeta.id}/schedule`);
+  }, [tMeta?.id, writePendingStart, navigate]);
+
+  const useDraftToCreateScheduleForStart = useCallback(async () => {
+    if (!tMeta?.id) return;
+    setCreatingOfficialFromDraft(true);
+    try {
+      const res = await tournamentApi.createScheduleFromDraft(Number(tMeta.id));
+      if (!(res as any)?.ok) {
+        alert((res as any)?.detail || (res as any)?.error || 'Не удалось создать расписание из черновика');
+        return;
+      }
+      setShowStartTournamentModal(false);
+      await startTournamentNow();
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || e?.response?.data?.error || 'Не удалось создать расписание из черновика');
+    } finally {
+      setCreatingOfficialFromDraft(false);
+    }
+  }, [tMeta?.id, startTournamentNow]);
+
+  const handlePreviewScheduleClick = useCallback(async () => {
+    if (!tMeta?.id) return;
+    setCreatingOfficialFromDraft(true);
+    try {
+      const res = await tournamentApi.createScheduleFromDraft(Number(tMeta.id));
+      if (!(res as any)?.ok) {
+        alert((res as any)?.detail || (res as any)?.error || 'Не удалось зафиксировать расписание из черновика');
+        return;
+      }
+      navigate(`/tournaments/${tMeta.id}/schedule`);
+    } catch (e: any) {
+      alert(e?.response?.data?.detail || e?.response?.data?.error || 'Не удалось зафиксировать расписание из черновика');
+    } finally {
+      setCreatingOfficialFromDraft(false);
+    }
+  }, [tMeta?.id, navigate]);
+
+  const startWithoutSchedule = useCallback(async () => {
+    setShowStartTournamentModal(false);
+    await startTournamentNow();
+  }, [startTournamentNow]);
+
   const handleMatchClick = useCallback((matchId: number) => {
     if (!canManageMatches) return;
     // Блокировка для завершённых турниров
@@ -1642,29 +1779,63 @@ export const KnockoutPage: React.FC = () => {
             />
           )}
 
-          {/* Чекбокс фиксации участников под сеткой */}
-          {canManageStructure && tMeta?.status === 'created' && !dragDropState.isSelectionLocked && (
-            <div style={{ marginTop: 16, padding: '12px', background: '#f8f9fa', borderRadius: 4 }} data-export-exclude="true">
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: hasUnplacedParticipants ? 'not-allowed' : 'pointer', opacity: hasUnplacedParticipants ? 0.6 : 1 }}>
-                <input
-                  type="checkbox"
-                  checked={false}
-                  disabled={hasUnplacedParticipants}
-                  onChange={(e) => {
-                    if (e.target.checked) {
-                      handleLockParticipants(true);
-                    }
-                  }}
-                />
-                <span style={{ fontWeight: 500 }}>Зафиксировать участников и сгенерировать расписание</span>
-              </label>
-              <p style={{ margin: '8px 0 0 28px', fontSize: 13, color: '#666' }}>
-                {hasUnplacedParticipants
-                  ? `Все участники должны быть размещены в сетке. Осталось разместить: ${freeSlotsInBracket}`
-                  : `В сетке размещено ${participantsInBracket} из ${tMeta?.planned_participants || 0} участников. Вы можете зафиксировать участников и начать турнир.`}
-              </p>
-            </div>
-          )}
+          {canManageStructure && tMeta?.status === 'created' && !dragDropState.isSelectionLocked && (() => {
+            const canLock = !hasUnplacedParticipants && participantsInBracket > 0;
+            return (
+              <div style={{ marginTop: 16, padding: 16, background: '#f8f9fa', borderRadius: 8 }} data-export-exclude="true">
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', opacity: canLock ? 1 : 0.5 }}>
+                  {!pendingStart ? (
+                    <button
+                      className="btn"
+                      style={{ background: '#28a745', borderColor: '#28a745' }}
+                      onClick={handleStartTournamentClick}
+                      disabled={saving || !canLock || checkingScheduleForStart}
+                      title={!canLock ? 'Разместите всех участников в сетке, чтобы начать турнир' : ''}
+                    >
+                      {checkingScheduleForStart ? 'Проверяем расписание…' : 'Начать турнир'}
+                    </button>
+                  ) : (
+                    <button
+                      className="btn"
+                      style={{ background: '#28a745', borderColor: '#28a745' }}
+                      onClick={startTournamentNow}
+                      disabled={saving || !canLock}
+                      title={!canLock ? 'Разместите всех участников в сетке, чтобы начать турнир' : ''}
+                    >
+                      Подтвердить старт
+                    </button>
+                  )}
+
+                  {pendingStart && (
+                    <button
+                      className="btn"
+                      onClick={() => {
+                        writePendingStart(false);
+                      }}
+                      disabled={saving}
+                    >
+                      Отменить старт
+                    </button>
+                  )}
+
+                  <button
+                    className="btn"
+                    onClick={handlePreviewScheduleClick}
+                    disabled={saving || creatingOfficialFromDraft || !hasDraftSchedule || !canLock}
+                  >
+                    Предпросмотр расписания
+                  </button>
+                </div>
+                <p style={{ margin: '10px 0 0 0', fontSize: 13, color: '#666' }}>
+                  {pendingStart
+                    ? 'Создайте/проверьте расписание, затем нажмите «Подтвердить старт». Пока турнир остаётся в статусе «Регистрация». '
+                    : canLock
+                      ? 'Перед стартом рекомендуется создать расписание. Если расписания нет — можно начать без него (с предупреждением).'
+                      : `Все участники должны быть размещены в сетке. Осталось разместить: ${freeSlotsInBracket}`}
+                </p>
+              </div>
+            );
+          })()}
         </div>
       </div>
 
@@ -1738,6 +1909,36 @@ export const KnockoutPage: React.FC = () => {
             setScoreModal({ open: false, matchId: null, team1: null, team2: null });
           }}
         />
+      )}
+
+      {showStartTournamentModal && tMeta && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowStartTournamentModal(false)}>
+          <div style={{ backgroundColor: '#fff', padding: 20, maxWidth: 520, width: '100%', borderRadius: 8 }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Начать турнир</div>
+            <div style={{ fontSize: 13, color: '#555', lineHeight: 1.4 }}>
+              Для этого турнира ещё нет официального расписания.
+              {hasDraftSchedule
+                ? ' Можно использовать черновик и зафиксировать расписание перед стартом.'
+                : ' Рекомендуется сначала создать расписание, чтобы избежать ситуации «турнир идёт, а расписания нет».'}
+            </div>
+            <div style={{ marginTop: 14, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {hasDraftSchedule && (
+                <button className="btn" style={{ background: '#28a745', borderColor: '#28a745' }} onClick={useDraftToCreateScheduleForStart} disabled={saving || creatingOfficialFromDraft}>
+                  Использовать черновик (рекомендуется)
+                </button>
+              )}
+              <button className="btn" style={{ background: '#28a745', borderColor: '#28a745' }} onClick={goCreateScheduleForStart} disabled={saving || creatingOfficialFromDraft}>
+                Создать расписание
+              </button>
+              <button className="btn" onClick={startWithoutSchedule} disabled={saving || creatingOfficialFromDraft}>
+                Начать без расписания
+              </button>
+              <button className="btn" onClick={() => setShowStartTournamentModal(false)} disabled={saving || creatingOfficialFromDraft}>
+                Отмена
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {showAnnouncementModal && (
