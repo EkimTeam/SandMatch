@@ -243,6 +243,18 @@ export const SchedulePage: React.FC = () => {
     return m;
   }, [sortedScopes]);
 
+  const scheduledTournamentIds = useMemo(() => {
+    return new Set(
+      (sortedScopes || [])
+        .map((s: any) => Number(s?.tournament))
+        .filter((id: number) => Number.isFinite(id) && id > 0)
+    );
+  }, [sortedScopes]);
+
+  const filteredAvailableTournaments = useMemo(() => {
+    return availableTournaments.filter(t => !scheduledTournamentIds.has(Number(t.id)));
+  }, [availableTournaments, scheduledTournamentIds]);
+
   useEffect(() => {
     const next = new Map<number, string>();
     for (const s of sortedScopes || []) {
@@ -513,7 +525,7 @@ export const SchedulePage: React.FC = () => {
       canceled = true;
       window.clearTimeout(timer);
     };
-  }, [showScopesModal, schedule?.id, availableTournamentQuery]);
+  }, [showScopesModal, schedule?.id, availableTournamentQuery, sortedScopes]);
 
   useEffect(() => {
     if (canManage) return;
@@ -2899,9 +2911,10 @@ export const SchedulePage: React.FC = () => {
 
             <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 16 }}>
               <div style={{ minWidth: 240 }}>
-                <div className="text-sm" style={{ marginBottom: 4 }}>Поиск</div>
+                <div className="text-sm" style={{ marginBottom: 4 }}>Поиск-фильтр</div>
                 <input
                   className="input"
+                  style={{ border: '1px solid #cbd5e1', boxShadow: 'inset 0 0 0 1px #cbd5e1' }}
                   value={availableTournamentQuery}
                   onChange={e => setAvailableTournamentQuery(e.target.value)}
                   placeholder="Название турнира"
@@ -2918,7 +2931,7 @@ export const SchedulePage: React.FC = () => {
                   }}
                 >
                   <option value="">{availableTournamentsLoading ? 'Загрузка…' : 'Выберите турнир'}</option>
-                  {availableTournaments.map(t => (
+                  {filteredAvailableTournaments.map(t => (
                     <option key={t.id} value={t.id}>
                       {t.name} (#{t.id})
                     </option>

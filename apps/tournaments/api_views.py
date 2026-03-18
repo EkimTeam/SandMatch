@@ -1423,15 +1423,9 @@ class TournamentViewSet(viewsets.ModelViewSet):
                                 group_index=None,
                                 row_index=None
                             )
-                            
-                            # Очищаем все матчи турнира от участников
-                            Match.objects.filter(tournament=tournament).update(
-                                team_1=None,
-                                team_2=None
-                            )
-                            
-                            # Удаляем старую сетку и все связанные данные
-                            bracket.delete()
+                            Match.objects.filter(tournament=tournament).delete()
+                            DrawPosition.objects.filter(bracket__tournament=tournament).delete()
+                            KnockoutBracket.objects.filter(tournament=tournament).delete()
                             
                             # Создаем новую сетку с новым размером
                             bracket = KnockoutBracket.objects.create(
@@ -5459,15 +5453,18 @@ class PlayerSearchView(APIView):
 
         payload = []
         for p in players:
+            btr_player = getattr(p, "btr_player", None)
+            patronymic = (p.patronymic or "").strip() or (getattr(btr_player, "middle_name", "") or "").strip()
+            city = (p.city or "").strip() or (getattr(btr_player, "city", "") or "").strip()
             payload.append(
                 {
                     "id": p.id,
                     "first_name": p.first_name,
                     "last_name": p.last_name,
-                    "patronymic": p.patronymic,
+                    "patronymic": patronymic,
                     "display_name": p.display_name,
-                    "city": p.city or "",
-                    "btr_rni": getattr(getattr(p, "btr_player", None), "rni", None),
+                    "city": city,
+                    "btr_rni": getattr(btr_player, "rni", None),
                 }
             )
 

@@ -73,8 +73,26 @@ export const MatchScoreModal: React.FC<MatchScoreModalProps> = ({
   const allowTBOnly = !!setFormat?.allow_tiebreak_only_set;
   const tbPts = setFormat?.tiebreak_points ?? 7;
   const deciderTBPts = setFormat?.decider_tiebreak_points ?? 10;
+  const winnerFillColor = '#d1fae5';
+  const initialScoreFillColor = '#dbeafe';
+  const initialScoreTextColor = '#1e3a8a';
 
   const isTiebreakScore = (a: number, b: number) => (a === tbAt + 1 && b === tbAt) || (b === tbAt + 1 && a === tbAt);
+
+  const getSetBadgeText = (s: SetResult): string => {
+    if (!s.isTBOnly) {
+      return s.games1 != null && s.games2 != null
+        ? `${s.games1}:${s.games2}${s.tb1 != null ? `(${s.tb1})` : s.tb2 != null ? `(${s.tb2})` : ''}`
+        : '0:0';
+    }
+
+    return s.tb1 != null && s.tb2 != null ? `TB ${s.tb1}:${s.tb2}` : 'TB 0:0';
+  };
+
+  const hasSelectedScore = (s: SetResult): boolean => {
+    if (!s.isTBOnly) return s.games1 != null && s.games2 != null;
+    return s.tb1 != null && s.tb2 != null && (s.tb1 !== 0 || s.tb2 !== 0);
+  };
 
   const quickPresets = (): Array<[number, number]> => {
     // Готовые результаты для обычного сета
@@ -121,13 +139,13 @@ export const MatchScoreModal: React.FC<MatchScoreModalProps> = ({
   };
 
   const updateTB = (idx: number, loser: 1 | 2, val: string) => {
-    const v = val === '' ? 0 : Math.max(0, parseInt(val, 10));
+    const v = val === '' ? null : Math.max(0, parseInt(val, 10));
     setSets(prev => {
       const next = [...prev];
       const s = { ...next[idx] };
       // записываем очки тай-брейка у проигравшего; у победителя оставляем стандартные очки tbPts
-      if (loser === 1) { s.tb1 = v; s.tb2 = s.tb2 ?? tbPts; }
-      else { s.tb2 = v; s.tb1 = s.tb1 ?? tbPts; }
+      if (loser === 1) { s.tb1 = v; s.tb2 = tbPts; }
+      else { s.tb2 = v; s.tb1 = tbPts; }
       next[idx] = s;
       return next;
     });
@@ -282,18 +300,25 @@ export const MatchScoreModal: React.FC<MatchScoreModalProps> = ({
             <div key={idx} style={{ border: '1px solid #e5e7eb', borderRadius: 8, marginBottom: 12 }}>
               <div style={{ display: 'flex', alignItems: 'center', padding: '8px 12px', cursor: 'pointer', justifyContent: 'center', gap: 12 }} onClick={() => setSets(prev => prev.map((it, i) => i === idx ? { ...it, expanded: !it.expanded } : it))}>
                 <div style={{ fontWeight: 600 }}>Сет {idx + 1}</div>
-                <div style={{ color: '#111827', fontWeight: 600 }}>
-                  {!s.isTBOnly ? (
-                    s.games1 != null && s.games2 != null ? `${s.games1}:${s.games2}${s.tb1 != null ? `(${s.tb1})` : s.tb2 != null ? `(${s.tb2})` : ''}` : 'не указан'
-                  ) : (
-                    s.tb1 != null && s.tb2 != null ? `TB ${s.tb1}:${s.tb2}` : 'чемп. тай-брейк'
-                  )}
-                </div>
               </div>
               {s.expanded && (
                 <div style={{ padding: '8px 12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  <div style={{ gridColumn: '1 / span 2', display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                  <div style={{ gridColumn: '1 / span 2', display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 12, alignItems: 'center' }}>
                     <div style={{ flex: 1, fontWeight: 600, textAlign: 'center' }}>{team1.name}</div>
+                    <div
+                      style={{
+                        minWidth: 72,
+                        padding: '6px 12px',
+                        borderRadius: 999,
+                        backgroundColor: hasSelectedScore(s) ? winnerFillColor : initialScoreFillColor,
+                        color: hasSelectedScore(s) ? '#065f46' : initialScoreTextColor,
+                        fontWeight: 700,
+                        textAlign: 'center',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {getSetBadgeText(s)}
+                    </div>
                     <div style={{ flex: 1, fontWeight: 600, textAlign: 'center' }}>{team2.name}</div>
                   </div>
 
@@ -341,9 +366,9 @@ export const MatchScoreModal: React.FC<MatchScoreModalProps> = ({
                     <div style={{ gridColumn: '1 / span 2', display: 'flex', alignItems: 'center', gap: 8 }}>
                       <div style={{ color: '#374151' }}>Очки на тай-брейке (у проигравшего):</div>
                       {s.games1 > s.games2 ? (
-                        <input type="number" min={0} value={s.tb2 ?? 0} onChange={(e) => updateTB(idx, 2, e.target.value)} className="input" style={{ width: 120 }} />
+                        <input type="number" inputMode="numeric" min={0} value={s.tb2 ?? ''} onChange={(e) => updateTB(idx, 2, e.target.value)} className="input" style={{ width: 120, border: '1px solid #cbd5e1', boxShadow: 'inset 0 0 0 1px #cbd5e1' }} />
                       ) : (
-                        <input type="number" min={0} value={s.tb1 ?? 0} onChange={(e) => updateTB(idx, 1, e.target.value)} className="input" style={{ width: 120 }} />
+                        <input type="number" inputMode="numeric" min={0} value={s.tb1 ?? ''} onChange={(e) => updateTB(idx, 1, e.target.value)} className="input" style={{ width: 120, border: '1px solid #cbd5e1', boxShadow: 'inset 0 0 0 1px #cbd5e1' }} />
                       )}
                     </div>
                   )}
@@ -360,11 +385,11 @@ export const MatchScoreModal: React.FC<MatchScoreModalProps> = ({
                         <div style={{ display: 'flex', gap: 12 }}>
                           <div>
                             <div style={{ fontSize: 13, color: '#6b7280' }}>{team1.name}</div>
-                            <input type="number" min={0} value={s.tb1 ?? ''} onChange={(e) => updateTBOnly(idx, e.target.value, String(s.tb2 ?? ''))} className="input" style={{ width: 120 }} />
+                            <input type="number" inputMode="numeric" min={0} value={s.tb1 ?? ''} onChange={(e) => updateTBOnly(idx, e.target.value, String(s.tb2 ?? ''))} className="input" style={{ width: 120, border: '1px solid #cbd5e1', boxShadow: 'inset 0 0 0 1px #cbd5e1' }} />
                           </div>
                           <div>
                             <div style={{ fontSize: 13, color: '#6b7280' }}>{team2.name}</div>
-                            <input type="number" min={0} value={s.tb2 ?? ''} onChange={(e) => updateTBOnly(idx, String(s.tb1 ?? ''), e.target.value)} className="input" style={{ width: 120 }} />
+                            <input type="number" inputMode="numeric" min={0} value={s.tb2 ?? ''} onChange={(e) => updateTBOnly(idx, String(s.tb1 ?? ''), e.target.value)} className="input" style={{ width: 120, border: '1px solid #cbd5e1', boxShadow: 'inset 0 0 0 1px #cbd5e1' }} />
                           </div>
                           <div style={{ alignSelf: 'center', color: '#6b7280' }}>Разница не менее 2</div>
                         </div>
