@@ -16,19 +16,6 @@ def _gender_rank(gender: Optional[str]) -> int:
     return 2
 
 
-def _player_visible_rating_value(tournament: Optional[Tournament], player: Player) -> int:
-    if tournament is not None:
-        from apps.tournaments.services.rating_visible import get_player_visible_rating
-
-        try:
-            res = get_player_visible_rating(tournament, player)
-            return int(res.rating or 0)
-        except Exception:
-            return int(getattr(player, "current_rating", 0) or 0)
-
-    return int(getattr(player, "current_rating", 0) or 0)
-
-
 def order_pair_players(
     tournament: Optional[Tournament],
     player_1: Optional[Player],
@@ -39,16 +26,19 @@ def order_pair_players(
     if len(players) <= 1:
         return players
 
-    both_profi = bool(getattr(players[0], "is_profi", False) and getattr(players[1], "is_profi", False))
+    p1_is_profi = bool(getattr(players[0], "is_profi", False))
+    p2_is_profi = bool(getattr(players[1], "is_profi", False))
+    both_profi = bool(p1_is_profi and p2_is_profi)
+    both_non_profi = bool((not p1_is_profi) and (not p2_is_profi))
+    apply_gender_rank = both_profi or both_non_profi
 
     def key(p: Player):
         is_profi = 1 if bool(getattr(p, "is_profi", False)) else 0
         gender = getattr(p, "gender", None) or getattr(getattr(p, "btr_player", None), "gender", None)
-        gender_key = _gender_rank(gender) if both_profi else 9
-        visible_rating = _player_visible_rating_value(tournament, p)
+        gender_key = _gender_rank(gender) if apply_gender_rank else 9
         last_name = (getattr(p, "last_name", "") or "").strip().lower()
         first_name = (getattr(p, "first_name", "") or "").strip().lower()
-        return (-is_profi, gender_key, -visible_rating, last_name, first_name, int(getattr(p, "id", 0) or 0))
+        return (-is_profi, gender_key, last_name, first_name, int(getattr(p, "id", 0) or 0))
 
     return sorted(players, key=key)
 

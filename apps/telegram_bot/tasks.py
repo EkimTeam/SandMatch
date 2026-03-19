@@ -545,8 +545,49 @@ def send_tournament_announcement_to_chat(tournament_id: int, trigger_type: str, 
         logger.info(f"[ANNOUNCEMENT] Генерируем текст анонса...")
 
         custom_text = (getattr(settings, "custom_announcement_text", "") or "").strip()
+        roster_block = ""
+        try:
+            from apps.tournaments.api_views import generate_announcement_roster_block
+
+            roster_block = (generate_announcement_roster_block(tournament) or "").strip()
+        except Exception:
+            roster_block = ""
+
         # Генерируем текст анонса
-        announcement_text = custom_text or generate_announcement_text(tournament)
+        if custom_text:
+            text = custom_text
+            if roster_block:
+                if "{ROSTER}" in text:
+                    text = text.replace("{ROSTER}", roster_block)
+                else:
+                    # Если состав уже есть в тексте, повторно не вставляем
+                    has_roster_markers = (
+                        ("🏅 Основной состав:" in text)
+                        or ("🧩 Резервный состав:" in text)
+                        or ("🤝 Ищут пару:" in text)
+                    )
+                    if not has_roster_markers:
+                        lines = text.splitlines()
+                        insert_at = None
+                        for i, ln in enumerate(lines):
+                            if ln.strip().startswith("👑"):
+                                insert_at = i
+                                break
+                        if insert_at is None:
+                            insert_at = len(lines)
+
+                        # Нормализуем: отделяем пустой строкой
+                        block_lines = roster_block.splitlines()
+                        if insert_at > 0 and lines[insert_at - 1].strip() != "":
+                            block_lines = [""] + block_lines
+                        if insert_at < len(lines) and lines[insert_at].strip() != "":
+                            block_lines = block_lines + [""]
+
+                        lines[insert_at:insert_at] = block_lines
+                        text = "\n".join(lines).strip()
+            announcement_text = text
+        else:
+            announcement_text = generate_announcement_text(tournament)
         logger.info(f"[ANNOUNCEMENT] Текст анонса сгенерирован, длина: {len(announcement_text)} символов")
         
         # Отправляем в Telegram
@@ -726,6 +767,43 @@ def send_custom_tournament_announcement_to_chat(tournament_id: int, text: str):
     announcement_text = (text or "").strip()
     if not announcement_text:
         return "Пустой текст анонса"
+
+    # Подмешиваем актуальный состав (основа/резерв/ищу пару) так же,
+    # как в авто-анонсах. Поддерживаем плейсхолдер {ROSTER}.
+    try:
+        from apps.tournaments.api_views import generate_announcement_roster_block
+
+        roster_block = (generate_announcement_roster_block(tournament) or "").strip()
+    except Exception:
+        roster_block = ""
+
+    if roster_block:
+        if "{ROSTER}" in announcement_text:
+            announcement_text = announcement_text.replace("{ROSTER}", roster_block).strip()
+        else:
+            has_roster_markers = (
+                ("🏅 Основной состав:" in announcement_text)
+                or ("🧩 Резервный состав:" in announcement_text)
+                or ("🤝 Ищут пару:" in announcement_text)
+            )
+            if not has_roster_markers:
+                lines = announcement_text.splitlines()
+                insert_at = None
+                for i, ln in enumerate(lines):
+                    if ln.strip().startswith("👑"):
+                        insert_at = i
+                        break
+                if insert_at is None:
+                    insert_at = len(lines)
+
+                block_lines = roster_block.splitlines()
+                if insert_at > 0 and lines[insert_at - 1].strip() != "":
+                    block_lines = [""] + block_lines
+                if insert_at < len(lines) and lines[insert_at].strip() != "":
+                    block_lines = block_lines + [""]
+
+                lines[insert_at:insert_at] = block_lines
+                announcement_text = "\n".join(lines).strip()
 
     async def _send_or_edit() -> int:
         bot = Bot(
