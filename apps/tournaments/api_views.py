@@ -207,88 +207,9 @@ def generate_announcement_text(tournament) -> str:
     lines.append(f"🌐Регистрация через веб-сайт: [тут]({web_url})")
     lines.append("")
 
-    # Списки зарегистрированных участников (если используется новая система регистрации)
-    if has_registration_model:
-        from apps.tournaments.services.team_ordering import build_team_full_name, order_pair_players
-
-        registrations_qs = TournamentRegistration.objects.filter(tournament=tournament).select_related(
-            "player",
-            "partner",
-            "team",
-            "team__player_1",
-            "team__player_2",
-        )
-
-        # Основной состав (уникальные команды / игроки)
-        main_pairs: list[str] = []
-        seen_teams: set[int] = set()
-        for reg in registrations_qs.filter(status=TournamentRegistration.Status.MAIN_LIST):
-            team = reg.team
-            if team and team.id in seen_teams:
-                continue
-            if team:
-                seen_teams.add(team.id)
-                pair_name = build_team_full_name(tournament, team)
-            else:
-                # На всякий случай поддерживаем одиночные турниры без команды
-                p1 = reg.player
-                p2 = reg.partner
-                if p2:
-                    ordered = order_pair_players(tournament, p1, p2)
-                    pair_name = " / ".join(str(p) for p in ordered)
-                else:
-                    pair_name = str(p1)
-
-            main_pairs.append(pair_name)
-
-        # Резервный состав
-        reserve_pairs: list[str] = []
-        seen_teams_reserve: set[int] = set()
-        for reg in registrations_qs.filter(status=TournamentRegistration.Status.RESERVE_LIST):
-            team = reg.team
-            if team and team.id in seen_teams_reserve:
-                continue
-            if team:
-                seen_teams_reserve.add(team.id)
-                pair_name = build_team_full_name(tournament, team)
-            else:
-                p1 = reg.player
-                p2 = reg.partner
-                if p2:
-                    ordered = order_pair_players(tournament, p1, p2)
-                    pair_name = " / ".join(str(p) for p in ordered)
-                else:
-                    pair_name = str(p1)
-
-            reserve_pairs.append(pair_name)
-
-        # Игроки, которые ищут пару
-        looking_players: list[str] = []
-        for reg in registrations_qs.filter(status=TournamentRegistration.Status.LOOKING_FOR_PARTNER):
-            looking_players.append(str(reg.player))
-
-        # Добавляем в текст только непустые списки
-        if main_pairs or reserve_pairs or looking_players:
-            if main_pairs:
-                lines.append("🏅 Основной состав:")
-                for idx, name in enumerate(main_pairs, start=1):
-                    # Нумерованный список
-                    lines.append(f"{idx}. {name}")
-                lines.append("")
-
-            if reserve_pairs:
-                lines.append("🧩 Резервный состав:")
-                for idx, name in enumerate(reserve_pairs, start=1):
-                    # Нумерованный список
-                    lines.append(f"{idx}. {name}")
-                lines.append("")
-
-            if looking_players:
-                lines.append("🤝 Ищут пару:")
-                for name in looking_players:
-                    # Оставляем маркированный список для блока "Ищут пару"
-                    lines.append(f"- {name}")
-                lines.append("")
+    roster_block = generate_announcement_roster_block(tournament)
+    if roster_block:
+        lines.append(roster_block)
 
     # Организатор
     organizer_name = None
@@ -306,6 +227,92 @@ def generate_announcement_text(tournament) -> str:
         lines.append("👑 Артём Парамонычев")
 
     return "\n".join(lines)
+
+
+def generate_announcement_roster_block(tournament) -> str:
+    from apps.tournaments.models import Tournament as _T
+
+    try:
+        from .registration_models import TournamentRegistration
+        has_registration_model = True
+    except ImportError:
+        has_registration_model = False
+
+    if not has_registration_model:
+        return ""
+
+    from apps.tournaments.services.team_ordering import build_team_full_name, order_pair_players
+
+    registrations_qs = TournamentRegistration.objects.filter(tournament=tournament).select_related(
+        "player",
+        "partner",
+        "team",
+        "team__player_1",
+        "team__player_2",
+    )
+
+    is_doubles = getattr(tournament, "participant_mode", _T.ParticipantMode.DOUBLES) == _T.ParticipantMode.DOUBLES
+
+    main_pairs: list[str] = []
+    seen_teams: set[int] = set()
+    for reg in registrations_qs.filter(status=TournamentRegistration.Status.MAIN_LIST):
+        team = reg.team
+        if team and team.id in seen_teams:
+            continue
+        if team:
+            seen_teams.add(team.id)
+            pair_name = build_team_full_name(tournament, team)
+        else:
+            p1 = reg.player
+            p2 = reg.partner
+            if is_doubles and p2:
+                ordered = order_pair_players(tournament, p1, p2)
+                pair_name = " / ".join(str(p) for p in ordered)
+            else:
+                pair_name = str(p1)
+        main_pairs.append(pair_name)
+
+    reserve_pairs: list[str] = []
+    seen_teams_reserve: set[int] = set()
+    for reg in registrations_qs.filter(status=TournamentRegistration.Status.RESERVE_LIST):
+        team = reg.team
+        if team and team.id in seen_teams_reserve:
+            continue
+        if team:
+            seen_teams_reserve.add(team.id)
+            pair_name = build_team_full_name(tournament, team)
+        else:
+            p1 = reg.player
+            p2 = reg.partner
+            if is_doubles and p2:
+                ordered = order_pair_players(tournament, p1, p2)
+                pair_name = " / ".join(str(p) for p in ordered)
+            else:
+                pair_name = str(p1)
+        reserve_pairs.append(pair_name)
+
+    looking_players: list[str] = []
+    for reg in registrations_qs.filter(status=TournamentRegistration.Status.LOOKING_FOR_PARTNER):
+        looking_players.append(str(reg.player))
+
+    out: list[str] = []
+    if main_pairs:
+        out.append("🏅 Основной состав:")
+        for idx, name in enumerate(main_pairs, start=1):
+            out.append(f"{idx}. {name}")
+        out.append("")
+    if reserve_pairs:
+        out.append("🧩 Резервный состав:")
+        for idx, name in enumerate(reserve_pairs, start=1):
+            out.append(f"{idx}. {name}")
+        out.append("")
+    if looking_players:
+        out.append("🤝 Ищут пару:")
+        for name in looking_players:
+            out.append(f"- {name}")
+        out.append("")
+
+    return "\n".join(out).strip()
 
 
 @method_decorator(csrf_exempt, name='dispatch')
