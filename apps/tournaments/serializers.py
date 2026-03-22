@@ -582,6 +582,12 @@ class TournamentSerializer(serializers.ModelSerializer):
 
         from apps.players.models import Player
 
+        effective_is_rating_calc = bool(obj.is_rating_calc)
+        if obj.parent_tournament_id:
+            effective_is_rating_calc = effective_is_rating_calc and bool(obj.get_master_tournament().is_rating_calc)
+        if not effective_is_rating_calc:
+            return False
+
         player_ids = set()
         for e in obj.entries.select_related("team").only("team_id").all():
             team = getattr(e, "team", None)

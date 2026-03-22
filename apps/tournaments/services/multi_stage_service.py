@@ -284,6 +284,7 @@ class MultiStageService:
             master = master.get_master_tournament()
 
         all_stages = master.get_all_stages()
+        effective_is_rating_calc = bool(master.is_rating_calc)
 
         # Если force=False, проверяем незавершенные матчи
         if not force:
@@ -305,7 +306,7 @@ class MultiStageService:
         except ImportError:
             compute_ratings_for_multi_stage_tournament = None
 
-        if compute_ratings_for_multi_stage_tournament is not None:
+        if effective_is_rating_calc and compute_ratings_for_multi_stage_tournament is not None:
             stage_ids = [s.id for s in all_stages]
             compute_ratings_for_multi_stage_tournament(master.id, stage_ids)
 
