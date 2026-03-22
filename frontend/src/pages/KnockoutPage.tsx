@@ -1279,16 +1279,18 @@ export const KnockoutPage: React.FC = () => {
 
   // Получить список ID игроков, уже используемых в турнире
   const usedPlayerIds = useMemo(() => {
-    const ids: number[] = [];
-    dragDropState.participants.forEach(p => {
-      if (p.teamId) {
-        // Нужно извлечь player_1 и player_2 из команды
-        // Пока упрощенно - добавим teamId
-        ids.push(p.teamId);
-      }
+    const ids = new Set<number>();
+    (tMeta?.participants || []).forEach((p: any) => {
+      const team: any = p?.team || {};
+      const raw1 = team.player_1 ?? team.player_1_id;
+      const raw2 = team.player_2 ?? team.player_2_id;
+      const p1 = typeof raw1 === 'object' ? raw1?.id : raw1;
+      const p2 = typeof raw2 === 'object' ? raw2?.id : raw2;
+      if (p1) ids.add(Number(p1));
+      if (p2) ids.add(Number(p2));
     });
-    return ids;
-  }, [dragDropState.participants]);
+    return Array.from(ids);
+  }, [tMeta]);
 
   const handleAutoSeed = useCallback(async () => {
     if (!canManageStructure) return;
