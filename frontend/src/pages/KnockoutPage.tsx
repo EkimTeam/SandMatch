@@ -631,7 +631,7 @@ export const KnockoutPage: React.FC = () => {
       if (!confirmed) return;
     }
     
-    if (tMeta?.has_zero_rating_players && tMeta.status !== 'completed') {
+    if (tMeta?.is_rating_calc && tMeta?.has_zero_rating_players && tMeta.status !== 'completed') {
       setShowCompleteRatingChoice(true);
       return;
     }
@@ -1874,7 +1874,14 @@ export const KnockoutPage: React.FC = () => {
             if (!scoreModal.matchId) return;
             
             // Преобразуем данные для API
-            const setsToSend = sets
+            const setsToSend: Array<{
+              index: number;
+              games_1: number;
+              games_2: number;
+              tb_1?: number | null;
+              tb_2?: number | null;
+              is_tiebreak_only?: boolean;
+            }> = sets
               .filter(s => s.custom_enabled || s.champion_tb_enabled)
               .map(s => {
                 if (s.champion_tb_enabled) {
@@ -1891,10 +1898,10 @@ export const KnockoutPage: React.FC = () => {
                   // Обычный сет
                   return {
                     index: s.index,
-                    games_1: s.games_1,
-                    games_2: s.games_2,
-                    tb_1: s.tb_enabled && s.tb_loser_points !== null ? (s.games_1 > s.games_2 ? null : null) : null,
-                    tb_2: s.tb_enabled && s.tb_loser_points !== null ? (s.games_1 > s.games_2 ? null : null) : null,
+                    games_1: s.games_1 ?? 0,
+                    games_2: s.games_2 ?? 0,
+                    tb_1: null,
+                    tb_2: null,
                     is_tiebreak_only: false
                   };
                 }
@@ -2492,7 +2499,7 @@ export const KnockoutPage: React.FC = () => {
         onConfirm={() => {
           setShowIncompleteMatchesModal(false);
           // Проверяем игроков без рейтинга
-          if (tMeta?.has_zero_rating_players) {
+          if (tMeta?.is_rating_calc && tMeta?.has_zero_rating_players) {
             setShowCompleteRatingChoice(true);
           } else {
             completeTournamentInternal(true); // force = true

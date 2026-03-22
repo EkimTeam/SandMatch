@@ -1153,13 +1153,20 @@ class TournamentViewSet(viewsets.ModelViewSet):
         """POST /tournaments/{id}/complete_master/ — завершить мастер-турнир."""
 
         force = bool(request.data.get("force", False))
+        tournament: Tournament = self.get_object()
+        master = tournament if tournament.parent_tournament_id is None else tournament.get_master_tournament()
+        effective_is_rating_calc = bool(master.is_rating_calc)
 
         try:
             MultiStageService.complete_master_tournament(int(pk), force=force)
             return Response(
                 {
                     "ok": True,
-                    "message": "Турнир завершен, рейтинг рассчитан для всех стадий",
+                    "message": (
+                        "Турнир завершен, рейтинг рассчитан для всех стадий"
+                        if effective_is_rating_calc
+                        else "Турнир завершен без обсчёта рейтинга"
+                    ),
                 }
             )
         except ValueError as e:
@@ -2027,6 +2034,15 @@ class TournamentViewSet(viewsets.ModelViewSet):
         """
 
         tournament: Tournament = self.get_object()
+        effective_is_rating_calc = bool(tournament.is_rating_calc)
+        if tournament.parent_tournament_id:
+            effective_is_rating_calc = effective_is_rating_calc and bool(tournament.get_master_tournament().is_rating_calc)
+
+        if not effective_is_rating_calc:
+            return Response(
+                {"ok": False, "error": "Для этого турнира обсчёт рейтинга отключён"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # Стартовые рейтинги актуальны только до полного пересчёта турнира
         if tournament.status not in {Tournament.Status.CREATED, Tournament.Status.ACTIVE}:
@@ -2136,6 +2152,15 @@ class TournamentViewSet(viewsets.ModelViewSet):
         """
 
         tournament: Tournament = self.get_object()
+        effective_is_rating_calc = bool(tournament.is_rating_calc)
+        if tournament.parent_tournament_id:
+            effective_is_rating_calc = effective_is_rating_calc and bool(tournament.get_master_tournament().is_rating_calc)
+
+        if not effective_is_rating_calc:
+            return Response(
+                {"ok": False, "error": "Для этого турнира обсчёт рейтинга отключён"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if tournament.status not in {Tournament.Status.CREATED, Tournament.Status.ACTIVE}:
             return Response(
@@ -5746,6 +5771,9 @@ def tournament_complete(request, pk: int):
     from apps.players.models import PlayerRatingDynamic, Player
     from apps.matches.models import Match
     from apps.players.services.initial_rating_service import get_initial_bp_rating
+    effective_is_rating_calc = bool(t.is_rating_calc)
+    if t.parent_tournament_id:
+        effective_is_rating_calc = effective_is_rating_calc and bool(t.get_master_tournament().is_rating_calc)
     
     # Если турнир уже завершен, удаляем старые данные рейтинга для пересчета
     if t.status == Tournament.Status.COMPLETED:
@@ -5772,30 +5800,32 @@ def tournament_complete(request, pk: int):
     
     with transaction.atomic():
         # 1. Установить начальные рейтинги игрокам с рейтингом=0 или NULL
-        # Соберём всех игроков, участвовавших в турнире (из всех матчей)
-        all_matches = Match.objects.filter(tournament_id=t.id).select_related('team_1', 'team_2')
-        player_ids: set[int] = set()
-        for m in all_matches:
-            for pid in [getattr(m.team_1, 'player_1_id', None), getattr(m.team_1, 'player_2_id', None),
-                        getattr(m.team_2, 'player_1_id', None), getattr(m.team_2, 'player_2_id', None)]:
-                if pid:
-                    player_ids.add(pid)
-        
-        # Установим начальные рейтинги для игроков с рейтингом 0 или NULL
-        if player_ids:
-            players_to_update = Player.objects.filter(
-                id__in=player_ids
-            ).filter(
-                Q(current_rating__isnull=True) | Q(current_rating=0)
-            )
-            
-            for player in players_to_update:
-                initial_rating = get_initial_bp_rating(player, t)
-                player.current_rating = initial_rating
-                player.save(update_fields=['current_rating'])
-        
+        # только если для турнира реально включён обсчёт рейтинга.
+        if effective_is_rating_calc:
+            # Соберём всех игроков, участвовавших в турнире (из всех матчей)
+            all_matches = Match.objects.filter(tournament_id=t.id).select_related('team_1', 'team_2')
+            player_ids: set[int] = set()
+            for m in all_matches:
+                for pid in [getattr(m.team_1, 'player_1_id', None), getattr(m.team_1, 'player_2_id', None),
+                            getattr(m.team_2, 'player_1_id', None), getattr(m.team_2, 'player_2_id', None)]:
+                    if pid:
+                        player_ids.add(pid)
+
+            # Установим начальные рейтинги для игроков с рейтингом 0 или NULL
+            if player_ids:
+                players_to_update = Player.objects.filter(
+                    id__in=player_ids
+                ).filter(
+                    Q(current_rating__isnull=True) | Q(current_rating=0)
+                )
+
+                for player in players_to_update:
+                    initial_rating = get_initial_bp_rating(player, t)
+                    player.current_rating = initial_rating
+                    player.save(update_fields=['current_rating'])
+
         # 2. Проверить нужно ли считать рейтинг для этого турнира
-        if t.is_rating_calc:
+        if effective_is_rating_calc:
             # 3. Выполним расчёт рейтинга по турниру с учетом is_out_of_competition
             rating_service.compute_ratings_for_tournament(t.id)
         

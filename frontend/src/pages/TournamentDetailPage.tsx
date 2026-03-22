@@ -565,7 +565,7 @@ export const TournamentDetailPage: React.FC = () => {
     }
     
     // Если в турнире есть игроки без рейтинга, сначала показываем диалог выбора способа завершения
-    if (t.has_zero_rating_players) {
+    if (t.is_rating_calc && t.has_zero_rating_players) {
       setShowCompleteRatingChoice(true);
       return;
     }
@@ -2003,16 +2003,22 @@ export const TournamentDetailPage: React.FC = () => {
             mirror={scoreInput.matchTeam1Id !== null && scoreInput.matchTeam1Id !== scoreInput.team1.id}
             onClose={() => setScoreInput(null)}
             onSave={async (sets) => {
-              if (!t) return;
+              if (!t || !scoreInput) return;
               if (t.status === 'completed') return;
               
               // Преобразуем данные для API
-              let setsToSend = sets
+              let setsToSend: Array<{
+                index: number;
+                games_1: number;
+                games_2: number;
+                tb_loser_points: number | null;
+                is_tiebreak_only: boolean;
+              }> = sets
                 .filter(s => s.custom_enabled || s.champion_tb_enabled)
                 .map(s => ({
                   index: s.index,
-                  games_1: s.games_1,
-                  games_2: s.games_2,
+                  games_1: s.games_1 ?? 0,
+                  games_2: s.games_2 ?? 0,
                   tb_loser_points: s.champion_tb_enabled ? null : s.tb_loser_points,
                   is_tiebreak_only: s.champion_tb_enabled
                 }));
@@ -3324,7 +3330,7 @@ export const TournamentDetailPage: React.FC = () => {
         onConfirm={() => {
           setShowIncompleteMatchesModal(false);
           // Проверяем игроков без рейтинга
-          if (t?.has_zero_rating_players) {
+          if (t?.is_rating_calc && t?.has_zero_rating_players) {
             setShowCompleteRatingChoice(true);
           } else {
             completeTournament(true); // force = true
