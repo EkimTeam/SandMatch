@@ -4148,10 +4148,10 @@ class TournamentViewSet(viewsets.ModelViewSet):
             if tournament.status != Tournament.Status.CREATED:
                 return Response({"ok": False, "error": "Доступно только для турниров в статусе CREATED"}, status=400)
 
-            try:
-                settings_obj = tournament.announcement_settings
-            except TournamentAnnouncementSettings.DoesNotExist:
-                return Response({"ok": False, "error": "Настройки анонсов не найдены"}, status=400)
+            settings_obj, _created = TournamentAnnouncementSettings.objects.get_or_create(
+                tournament=tournament,
+                defaults={"telegram_chat_id": ""},
+            )
 
             text = (request.data or {}).get("text")
             text = (text or "").strip()
