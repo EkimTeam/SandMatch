@@ -159,6 +159,11 @@ const canLock = allSlotsFilled && !dragDropState.isSelectionLocked;
 **Причина:** Неправильный подсчет свободных мест  
 **Решение:** Считать `freeSlotsInBracket` из `dropSlots`
 
+### Проблема: Игрок находится поиском, но отображается серым и не выбирается в модалке «Добавить участника/пару»
+**Причина:** В `KnockoutParticipantPicker` игроки блокируются по `usedPlayerIds` (это должны быть именно `player.id`). Если по ошибке передать туда `teamId`, возможна ложная блокировка при совпадении `player.id == teamId`.
+
+**Решение:** Передавать в `usedPlayerIds` только реальные ID игроков из `tournament.participants[].team.player_1/player_2`.
+
 ---
 
 **Версия:** 1.0  
