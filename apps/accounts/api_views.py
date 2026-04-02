@@ -922,29 +922,29 @@ def delete_user(request, user_id: int):
 def password_reset(request):
     """Инициировать сброс пароля.
 
-    В реальном продакшене здесь нужно отправлять email со ссылкой.
-    Для dev-окружения возвращаем uid и token, чтобы можно было перейти
-    на фронтовую страницу сброса вручную.
+    В продовом режиме сброс обрабатывается службой поддержки:
+    создаём заявку, которую админ обрабатывает вручную (через Django Admin).
     """
 
     email = (request.data.get("email") or "").strip()
     if not email:
         return Response({"detail": "email обязателен"}, status=status.HTTP_400_BAD_REQUEST)
 
-    try:
-        user = User.objects.get(email__iexact=email)
-    except User.DoesNotExist:
-        # Не раскрываем, есть ли такой email
-        return Response({"detail": "Если такой email существует, инструкции отправлены"})
+    from .models import PasswordResetSupportRequest
 
-    uid = urlsafe_base64_encode(force_bytes(user.pk))
-    token = default_token_generator.make_token(user)
+    user = User.objects.filter(email__iexact=email).first()
+    ip = request.META.get("HTTP_X_FORWARDED_FOR") or request.META.get("REMOTE_ADDR")
+    ua = request.META.get("HTTP_USER_AGENT") or ""
 
-    return Response({
-        "detail": "Инструкции по сбросу отправлены (для dev токен возвращён в ответе)",
-        "uid": uid,
-        "token": token,
-    })
+    PasswordResetSupportRequest.objects.create(
+        email=email,
+        user=user,
+        ip_address=(ip.split(",")[0].strip() if ip else None),
+        user_agent=ua[:2000],
+    )
+
+    # Не раскрываем, существует ли такой email
+    return Response({"detail": "Если такой email существует, запрос принят службой поддержки"})
 
 
 @api_view(["POST"])

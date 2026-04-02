@@ -6,20 +6,15 @@ export const PasswordResetRequestPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [devToken, setDevToken] = useState<{ uid?: string; token?: string } | null>(null);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
     setSuccess(null);
-    setDevToken(null);
     try {
       const res = await authApi.requestPasswordReset(email);
-      setSuccess(res.detail || 'Если такой email существует, инструкции отправлены');
-      if (res.uid && res.token) {
-        setDevToken({ uid: res.uid, token: res.token });
-      }
+      setSuccess(res.detail || 'Если такой email существует, запрос принят службой поддержки');
     } catch (err: any) {
       setError(err?.response?.data?.detail || err?.message || 'Ошибка запроса сброса пароля');
     } finally {
@@ -51,13 +46,6 @@ export const PasswordResetRequestPage: React.FC = () => {
         >
           {loading ? 'Отправляем…' : 'Отправить ссылку для сброса'}
         </button>
-        {devToken && (
-          <div className="text-xs text-gray-600 border-t pt-3 mt-3">
-            <div className="font-semibold mb-1">Dev-информация (в проде будет письмо):</div>
-            <div>uid: <code>{devToken.uid}</code></div>
-            <div>token: <code>{devToken.token}</code></div>
-          </div>
-        )}
       </form>
     </div>
   );
