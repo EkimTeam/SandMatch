@@ -62,3 +62,45 @@ class PDNActionLog(models.Model):
 
     def __str__(self) -> str:
         return f"{self.get_action_display()} для {self.user.username} ({self.created_at})"
+
+
+class PasswordResetSupportRequest(models.Model):
+    class Status(models.TextChoices):
+        NEW = "NEW", "Новая"
+        IN_PROGRESS = "IN_PROGRESS", "В работе"
+        DONE = "DONE", "Закрыта"
+        REJECTED = "REJECTED", "Отклонена"
+
+    email = models.EmailField(verbose_name="Email")
+    user = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="password_reset_support_requests",
+        verbose_name="Пользователь",
+    )
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.NEW)
+    note = models.TextField(blank=True, default="", verbose_name="Заметка")
+
+    ip_address = models.GenericIPAddressField(null=True, blank=True, verbose_name="IP")
+    user_agent = models.TextField(blank=True, default="", verbose_name="User-Agent")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    processed_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="processed_password_reset_support_requests",
+        verbose_name="Обработал",
+    )
+
+    class Meta:
+        verbose_name = "Заявка на сброс пароля"
+        verbose_name_plural = "Заявки на сброс пароля"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.email} ({self.get_status_display()})"
