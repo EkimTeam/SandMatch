@@ -35,6 +35,8 @@ services:
       - .env
     environment:
       - RUN_TELEGRAM_BOT=true
+    extra_hosts:
+      - "api.telegram.org:149.154.167.220"
     depends_on:
       - web
       - redis
