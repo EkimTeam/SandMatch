@@ -30,6 +30,9 @@ def fetch_available_files(url: str = BTR_ARCHIVE_URL) -> List[Tuple[str, str, da
     logger.info(f"Получение списка файлов с {url}")
     
     try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
         response = requests.get(url, timeout=30)
         response.raise_for_status()
     except requests.RequestException as e:
@@ -109,6 +112,9 @@ def download_file(file_url: str, destination: Path) -> bool:
     logger.info(f"Скачивание файла: {file_url}")
     
     try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
         response = requests.get(file_url, timeout=60, stream=True)
         response.raise_for_status()
         
