@@ -33,7 +33,7 @@ def fetch_available_files(url: str = BTR_ARCHIVE_URL) -> List[Tuple[str, str, da
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
-        response = requests.get(url, timeout=30)
+        response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
     except requests.RequestException as e:
         logger.error(f"Ошибка при получении страницы {url}: {e}")
@@ -115,7 +115,7 @@ def download_file(file_url: str, destination: Path) -> bool:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
-        response = requests.get(file_url, timeout=60, stream=True)
+        response = requests.get(file_url, headers=headers, timeout=60, stream=True)
         response.raise_for_status()
         
         # Создаём директорию, если её нет
